@@ -1,0 +1,36 @@
+[package]
+name = "vision-desktop"
+version = "0.1.0"
+description = "Vision Desktop control center"
+authors = ["Vision Team"]
+license = ""
+repository = ""
+edition = "2021"
+rust-version = "1.77.2"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "vision_desktop"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.5.3", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.9.5", features = [] }
+tauri-plugin-log = "2"
+tauri-plugin-deep-link = "2.0.0"
+tauri-plugin-single-instance = { version = "2.0.0", features = ["deep-link"] }
+tauri-plugin-store = "2.0.0"
+base64 = "0.22"
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+sha2 = "0.10"
+thiserror = "1.0"
+url = "2.5"
+keyring = "2.3"
+tauri-plugin-opener = "2"
