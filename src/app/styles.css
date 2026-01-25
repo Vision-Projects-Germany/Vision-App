@@ -1,8 +1,82 @@
-﻿@tailwind base;
+@tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
+  @property --draw {
+    syntax: "<angle>";
+    inherits: false;
+    initial-value: 0turn;
+  }
+
+  .rainbow-draw {
+    --draw: 0turn;
+    opacity: 0;
+    transition: opacity 200ms ease-out;
+    background-size: 200% 200%;
+    background: conic-gradient(
+      from 0deg,
+      #ff4d4d 0turn,
+      #ffd166 0.2turn,
+      #7efc6c 0.4turn,
+      #2bd9ff 0.6turn,
+      #8a5bff 0.8turn,
+      #ff4d4d 1turn
+    );
+    -webkit-mask: conic-gradient(
+      from 0deg,
+      #000 0turn var(--draw),
+      transparent var(--draw) calc(1turn - var(--draw)),
+      #000 calc(1turn - var(--draw)) 1turn
+    );
+    mask: conic-gradient(
+      from 0deg,
+      #000 0turn var(--draw),
+      transparent var(--draw) calc(1turn - var(--draw)),
+      #000 calc(1turn - var(--draw)) 1turn
+    );
+  }
+
+  .group:hover .rainbow-draw {
+    opacity: 1;
+    animation: rainbow-draw 0.2s linear forwards, rainbow-shift 2s ease-in-out infinite;
+  }
+
+  @keyframes rainbow-draw {
+    to {
+      --draw: 0.5turn;
+    }
+  }
+
+  .loader {
+    width: 45px;
+    aspect-ratio: 1;
+    --c: no-repeat linear-gradient(#2bfe71 0 0);
+    background: var(--c), var(--c), var(--c);
+    animation: l18-1 0.9s infinite, l18-2 0.9s infinite;
+  }
+
+  @keyframes l18-1 {
+    0%,
+    100% {
+      background-size: 20% 100%;
+    }
+    33%,
+    66% {
+      background-size: 20% 20%;
+    }
+  }
+
+  @keyframes l18-2 {
+    0%,
+    33% {
+      background-position: 0 0, 50% 50%, 100% 100%;
+    }
+    66%,
+    100% {
+      background-position: 100% 0, 50% 50%, 0 100%;
+    }
+  }
   :root {
     color-scheme: dark;
   }
@@ -16,6 +90,7 @@
     min-height: 100vh;
     background: #0d0e12;
     scrollbar-width: none;
+    overflow-x: hidden;
   }
 
   html,
@@ -27,3 +102,10 @@
     display: none;
   }
 }
+
+
+
+
+
+
+

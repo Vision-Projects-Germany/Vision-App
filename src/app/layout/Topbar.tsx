@@ -1,6 +1,7 @@
-﻿import { useTheme } from "../../shared/theme";
+﻿import { memo } from "react";
+import { useTheme } from "../../shared/theme";
 
-export function Topbar() {
+export const Topbar = memo(function Topbar() {
   const { theme, toggleTheme } = useTheme();
 
   return (
@@ -23,4 +24,4 @@ export function Topbar() {
       </div>
     </header>
   );
-}
+});

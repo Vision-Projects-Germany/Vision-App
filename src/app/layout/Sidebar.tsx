@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState, useCallback } from "react";
 import { NavLink } from "react-router-dom";
 import { SideIcons } from "../../components/SideIcons";
 import { cn } from "../../shared/utils/cn";
@@ -8,8 +8,13 @@ const navItems = [
   { label: "Projekte", to: "/projects", icon: "fa-folder-open" }
 ];
 
-export function Sidebar() {
+export const Sidebar = memo(function Sidebar() {
   const [sideActive, setSideActive] = useState("home");
+
+  // Memoize callback to prevent re-creating function on each render
+  const handleSideIconChange = useCallback((id: string) => {
+    setSideActive(id);
+  }, []);
 
   return (
     <aside className="relative flex w-20 flex-col items-center border-r border-border bg-surface/60 px-3 py-6">
@@ -40,8 +45,8 @@ export function Sidebar() {
       </nav>
 
       <div className="absolute inset-y-0 left-0 flex items-start pt-6">
-        <SideIcons activeId={sideActive} onChange={setSideActive} />
+        <SideIcons activeId={sideActive} onChange={handleSideIconChange} />
       </div>
     </aside>
   );
-}
+});

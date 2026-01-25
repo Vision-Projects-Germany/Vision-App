@@ -1,7 +1,8 @@
+import { memo } from "react";
 import { Link } from "react-router-dom";
 import { useProjectsStore } from "./projectsStore";
 
-export function ProjectsPage() {
+export const ProjectsPage = memo(function ProjectsPage() {
   const projects = useProjectsStore((state) => state.projects);
 
   return (
@@ -51,5 +52,4 @@ export function ProjectsPage() {
       </section>
     </div>
   );
-}
-
+});

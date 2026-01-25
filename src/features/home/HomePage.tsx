@@ -1,3 +1,5 @@
+import { memo } from "react";
+
 const cards = [
   {
     title: "Library",
@@ -22,7 +24,7 @@ const quickActions = [
   "Open downloads"
 ];
 
-export function HomePage() {
+export const HomePage = memo(function HomePage() {
   return (
     <div className="space-y-8">
       <header>
@@ -56,4 +58,4 @@ export function HomePage() {
       </section>
     </div>
   );
-}
+});

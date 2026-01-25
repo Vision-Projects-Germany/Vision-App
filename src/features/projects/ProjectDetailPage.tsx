@@ -12,7 +12,7 @@ export function ProjectDetailPage() {
       <div className="space-y-4">
         <h1 className="text-2xl font-semibold">Projekt nicht gefunden</h1>
         <Link to="/projects" className="text-sm text-accent">
-          Zurueck zur Liste
+          Zurück zur Liste
         </Link>
       </div>
     );
@@ -22,7 +22,7 @@ export function ProjectDetailPage() {
     <div className="space-y-8">
       <header className="space-y-2">
         <Link to="/projects" className="text-sm text-accent">
-          Zurueck zu Projekten
+          Zurück zu Projekten
         </Link>
         <h1 className="text-3xl font-semibold">{project.name}</h1>
         <p className="text-sm text-muted">{project.summary}</p>
