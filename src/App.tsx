@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type DragEvent } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -110,6 +110,24 @@ const modrinthTypeLabels: Record<string, string> = {
   resourcepack: "Resourcepacks",
   shader: "Shader"
 };
+
+const MEDIA_SECTIONS = [
+  {
+    key: "logos",
+    label: "Logos",
+    endpoint: "https://api.blizz-developments-official.de/api/media/logos"
+  },
+  {
+    key: "banners",
+    label: "Banner",
+    endpoint: "https://api.blizz-developments-official.de/api/media/banners"
+  },
+  {
+    key: "avatars",
+    label: "Avatars",
+    endpoint: "https://api.blizz-developments-official.de/api/media/avatars"
+  }
+] as const;
 
 let tauriDetection: Promise<boolean> | null = null;
 
@@ -419,10 +437,8 @@ export default function App() {
   const [loginLoading, setLoginLoading] = useState(false);
   const [showLoginForm, setShowLoginForm] = useState(false);
   const [editorModal, setEditorModal] = useState<
-    "project" | "news" | "event" | "member" | null
-  >(
-    null
-  );
+    "project" | "news" | "event" | "member" | "media" | null
+  >(null);
   const [projectTitle, setProjectTitle] = useState("");
   const [projectSlug, setProjectSlug] = useState("");
   const [projectDescription, setProjectDescription] = useState("");
@@ -434,11 +450,45 @@ export default function App() {
   const [projectSaving, setProjectSaving] = useState(false);
   const [projectSaveError, setProjectSaveError] = useState<string | null>(null);
   const [projectSaveSuccess, setProjectSaveSuccess] = useState(false);
-  const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
-  const [mediaLoading, setMediaLoading] = useState(false);
-  const [mediaError, setMediaError] = useState<string | null>(null);
-  const [mediaPage, setMediaPage] = useState(1);
-  const [mediaHasMore, setMediaHasMore] = useState(true);
+  const [mediaUploadFile, setMediaUploadFile] = useState<File | null>(null);
+  const [mediaUploadType, setMediaUploadType] = useState<"logos" | "banners" | "avatars">(
+    "logos"
+  );
+  const [mediaUploadLoading, setMediaUploadLoading] = useState(false);
+  const [mediaUploadError, setMediaUploadError] = useState<string | null>(null);
+  const [mediaUploadSuccess, setMediaUploadSuccess] = useState(false);
+  const [mediaPreviewUrl, setMediaPreviewUrl] = useState<string | null>(null);
+  const [selectedMediaIds, setSelectedMediaIds] = useState<
+    { id: string; section: string }[]
+  >([]);
+  const [mediaItems, setMediaItems] = useState<Record<string, MediaItem[]>>({
+    logos: [],
+    banners: [],
+    avatars: []
+  });
+  const [mediaLoading, setMediaLoading] = useState<Record<string, boolean>>({
+    logos: false,
+    banners: false,
+    avatars: false
+  });
+  const [mediaError, setMediaError] = useState<Record<string, string | null>>({
+    logos: null,
+    banners: null,
+    avatars: null
+  });
+  const [mediaPage, setMediaPage] = useState<Record<string, number>>({
+    logos: 1,
+    banners: 1,
+    avatars: 1
+  });
+  const [mediaHasMore, setMediaHasMore] = useState<Record<string, boolean>>({
+    logos: true,
+    banners: true,
+    avatars: true
+  });
+  const [mediaFilter, setMediaFilter] = useState<"all" | "logos" | "banners" | "avatars">(
+    "all"
+  );
   const [selectedProject, setSelectedProject] = useState<ProjectItem | null>(null);
   const canJoinSelectedProject = Boolean(
     user && selectedProject && !userProjectIds.includes(selectedProject.id)
@@ -446,6 +496,106 @@ export default function App() {
   const canLeaveSelectedProject = Boolean(
     user && selectedProject && userProjectIds.includes(selectedProject.id)
   );
+
+  const handleMediaDrop = (event: DragEvent<HTMLLabelElement>) => {
+    event.preventDefault();
+    const file = event.dataTransfer.files?.[0];
+    setMediaUploadFile(file ?? null);
+  };
+
+  useEffect(() => {
+    if (!mediaUploadFile) {
+      setMediaPreviewUrl(null);
+      return;
+    }
+    const previewUrl = URL.createObjectURL(mediaUploadFile);
+    setMediaPreviewUrl(previewUrl);
+    return () => URL.revokeObjectURL(previewUrl);
+  }, [mediaUploadFile]);
+
+  const handleMediaUpload = async () => {
+    if (!user) {
+      setMediaUploadError("Bitte zuerst anmelden.");
+      return;
+    }
+    if (!mediaUploadFile) {
+      setMediaUploadError("Bitte eine Datei auswaehlen.");
+      return;
+    }
+    setMediaUploadLoading(true);
+    setMediaUploadError(null);
+    setMediaUploadSuccess(false);
+    try {
+      const token = await user.getIdToken();
+      await uploadMediaFile({
+        file: mediaUploadFile,
+        token,
+        endpoint: `https://api.blizz-developments-official.de/api/admin/media?category=${mediaUploadType}`
+      });
+      setMediaUploadSuccess(true);
+      setMediaUploadFile(null);
+      setMediaPreviewUrl(null);
+      window.setTimeout(() => {
+        setMediaUploadSuccess(false);
+        setEditorModal(null);
+      }, 1600);
+      fetchMediaPage(mediaUploadType, 1, true);
+    } catch (error) {
+      setMediaUploadError(
+        error instanceof Error ? error.message : "Upload fehlgeschlagen."
+      );
+    } finally {
+      setMediaUploadLoading(false);
+    }
+  };
+
+  const toggleMediaSelection = (section: string, id: string) => {
+    setSelectedMediaIds((prev) => {
+      const exists = prev.some((entry) => entry.id === id);
+      if (exists) {
+        return prev.filter((entry) => entry.id !== id);
+      }
+      return [...prev, { id, section }];
+    });
+  };
+
+  const handleDeleteMedia = async (section: string, id: string) => {
+    if (!user) {
+      setMediaError((prev) => ({ ...prev, [section]: "Bitte zuerst anmelden." }));
+      return;
+    }
+    try {
+      const token = await user.getIdToken();
+      await requestText(
+        `https://api.blizz-developments-official.de/api/admin/media/${id}`,
+        {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` }
+        }
+      );
+      setMediaItems((prev) => ({
+        ...prev,
+        [section]: (prev[section] ?? []).filter((item) => item.id !== id)
+      }));
+      setSelectedMediaIds((prev) => prev.filter((entry) => entry.id !== id));
+    } catch (error) {
+      setMediaError((prev) => ({
+        ...prev,
+        [section]:
+          error instanceof Error ? error.message : "Loeschen fehlgeschlagen."
+      }));
+    }
+  };
+
+  const handleDeleteSelectedMedia = async () => {
+    if (!selectedMediaIds.length) {
+      return;
+    }
+    const entries = [...selectedMediaIds];
+    for (const entry of entries) {
+      await handleDeleteMedia(entry.section, entry.id);
+    }
+  };
 
   
 
@@ -709,41 +859,49 @@ export default function App() {
     });
   }, [user]);
 
-  const fetchMediaPage = async (page: number, replace = false) => {
+  const fetchMediaPage = async (section: string, page: number, replace = false) => {
+    const config = MEDIA_SECTIONS.find((entry) => entry.key === section);
+    if (!config?.endpoint) {
+      return;
+    }
     const limit = 20;
     const controller = new AbortController();
     try {
-      setMediaLoading(true);
-      setMediaError(null);
+      setMediaLoading((prev) => ({ ...prev, [section]: true }));
+      setMediaError((prev) => ({ ...prev, [section]: null }));
       const data = await requestJson<{
         items?: MediaItem[];
         total?: number;
         page?: number;
         limit?: number;
-      }>(`https://api.blizz-developments-official.de/api/media?page=${page}&limit=${limit}`, {
-        signal: controller.signal
-      });
+      }>(`${config.endpoint}?page=${page}&limit=${limit}`, { signal: controller.signal });
 
       const items = Array.isArray(data?.items) ? data!.items! : [];
       if (replace) {
-        setMediaItems(items);
+        setMediaItems((prev) => ({ ...prev, [section]: items }));
       } else {
-        setMediaItems((prev) => [...prev, ...items]);
+        setMediaItems((prev) => ({
+          ...prev,
+          [section]: [...(prev[section] ?? []), ...items]
+        }));
       }
 
       const total = typeof data?.total === "number" ? data.total : null;
       const apiLimit = typeof data?.limit === "number" ? data.limit : limit;
       const hasMore =
         total !== null ? page * apiLimit < total : items.length >= apiLimit;
-      setMediaHasMore(hasMore);
-      setMediaPage(page);
+      setMediaHasMore((prev) => ({ ...prev, [section]: hasMore }));
+      setMediaPage((prev) => ({ ...prev, [section]: page }));
     } catch (error) {
       if (!(error instanceof Error) || error.name !== "AbortError") {
-        setMediaError("Media konnten nicht geladen werden.");
+        setMediaError((prev) => ({
+          ...prev,
+          [section]: "Media konnten nicht geladen werden."
+        }));
       }
     } finally {
       if (!controller.signal.aborted) {
-        setMediaLoading(false);
+        setMediaLoading((prev) => ({ ...prev, [section]: false }));
       }
     }
   };
@@ -753,10 +911,14 @@ export default function App() {
       return;
     }
 
-    setMediaItems([]);
-    setMediaHasMore(true);
-    setMediaPage(1);
-    fetchMediaPage(1, true);
+    setMediaItems({ logos: [], banners: [], avatars: [] });
+    setMediaHasMore({ logos: true, banners: true, avatars: true });
+    setMediaPage({ logos: 1, banners: 1, avatars: 1 });
+    MEDIA_SECTIONS.forEach((section) => {
+      if (section.endpoint) {
+        fetchMediaPage(section.key, 1, true);
+      }
+    });
   }, [activePage]);
 
   useEffect(() => {
@@ -967,6 +1129,12 @@ export default function App() {
                 mediaPage,
                 mediaHasMore,
                 fetchMediaPage,
+                mediaFilter,
+                setMediaFilter,
+                selectedMediaIds,
+                toggleMediaSelection,
+                handleDeleteMedia,
+                handleDeleteSelectedMedia,
                 user,
                 username,
                 userProjectIds,
@@ -1101,6 +1269,7 @@ export default function App() {
                   {editorModal === "project" && "Neues Projekt erstellen"}
                   {editorModal === "news" && "News erstellen"}
                   {editorModal === "event" && "Kalender-Event anlegen"}
+                  {editorModal === "media" && "Bild hochladen"}
                 </h2>
                 <button
                   type="button"
@@ -1269,6 +1438,98 @@ export default function App() {
                 </div>
               )}
 
+              {editorModal === "media" && (
+                <div className="mt-6">
+                  {!mediaUploadFile && (
+                    <label
+                      htmlFor="media-upload"
+                      onDragOver={(event) => event.preventDefault()}
+                      onDrop={handleMediaDrop}
+                      className="flex min-h-[180px] w-full cursor-pointer flex-col items-center justify-center rounded-[16px] border-2 border-dashed border-[rgba(255,255,255,0.2)] bg-[#0F1116] text-center transition hover:border-[#2BFE71]"
+                    >
+                      <i className="fa-solid fa-cloud-arrow-up text-[28px] text-[rgba(255,255,255,0.7)]" aria-hidden="true" />
+                      <p className="mt-3 text-[14px] font-semibold text-[rgba(255,255,255,0.85)]">
+                        Datei hier ablegen oder klicken
+                      </p>
+                      <p className="mt-1 text-[12px] text-[rgba(255,255,255,0.55)]">
+                        PNG, JPG oder WEBP
+                      </p>
+                    </label>
+                  )}
+                  {mediaPreviewUrl && (
+                    <div className="mt-4 overflow-hidden rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116]">
+                      <img
+                        src={mediaPreviewUrl}
+                        alt="Upload preview"
+                        className="h-[160px] w-full object-cover"
+                      />
+                    </div>
+                  )}
+                  <input
+                    id="media-upload"
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(event) => setMediaUploadFile(event.target.files?.[0] ?? null)}
+                  />
+                  <div className="mt-4 flex items-center justify-between">
+                    <p className="text-[12px] font-semibold uppercase tracking-[0.2em] text-[rgba(255,255,255,0.55)]">
+                      Typ
+                    </p>
+                    <div className="flex overflow-hidden rounded-full border border-[rgba(255,255,255,0.12)] bg-[#0F1116]">
+                      {([
+                        { id: "logos", label: "Logo" },
+                        { id: "banners", label: "Banner" },
+                        { id: "avatars", label: "Avatar" }
+                      ] as const).map((option) => {
+                        const active = mediaUploadType === option.id;
+                        return (
+                          <button
+                            key={option.id}
+                            type="button"
+                            onClick={() => setMediaUploadType(option.id)}
+                            className={`px-4 py-2 text-[12px] font-semibold transition ${
+                              active
+                                ? "bg-[#2BFE71] text-[#0D0E12]"
+                                : "text-[rgba(255,255,255,0.70)] hover:text-white"
+                            }`}
+                          >
+                            {option.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div className="mt-4 flex items-center justify-between">
+                    <div className="text-[12px] text-[rgba(255,255,255,0.65)]">
+                      {mediaUploadError && (
+                        <span className="text-[rgba(255,100,100,0.85)]">
+                          {mediaUploadError}
+                        </span>
+                      )}
+                      <span
+                        className={`inline-flex items-center gap-2 text-[#2BFE71] transition-all duration-500 ${
+                          mediaUploadSuccess && !mediaUploadError
+                            ? "opacity-100 translate-y-0"
+                            : "opacity-0 -translate-y-1 pointer-events-none"
+                        }`}
+                      >
+                        <i className="fa-solid fa-check" aria-hidden="true" />
+                        Upload abgeschlossen.
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleMediaUpload}
+                      disabled={mediaUploadLoading || !mediaUploadFile}
+                      className="rounded-full bg-[#2BFE71] px-4 py-2 text-[12px] font-semibold text-[#0D0E12] disabled:opacity-60"
+                    >
+                      {mediaUploadLoading ? "Hochladen..." : "Upload starten"}
+                    </button>
+                  </div>
+                </div>
+              )}
+
 {editorModal === "news" && (
                 <div className="mt-4 grid gap-4 md:grid-cols-2">
                   <div className="md:col-span-2">
@@ -1308,6 +1569,19 @@ export default function App() {
                     >
                       News speichern
                     </button>
+                  </div>
+                </div>
+              )}
+
+              {editorModal === "media" && mediaUploadSuccess && (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70">
+                  <div className="flex flex-col items-center gap-3 rounded-[20px] border border-[rgba(255,255,255,0.12)] bg-[#111319] px-8 py-6 text-center shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
+                    <div className="flex h-14 w-14 items-center justify-center rounded-full bg-[rgba(43,254,113,0.15)] text-[#2BFE71]">
+                      <i className="fa-solid fa-check text-[24px]" aria-hidden="true" />
+                    </div>
+                    <p className="text-[16px] font-semibold text-[rgba(255,255,255,0.9)]">
+                      Upload abgeschlossen
+                    </p>
                   </div>
                 </div>
               )}
@@ -1371,12 +1645,18 @@ function renderContent(
   modrinthError: boolean,
   calendarEvents: CalendarEvent[],
   calendarError: boolean,
-  mediaItems: MediaItem[],
-  mediaLoading: boolean,
-  mediaError: string | null,
-  mediaPage: number,
-  mediaHasMore: boolean,
-  fetchMediaPage: (page: number, replace?: boolean) => void,
+  mediaItems: Record<string, MediaItem[]>,
+  mediaLoading: Record<string, boolean>,
+  mediaError: Record<string, string | null>,
+  mediaPage: Record<string, number>,
+  mediaHasMore: Record<string, boolean>,
+  fetchMediaPage: (section: string, page: number, replace?: boolean) => void,
+  mediaFilter: "all" | "logos" | "banners" | "avatars",
+  setMediaFilter: (value: "all" | "logos" | "banners" | "avatars") => void,
+  selectedMediaIds: { id: string; section: string }[],
+  toggleMediaSelection: (section: string, id: string) => void,
+  handleDeleteMedia: (section: string, id: string) => void,
+  handleDeleteSelectedMedia: () => void,
   user: User | null,
   username: string | null,
   userProjectIds: string[],
@@ -1387,7 +1667,7 @@ function renderContent(
   loginLoading: boolean,
   loginError: string | null,
   onSelectProject: (project: ProjectItem | null) => void,
-  setEditorModal: (value: "project" | "news" | "event" | "member" | null) => void,
+  setEditorModal: (value: "project" | "news" | "event" | "member" | "media" | null) => void,
   onLogout: () => Promise<void>
 ) {
   const modrinthCards = modrinthProjects.map(toModrinthCard);
@@ -1944,79 +2224,181 @@ if (page === "explore") {
           </button>
           <button
             type="button"
-            onClick={() => fetchMediaPage(1, true)}
-            className="rounded-full border border-[rgba(255,255,255,0.14)] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.75)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
+            onClick={() => setEditorModal("media")}
+            className="flex items-center gap-2 rounded-[12px] bg-[#2BFE71] px-6 py-3 text-[14px] font-semibold text-[#0D0E12] transition hover:bg-[#25e565]"
           >
-            Neu laden
+            <i className="fa-solid fa-plus" aria-hidden="true" />
+            Bild hochladen
           </button>
         </div>
 
-        {mediaError && (
-          <div className="rounded-[12px] border border-[rgba(255,100,100,0.25)] bg-[rgba(255,100,100,0.08)] px-4 py-3 text-[12px] text-[rgba(255,255,255,0.75)]">
-            {mediaError}
-          </div>
-        )}
-
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {mediaItems.map((item, index) => {
-            const preview =
-              item.variants?.thumbUrl ??
-              item.variants?.webpUrl ??
-              item.variants?.originalUrl ??
-              item.thumbUrl ??
-              item.url ??
-              null;
-            const id = item.id ?? `media-${index}`;
+        <div className="flex flex-wrap items-center gap-2">
+          {([
+            { id: "all", label: "Alle" },
+            { id: "logos", label: "Logos" },
+            { id: "banners", label: "Banner" },
+            { id: "avatars", label: "Avatars" }
+          ] as const).map((option) => {
+            const active = mediaFilter === option.id;
             return (
-              <div
-                key={id}
-                className="overflow-hidden rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[#101218]"
+              <button
+                key={option.id}
+                type="button"
+                onClick={() => setMediaFilter(option.id)}
+                className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition ${
+                  active
+                    ? "border-[#2BFE71] bg-[rgba(43,254,113,0.12)] text-[#2BFE71]"
+                    : "border-[rgba(255,255,255,0.14)] text-[rgba(255,255,255,0.75)] hover:border-[#2BFE71] hover:text-[#2BFE71]"
+                }`}
               >
-                {preview ? (
-                  <img
-                    src={preview}
-                    alt={item.id ?? "Media"}
-                    className="h-[160px] w-full object-cover"
-                  />
-                ) : (
-                  <div className="flex h-[160px] w-full items-center justify-center text-[12px] text-[rgba(255,255,255,0.35)]">
-                    Kein Preview
-                  </div>
-                )}
-                <div className="px-3 py-3">
-                  <p className="text-[12px] font-semibold text-[rgba(255,255,255,0.85)]">
-                    {item.id ?? "Unbekannt"}
-                  </p>
-                  <p className="mt-1 text-[11px] text-[rgba(255,255,255,0.45)]">
-                    {item.width && item.height
-                      ? `${item.width}x${item.height}`
-                      : "Unbekannte Groesse"}
-                  </p>
-                </div>
-              </div>
+                {option.label}
+              </button>
             );
           })}
         </div>
 
-        {!mediaItems.length && !mediaLoading && !mediaError && (
-          <div className="text-[12px] text-[rgba(255,255,255,0.55)]">
-            Keine Media-Dateien gefunden.
+        {selectedMediaIds.length > 0 && (
+          <div className="flex items-center justify-between rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#111319] px-4 py-3">
+            <p className="text-[12px] font-semibold text-[rgba(255,255,255,0.8)]">
+              {selectedMediaIds.length} ausgewaehlt
+            </p>
+            <button
+              type="button"
+              onClick={handleDeleteSelectedMedia}
+              className="flex items-center gap-2 rounded-full border border-[rgba(255,255,255,0.14)] px-3 py-1 text-[11px] font-semibold text-[rgba(255,255,255,0.75)] transition hover:border-[#FF5B5B] hover:text-[#FF5B5B]"
+            >
+              <i className="fa-solid fa-trash-can" aria-hidden="true" />
+              Loeschen
+            </button>
           </div>
         )}
 
-        <div className="flex items-center justify-between">
-          <div className="text-[11px] text-[rgba(255,255,255,0.45)]">
-            {mediaLoading ? "Lade..." : mediaHasMore ? "Weitere verfuegbar" : "Alles geladen"}
-          </div>
-          <button
-            type="button"
-            onClick={() => fetchMediaPage(mediaPage + 1)}
-            disabled={!mediaHasMore || mediaLoading}
-            className="rounded-full border border-[rgba(255,255,255,0.14)] px-3 py-1 text-[11px] text-[rgba(255,255,255,0.75)] transition hover:border-[#2BFE71] hover:text-[#2BFE71] disabled:opacity-40"
-          >
-            Mehr laden
-          </button>
-        </div>
+        {MEDIA_SECTIONS.map((section) => {
+          if (mediaFilter !== "all" && mediaFilter !== section.key) {
+            return null;
+          }
+          const items = mediaItems[section.key] ?? [];
+          const loading = mediaLoading[section.key] ?? false;
+          const error = mediaError[section.key];
+          const pageValue = mediaPage[section.key] ?? 1;
+          const hasMore = mediaHasMore[section.key] ?? false;
+          return (
+            <div key={section.key} className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h2 className="text-[16px] font-semibold text-[rgba(255,255,255,0.9)]">
+                  {section.label}
+                </h2>
+                {section.endpoint ? (
+                  <button
+                    type="button"
+                    onClick={() => fetchMediaPage(section.key, 1, true)}
+                    className="rounded-full border border-[rgba(255,255,255,0.14)] px-3 py-1 text-[11px] text-[rgba(255,255,255,0.75)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
+                  >
+                    Neu laden
+                  </button>
+                ) : null}
+              </div>
+
+              {error && (
+                <div className="rounded-[12px] border border-[rgba(255,100,100,0.25)] bg-[rgba(255,100,100,0.08)] px-4 py-3 text-[12px] text-[rgba(255,255,255,0.75)]">
+                  {error}
+                </div>
+              )}
+
+              {!section.endpoint && (
+                <div className="text-[12px] text-[rgba(255,255,255,0.55)]">
+                  Avatar-Endpoint fehlt noch.
+                </div>
+              )}
+
+              <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                {items.map((item, index) => {
+                  const preview =
+                    item.variants?.webpUrl ??
+                    item.variants?.originalUrl ??
+                    item.variants?.thumbUrl ??
+                    item.thumbUrl ??
+                    item.url ??
+                    null;
+                  const id = item.id ?? `${section.key}-${index}`;
+                  const isSelected = Boolean(
+                    item.id && selectedMediaIds.some((entry) => entry.id === item.id)
+                  );
+                  return (
+                    <div
+                      key={id}
+                      className={`group relative overflow-hidden rounded-[10px] bg-[#0F1116] ${
+                        isSelected ? "ring-2 ring-[#2BFE71]" : "ring-1 ring-transparent"
+                      }`}
+                    >
+                      {preview ? (
+                        <img
+                          src={preview}
+                          alt={item.id ?? "Media"}
+                          className="aspect-[4/3] w-full object-cover"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <div className="flex aspect-[4/3] w-full items-center justify-center text-[11px] text-[rgba(255,255,255,0.35)]">
+                          Kein Preview
+                        </div>
+                      )}
+                      {item.id && (
+                        <>
+                          <div className="pointer-events-none absolute inset-0 bg-black/40 opacity-0 transition group-hover:opacity-100" />
+                          <div className="absolute right-2 top-2 flex gap-2 opacity-0 transition group-hover:opacity-100">
+                            <button
+                              type="button"
+                              onClick={() => toggleMediaSelection(section.key, item.id!)}
+                              className={`flex h-8 w-8 items-center justify-center rounded-full border text-[12px] transition ${
+                                isSelected
+                                  ? "border-[#2BFE71] bg-[#2BFE71] text-[#0D0E12]"
+                                  : "border-[rgba(255,255,255,0.35)] bg-black/40 text-white hover:border-[#2BFE71]"
+                              }`}
+                              aria-label="Auswaehlen"
+                            >
+                              <i className="fa-solid fa-check" aria-hidden="true" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteMedia(section.key, item.id!)}
+                              className="flex h-8 w-8 items-center justify-center rounded-full border border-[rgba(255,255,255,0.35)] bg-black/40 text-[12px] text-white transition hover:border-[#FF5B5B] hover:text-[#FF5B5B]"
+                              aria-label="Loeschen"
+                            >
+                              <i className="fa-solid fa-trash-can" aria-hidden="true" />
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {!items.length && !loading && !error && section.endpoint && (
+                <div className="text-[12px] text-[rgba(255,255,255,0.55)]">
+                  Keine Media-Dateien gefunden.
+                </div>
+              )}
+
+              {section.endpoint && (
+                <div className="flex items-center justify-between">
+                  <div className="text-[11px] text-[rgba(255,255,255,0.45)]">
+                    {loading ? "Lade..." : hasMore ? "Weitere verfuegbar" : "Alles geladen"}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => fetchMediaPage(section.key, pageValue + 1)}
+                    disabled={!hasMore || loading}
+                    className="rounded-full border border-[rgba(255,255,255,0.14)] px-3 py-1 text-[11px] text-[rgba(255,255,255,0.75)] transition hover:border-[#2BFE71] hover:text-[#2BFE71] disabled:opacity-40"
+                  >
+                    Mehr laden
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     );
   }
