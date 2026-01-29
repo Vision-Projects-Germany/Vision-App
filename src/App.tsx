@@ -1,4 +1,5 @@
-import { useEffect, useState, type DragEvent } from "react";
+﻿import { useEffect, useState, type DragEvent } from "react";
+import { useMemo, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -24,8 +25,14 @@ interface ProjectItem {
   title: string;
   slug?: string;
   description?: string | null;
+  descriptionHtml?: string | null;
+  descriptionMarkdown?: string | null;
   cover: { url: string } | null;
+  banner?: { url: string } | null;
   logoIcon?: { url: string } | null;
+  logo?: { url: string } | null;
+  activityStatus?: "Ended" | "Coming Soon" | "Active" | "Starting shortly" | null;
+  status?: string | null;
   modrinth_id?: string | null;
   modrinthId?: string | null;
   modrinthSlug?: string | null;
@@ -62,6 +69,16 @@ interface CalendarEvent {
   id: string;
   title: string;
   startDate: Date;
+}
+
+interface MemberProfile {
+  uid: string;
+  username?: string | null;
+  email?: string | null;
+  roles?: string[];
+  experience?: string | null;
+  level?: number | null;
+  minecraftName?: string | null;
 }
 
 interface ModrinthGalleryItem {
@@ -111,6 +128,16 @@ const modrinthTypeLabels: Record<string, string> = {
   shader: "Shader"
 };
 
+const activityStatusLabels: Record<
+  NonNullable<ProjectItem["activityStatus"]>,
+  string
+> = {
+  "Starting shortly": "Starting shortly",
+  "Coming Soon": "Coming Soon",
+  Active: "Active",
+  Ended: "Ended"
+};
+
 const MEDIA_SECTIONS = [
   {
     key: "logos",
@@ -128,6 +155,179 @@ const MEDIA_SECTIONS = [
     endpoint: "https://api.blizz-developments-official.de/api/media/avatars"
   }
 ] as const;
+
+const PROJECT_PERMISSIONS = [
+  "projects.read",
+  "projects.read.admin",
+  "projects.create",
+  "projects.edit",
+  "projects.delete",
+  "projects.publish",
+  "projects.unpublish",
+  "project.read",
+  "project.view",
+  "project.create",
+  "project.edit",
+  "project.delete",
+  "project.join",
+  "project.leave"
+];
+const MEDIA_PERMISSIONS = [
+  "media.read.admin",
+  "media.upload",
+  "media.delete",
+  "media.moderate"
+];
+const NEWS_PERMISSIONS = [
+  "news.read",
+  "news.read.admin",
+  "news.create",
+  "news.edit",
+  "news.delete",
+  "news.publish",
+  "news.unpublish"
+];
+const CALENDAR_PERMISSIONS = [
+  "calendar.read",
+  "calendar.read.admin",
+  "calendar.create",
+  "calendar.edit",
+  "calendar.delete",
+  "calendar.publish",
+  "calendar.unpublish"
+];
+const MEMBER_PERMISSIONS = ["users.read.admin", "users.edit.admin"];
+const ROLE_PERMISSIONS = ["users.roles.manage", "users.permissions.manage"];
+const ADMIN_PERMISSIONS = [
+  ...MEMBER_PERMISSIONS,
+  ...ROLE_PERMISSIONS,
+  "content.audit.read",
+  "content.audit.write",
+  "content.restore",
+  "system.config.read",
+  "system.config.write",
+  "system.health.read",
+  "system.logs.read",
+  "system.logs.purge",
+  "system.rate_limit.manage",
+  "storage.cleanup",
+  "storage.rebuild",
+  "backups.create",
+  "backups.restore",
+  "exports.create",
+  "exports.download"
+];
+
+type PermissionFlags = {
+  canAccessProjects: boolean;
+  canCreateProject: boolean;
+  canEditProject: boolean;
+  canDeleteProject: boolean;
+  canAccessMedia: boolean;
+  canUploadMedia: boolean;
+  canDeleteMedia: boolean;
+  canAccessNews: boolean;
+  canAccessCalendar: boolean;
+  canAccessEditor: boolean;
+  canAccessAnalytics: boolean;
+  canAccessAdmin: boolean;
+  canAccessMembers: boolean;
+  canAccessRoles: boolean;
+};
+
+const buildPermissionFlags = (
+  permissions: string[],
+  roles: string[]
+): PermissionFlags => {
+  const permissionSet = new Set(permissions);
+  const has = (perm: string) => permissionSet.has(perm);
+  const hasAny = (perms: string[]) => perms.some((perm) => permissionSet.has(perm));
+  const hasPrefix = (prefix: string) =>
+    permissions.some((perm) => perm.startsWith(prefix));
+  const hasAdminRole = roles.includes("admin");
+  if (hasAdminRole) {
+    return {
+      canAccessProjects: true,
+      canCreateProject: true,
+      canEditProject: true,
+      canDeleteProject: true,
+      canAccessMedia: true,
+      canUploadMedia: true,
+      canDeleteMedia: true,
+      canAccessNews: true,
+      canAccessCalendar: true,
+      canAccessEditor: true,
+      canAccessAnalytics: true,
+      canAccessAdmin: true,
+      canAccessMembers: true,
+      canAccessRoles: true
+    };
+  }
+  const canAccessProjects =
+    hasAny(PROJECT_PERMISSIONS) || hasPrefix("projects.") || hasPrefix("project.");
+  const canCreateProject = has("projects.create") || has("project.create");
+  const canEditProject = has("projects.edit") || has("project.edit");
+  const canDeleteProject = has("projects.delete") || has("project.delete");
+  const canAccessMedia = hasAny(MEDIA_PERMISSIONS) || hasPrefix("media.");
+  const canUploadMedia = has("media.upload");
+  const canDeleteMedia =
+    has("media.delete") || has("media.moderate") || hasPrefix("media.delete");
+  const canAccessNews = hasAny(NEWS_PERMISSIONS) || hasPrefix("news.");
+  const canAccessCalendar =
+    hasAny(CALENDAR_PERMISSIONS) || hasPrefix("calendar.");
+  const canAccessEditor =
+    canAccessProjects || canAccessMedia || canAccessNews || canAccessCalendar;
+  const canAccessAnalytics = has("stats.read.admin");
+  const canAccessMembers = hasAny(MEMBER_PERMISSIONS);
+  const canAccessRoles = hasAdminRole && hasAny(ROLE_PERMISSIONS);
+  const canAccessAdmin = hasAny(ADMIN_PERMISSIONS);
+
+  return {
+    canAccessProjects,
+    canCreateProject,
+    canEditProject,
+    canDeleteProject,
+    canAccessMedia,
+    canUploadMedia,
+    canDeleteMedia,
+    canAccessNews,
+    canAccessCalendar,
+    canAccessEditor,
+    canAccessAnalytics,
+    canAccessAdmin,
+    canAccessMembers,
+    canAccessRoles
+  };
+};
+
+const isPageAllowed = (pageId: string, flags: PermissionFlags) => {
+  switch (pageId) {
+    case "home":
+    case "explore":
+    case "settings":
+    case "settings-debug":
+    case "profile":
+      return true;
+    case "editor":
+      return flags.canAccessEditor;
+    case "projects":
+      return flags.canAccessProjects;
+    case "media":
+      return flags.canAccessMedia;
+    case "analytics":
+      return flags.canAccessAnalytics;
+    case "calendar":
+      return flags.canAccessCalendar;
+    case "admin":
+      return flags.canAccessAdmin;
+    case "members":
+      return flags.canAccessMembers;
+    case "roles":
+      return flags.canAccessRoles;
+    default:
+      return true;
+  }
+};
 
 let tauriDetection: Promise<boolean> | null = null;
 
@@ -237,11 +437,14 @@ function isPage(route: string) {
     "explore",
     "media",
     "settings",
+    "settings-debug",
     "profile",
     "editor",
     "analytics",
     "calendar",
-    "admin"
+    "admin",
+    "roles",
+    "members"
   ].includes(route);
 }
 
@@ -254,6 +457,91 @@ function normalizeModrinthFields(item: ProjectItem) {
     null;
 
   return { modrinthId };
+}
+
+function normalizeProjectMedia(item: ProjectItem): ProjectItem {
+  const rawDescription =
+    item.description ??
+    item.descriptionMarkdown ??
+    // @ts-ignore backend may use snake case
+    (item as any).description_markdown ??
+    item.descriptionHtml ??
+    // @ts-ignore backend may use snake case or different casing
+    (item as any).description_html ??
+    (item as any).descriptionHTML ??
+    null;
+  const coverFromBanner =
+    item.cover ??
+    item.banner ??
+    // @ts-ignore backend may use snake case
+    (item as any).banner ??
+    null;
+  const logoFromLogo =
+    item.logoIcon ??
+    item.logo ??
+    // @ts-ignore backend may use snake case
+    (item as any).logo ??
+    null;
+  return {
+    ...item,
+    description: rawDescription ?? item.description ?? null,
+    cover: coverFromBanner,
+    logoIcon: logoFromLogo
+  };
+}
+
+function stripHtml(value: string) {
+  return value.replace(/<[^>]*>/g, "").trim();
+}
+
+const AUTHZ_CACHE_KEY = "vision.authz.cache.v1";
+
+function getProjectDescriptionText(item: ProjectItem) {
+  const value =
+    item.description ??
+    item.descriptionMarkdown ??
+    // @ts-ignore backend may use snake case
+    (item as any).description_markdown ??
+    item.descriptionHtml ??
+    // @ts-ignore backend may use snake case or different casing
+    (item as any).description_html ??
+    (item as any).descriptionHTML ??
+    null;
+  if (!value) {
+    return null;
+  }
+  return value.includes("<") ? stripHtml(value) : value;
+}
+
+function getActivityStatusBadge(status: ProjectItem["activityStatus"]) {
+  if (!status) {
+    return null;
+  }
+  const label = activityStatusLabels[status] ?? status;
+  switch (status) {
+    case "Active":
+      return {
+        label,
+        className: "bg-[#2BFE71] text-[#0D0E12]"
+      };
+    case "Coming Soon":
+      return {
+        label,
+        className: "bg-[#2BD9FF] text-[#0D0E12]"
+      };
+    case "Starting shortly":
+      return {
+        label,
+        className: "bg-[#FFD166] text-[#0D0E12]"
+      };
+    case "Ended":
+      return {
+        label,
+        className: "bg-[rgba(255,255,255,0.2)] text-[rgba(255,255,255,0.85)]"
+      };
+    default:
+      return { label, className: "border-[rgba(255,255,255,0.2)] text-white/70" };
+  }
 }
 
 function getModrinthProjectLink(project: ModrinthProject) {
@@ -431,8 +719,15 @@ export default function App() {
   const [authReady, setAuthReady] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [username, setUsername] = useState<string | null>(null);
-  const [userRoles, setUserRoles] = useState<string[]>([]);
   const [userProjectIds, setUserProjectIds] = useState<string[]>([]);
+  const [userProfileData, setUserProfileData] = useState<Record<string, unknown> | null>(
+    null
+  );
+  const [authzPermissions, setAuthzPermissions] = useState<string[]>([]);
+  const [authzRoles, setAuthzRoles] = useState<string[]>([]);
+  const [authzFetchLoading, setAuthzFetchLoading] = useState(false);
+  const [authzFetchError, setAuthzFetchError] = useState<string | null>(null);
+  const [redirectSeconds, setRedirectSeconds] = useState<number | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginLoading, setLoginLoading] = useState(false);
   const [showLoginForm, setShowLoginForm] = useState(false);
@@ -442,7 +737,10 @@ export default function App() {
   const [projectTitle, setProjectTitle] = useState("");
   const [projectSlug, setProjectSlug] = useState("");
   const [projectDescription, setProjectDescription] = useState("");
-  const [projectStatus, setProjectStatus] = useState("draft");
+  const [projectActivityStatus, setProjectActivityStatus] = useState<
+    NonNullable<ProjectItem["activityStatus"]>
+  >("Active");
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [projectModrinthId, setProjectModrinthId] = useState("");
   const [projectSource, setProjectSource] = useState<"manual" | "modrinth">("manual");
   const [projectLogoFile, setProjectLogoFile] = useState<File | null>(null);
@@ -450,6 +748,10 @@ export default function App() {
   const [projectSaving, setProjectSaving] = useState(false);
   const [projectSaveError, setProjectSaveError] = useState<string | null>(null);
   const [projectSaveSuccess, setProjectSaveSuccess] = useState(false);
+  const [projectDeleteError, setProjectDeleteError] = useState<string | null>(null);
+  const [projectDeleteCandidate, setProjectDeleteCandidate] = useState<ProjectItem | null>(
+    null
+  );
   const [mediaUploadFile, setMediaUploadFile] = useState<File | null>(null);
   const [mediaUploadType, setMediaUploadType] = useState<"logos" | "banners" | "avatars">(
     "logos"
@@ -489,12 +791,62 @@ export default function App() {
   const [mediaFilter, setMediaFilter] = useState<"all" | "logos" | "banners" | "avatars">(
     "all"
   );
+  const [members, setMembers] = useState<MemberProfile[]>([]);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [membersError, setMembersError] = useState<string | null>(null);
+  const [banCandidate, setBanCandidate] = useState<MemberProfile | null>(null);
+  const [banReason, setBanReason] = useState("Spamming");
+  const [banProgress, setBanProgress] = useState(0);
+  const [banSubmitting, setBanSubmitting] = useState(false);
+  const [banError, setBanError] = useState<string | null>(null);
+  const banHoldIntervalRef = useRef<number | null>(null);
+  const [warnCandidate, setWarnCandidate] = useState<MemberProfile | null>(null);
+  const [warnMessage, setWarnMessage] = useState("Bitte keine Werbung im Chat.");
+  const [warnProgress, setWarnProgress] = useState(0);
+  const [warnSubmitting, setWarnSubmitting] = useState(false);
+  const [warnError, setWarnError] = useState<string | null>(null);
+  const warnHoldIntervalRef = useRef<number | null>(null);
+  const permissionFlags = useMemo(
+    () => buildPermissionFlags(authzPermissions, authzRoles),
+    [authzPermissions, authzRoles]
+  );
+  const visiblePages = useMemo(() => {
+    const isModRole = authzRoles.includes("moderator") || authzRoles.includes("admin");
+    const pages = ["home", "explore", "settings", "profile"];
+    if (permissionFlags.canAccessEditor) {
+      pages.push("editor");
+    }
+    if (permissionFlags.canAccessAnalytics) {
+      pages.push("analytics");
+    }
+    if (permissionFlags.canAccessCalendar) {
+      pages.push("calendar");
+    }
+    if (permissionFlags.canAccessAdmin || isModRole) {
+      pages.push("admin");
+    }
+    return pages;
+  }, [
+    authzRoles,
+    permissionFlags.canAccessAdmin,
+    permissionFlags.canAccessAnalytics,
+    permissionFlags.canAccessCalendar,
+    permissionFlags.canAccessEditor
+  ]);
   const [selectedProject, setSelectedProject] = useState<ProjectItem | null>(null);
+  const isSelectedProjectEnded =
+    selectedProject?.activityStatus === "Ended";
   const canJoinSelectedProject = Boolean(
-    user && selectedProject && !userProjectIds.includes(selectedProject.id)
+    user &&
+      selectedProject &&
+      !userProjectIds.includes(selectedProject.id) &&
+      !isSelectedProjectEnded
   );
   const canLeaveSelectedProject = Boolean(
-    user && selectedProject && userProjectIds.includes(selectedProject.id)
+    user &&
+      selectedProject &&
+      userProjectIds.includes(selectedProject.id) &&
+      !isSelectedProjectEnded
   );
 
   const handleMediaDrop = (event: DragEvent<HTMLLabelElement>) => {
@@ -532,12 +884,12 @@ export default function App() {
         token,
         endpoint: `https://api.blizz-developments-official.de/api/admin/media?category=${mediaUploadType}`
       });
-      setMediaUploadSuccess(true);
       setMediaUploadFile(null);
       setMediaPreviewUrl(null);
+      setEditorModal(null);
+      setMediaUploadSuccess(true);
       window.setTimeout(() => {
         setMediaUploadSuccess(false);
-        setEditorModal(null);
       }, 1600);
       fetchMediaPage(mediaUploadType, 1, true);
     } catch (error) {
@@ -597,17 +949,187 @@ export default function App() {
     }
   };
 
-  
+  const [authzTestLoading, setAuthzTestLoading] = useState(false);
+  const [authzTestError, setAuthzTestError] = useState<string | null>(null);
+  const [authzResult, setAuthzResult] = useState<string | null>(null);
+  const [authzCopied, setAuthzCopied] = useState(false);
 
-  
+  const handleAuthzTest = async () => {
+    if (!user) {
+      setAuthzTestError("Bitte zuerst anmelden.");
+      return;
+    }
+    setAuthzTestLoading(true);
+    setAuthzTestError(null);
+    setAuthzResult(null);
+    try {
+      const token = await user.getIdToken();
+      const response = await requestText(
+        "https://api.blizz-developments-official.de/me/authz",
+        {
+          headers: { Authorization: `Bearer ${token}` }
+        }
+      );
+      setAuthzResult(response || "OK");
+    } catch (error) {
+      setAuthzTestError(
+        error instanceof Error ? error.message : "Request fehlgeschlagen."
+      );
+    } finally {
+      setAuthzTestLoading(false);
+    }
+  };
 
-  
+  const handleAuthzCopy = async () => {
+    if (!authzResult) {
+      return;
+    }
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(authzResult);
+      }
+      setAuthzCopied(true);
+      window.setTimeout(() => setAuthzCopied(false), 1200);
+    } catch {
+      setAuthzCopied(false);
+    }
+  };
 
-  
+  const resetBanHold = () => {
+    if (banHoldIntervalRef.current !== null) {
+      window.clearInterval(banHoldIntervalRef.current);
+      banHoldIntervalRef.current = null;
+    }
+    setBanProgress(0);
+  };
 
-  
+  const resetWarnHold = () => {
+    if (warnHoldIntervalRef.current !== null) {
+      window.clearInterval(warnHoldIntervalRef.current);
+      warnHoldIntervalRef.current = null;
+    }
+    setWarnProgress(0);
+  };
 
-  
+  const submitBan = async (member: MemberProfile, reason: string) => {
+    if (!user) {
+      setBanError("Bitte zuerst anmelden.");
+      return;
+    }
+    setBanSubmitting(true);
+    setBanError(null);
+    try {
+      const token = await user.getIdToken();
+      await requestText(
+        `https://api.blizz-developments-official.de/api/admin/users/${member.uid}/ban`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ banned: true, reason })
+        }
+      );
+      setBanCandidate(null);
+      resetBanHold();
+    } catch (error) {
+      setBanError(error instanceof Error ? error.message : "Ban fehlgeschlagen.");
+    } finally {
+      setBanSubmitting(false);
+    }
+  };
+
+  const submitWarn = async (member: MemberProfile, message: string) => {
+    if (!user) {
+      setWarnError("Bitte zuerst anmelden.");
+      return;
+    }
+    setWarnSubmitting(true);
+    setWarnError(null);
+    try {
+      const token = await user.getIdToken();
+      await requestText(
+        `https://api.blizz-developments-official.de/api/admin/users/${member.uid}/warn`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ message })
+        }
+      );
+      setWarnCandidate(null);
+      resetWarnHold();
+    } catch (error) {
+      setWarnError(error instanceof Error ? error.message : "Warnung fehlgeschlagen.");
+    } finally {
+      setWarnSubmitting(false);
+    }
+  };
+
+  const startBanHold = (member: MemberProfile) => {
+    if (banSubmitting) {
+      return;
+    }
+    resetBanHold();
+    const start = Date.now();
+    const duration = 3000;
+    banHoldIntervalRef.current = window.setInterval(() => {
+      const elapsed = Date.now() - start;
+      const next = Math.min(1, elapsed / duration);
+      setBanProgress(next);
+      if (next >= 1) {
+        resetBanHold();
+        submitBan(member, banReason.trim() || "Spamming");
+      }
+    }, 50);
+  };
+
+  const startWarnHold = (member: MemberProfile) => {
+    if (warnSubmitting) {
+      return;
+    }
+    resetWarnHold();
+    const start = Date.now();
+    const duration = 3000;
+    warnHoldIntervalRef.current = window.setInterval(() => {
+      const elapsed = Date.now() - start;
+      const next = Math.min(1, elapsed / duration);
+      setWarnProgress(next);
+      if (next >= 1) {
+        resetWarnHold();
+        submitWarn(member, warnMessage.trim() || "Bitte keine Werbung im Chat.");
+      }
+    }, 50);
+  };
+
+  const openBanDialog = (member: MemberProfile) => {
+    setBanCandidate(member);
+    setBanReason("Spamming");
+    setBanError(null);
+    resetBanHold();
+  };
+
+  const openWarnDialog = (member: MemberProfile) => {
+    setWarnCandidate(member);
+    setWarnMessage("Bitte keine Werbung im Chat.");
+    setWarnError(null);
+    resetWarnHold();
+  };
+
+
+
+
+
+
+
+
+
+
+
+
 
   useEffect(() => {
     const timer = window.setTimeout(() => setBootDelayDone(true), 900);
@@ -664,9 +1186,9 @@ export default function App() {
         try {
           const parsed = JSON.parse(cachedRaw) as ProjectItem[];
           if (Array.isArray(parsed)) {
-            cachedItems = parsed;
+            cachedItems = parsed.map(normalizeProjectMedia);
             if (!controller.signal.aborted) {
-              setProjectItems(parsed);
+              setProjectItems(cachedItems);
             }
           }
         } catch {
@@ -684,7 +1206,7 @@ export default function App() {
           return;
         }
 
-        const items = data.items as ProjectItem[];
+        const items = (data.items as ProjectItem[]).map(normalizeProjectMedia);
         const enrichedItems = await Promise.all(
           items.map(async (item) => {
             const { modrinthId } = normalizeModrinthFields(item);
@@ -697,7 +1219,7 @@ export default function App() {
               const coverUrl = getModrinthCover(modrinth);
               const fallbackCoverUrl = modrinth.icon_url ?? null;
 
-              return {
+              return normalizeProjectMedia({
                 ...item,
                 modrinthSlug:
                   modrinth.slug ??
@@ -712,7 +1234,7 @@ export default function App() {
                   : fallbackCoverUrl
                     ? { url: fallbackCoverUrl }
                     : item.cover ?? null
-              };
+              });
             } catch {
               return item;
             }
@@ -839,24 +1361,105 @@ export default function App() {
     if (!user) {
       setUsername(null);
       setUserProjectIds([]);
-      setUserRoles([]);
+      setUserProfileData(null);
+      setAuthzPermissions([]);
+      setAuthzRoles([]);
+      setAuthzFetchError(null);
+      setAuthzFetchLoading(false);
       return;
     }
 
     getDoc(doc(db, "users", user.uid))
       .then((snapshot) => {
+        setUserProfileData(snapshot.exists() ? (snapshot.data() as Record<string, unknown>) : null);
         const value = snapshot.exists() ? snapshot.get("username") : null;
         setUsername(typeof value === "string" ? value : null);
         const projectsValue = snapshot.exists() ? snapshot.get("projects") : null;
         setUserProjectIds(Array.isArray(projectsValue) ? projectsValue : []);
-        const rolesValue = snapshot.exists() ? snapshot.get("roles") : null;
-        setUserRoles(Array.isArray(rolesValue) ? rolesValue : []);
       })
       .catch(() => {
         setUsername(null);
         setUserProjectIds([]);
-      setUserRoles([]);
-    });
+        setUserProfileData(null);
+      });
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) {
+      return;
+    }
+    let active = true;
+    const cachedRaw = localStorage.getItem(AUTHZ_CACHE_KEY);
+    if (cachedRaw) {
+      try {
+        const cached = JSON.parse(cachedRaw) as {
+          uid: string;
+          permissions: string[];
+          roles: string[];
+          expiresAt: number;
+        };
+        if (cached.uid === user.uid && cached.expiresAt > Date.now()) {
+          setAuthzPermissions(Array.isArray(cached.permissions) ? cached.permissions : []);
+          setAuthzRoles(Array.isArray(cached.roles) ? cached.roles : []);
+          setAuthzFetchError(null);
+          setAuthzFetchLoading(false);
+        }
+      } catch {
+        // ignore cache parse errors
+      }
+    }
+
+    setAuthzFetchLoading(true);
+    setAuthzFetchError(null);
+    (async () => {
+      const token = await user.getIdToken();
+      const response = await requestJson<{
+        uid: string;
+        roles?: string[];
+        permissions?: string[];
+        expiresIn?: number;
+      }>("https://api.blizz-developments-official.de/me/authz", {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const permissions = Array.isArray(response?.permissions)
+        ? response.permissions
+        : [];
+      const roles = Array.isArray(response?.roles) ? response.roles : [];
+      const expiresIn = typeof response?.expiresIn === "number" ? response.expiresIn : 60;
+      const expiresAt = Date.now() + expiresIn * 1000;
+      if (!active) {
+        return;
+      }
+      setAuthzPermissions(permissions);
+      setAuthzRoles(roles);
+      setAuthzFetchError(null);
+      localStorage.setItem(
+        AUTHZ_CACHE_KEY,
+        JSON.stringify({
+          uid: user.uid,
+          permissions,
+          roles,
+          expiresAt
+        })
+      );
+    })()
+      .catch((error) => {
+        if (!active) {
+          return;
+        }
+        setAuthzFetchError(error instanceof Error ? error.message : "Authz Fehler.");
+        setAuthzPermissions([]);
+        setAuthzRoles([]);
+      })
+      .finally(() => {
+        if (active) {
+          setAuthzFetchLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
   }, [user]);
 
   const fetchMediaPage = async (section: string, page: number, replace = false) => {
@@ -914,18 +1517,100 @@ export default function App() {
     setMediaItems({ logos: [], banners: [], avatars: [] });
     setMediaHasMore({ logos: true, banners: true, avatars: true });
     setMediaPage({ logos: 1, banners: 1, avatars: 1 });
+    if (!permissionFlags.canAccessMedia) {
+      return;
+    }
     MEDIA_SECTIONS.forEach((section) => {
-      if (section.endpoint) {
-        fetchMediaPage(section.key, 1, true);
+      if (!section.endpoint) {
+        return;
       }
+      fetchMediaPage(section.key, 1, true);
     });
-  }, [activePage]);
+  }, [activePage, permissionFlags.canAccessMedia]);
+
+  useEffect(() => {
+    if (activePage !== "members") {
+      return;
+    }
+    if (!permissionFlags.canAccessMembers) {
+      return;
+    }
+    if (!user) {
+      return;
+    }
+    setMembers([]);
+    setMembersLoading(true);
+    setMembersError(null);
+    (async () => {
+      const token = await user.getIdToken();
+      const data = await requestJson<{
+        items?: Record<string, unknown>[];
+      }>("https://api.blizz-developments-official.de/api/admin/users?limit=200", {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const items = Array.isArray(data?.items) ? data.items : [];
+      const mapped = items.map((entry) => {
+        const record = entry as Record<string, unknown>;
+        return {
+          uid: typeof record.uid === "string" ? record.uid : "",
+          username: typeof record.username === "string" ? record.username : null,
+          email: typeof record.email === "string" ? record.email : null,
+          roles: Array.isArray(record.roles) ? (record.roles as string[]) : [],
+          experience: typeof record.experience === "string" ? record.experience : null,
+          level: typeof record.level === "number" ? record.level : null,
+          minecraftName:
+            typeof record.minecraftName === "string" ? record.minecraftName : null
+        } as MemberProfile;
+      });
+      setMembers(mapped.filter((item) => item.uid));
+    })()
+      .catch((error) => {
+        const message =
+          error instanceof Error ? error.message : "Unbekannter Fehler.";
+        console.error("Failed to load members", error);
+        setMembersError(`Mitglieder konnten nicht geladen werden. (${message})`);
+      })
+      .finally(() => {
+        setMembersLoading(false);
+      });
+  }, [activePage, permissionFlags.canAccessMembers, user]);
+
+  useEffect(() => {
+    if (activePage === "home") {
+      setRedirectSeconds(null);
+      return;
+    }
+    if (authzFetchLoading) {
+      setRedirectSeconds(null);
+      return;
+    }
+    if (isPageAllowed(activePage, permissionFlags)) {
+      setRedirectSeconds(null);
+      return;
+    }
+
+    setRedirectSeconds(4);
+    const intervalId = window.setInterval(() => {
+      setRedirectSeconds((prev) => {
+        if (prev === null) {
+          return null;
+        }
+        if (prev <= 1) {
+          setActivePage("home");
+          return null;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, [activePage, authzFetchLoading, permissionFlags]);
 
   useEffect(() => {
     const controller = new AbortController();
-    const isAdmin = userRoles.includes("admin");
+    const canLoadCalendar = permissionFlags.canAccessCalendar;
 
-    if (!user || !isAdmin) {
+    if (!user || !canLoadCalendar) {
       setCalendarEvents([]);
       setCalendarError(false);
       return () => controller.abort();
@@ -966,7 +1651,7 @@ export default function App() {
     loadCalendar();
 
     return () => controller.abort();
-  }, [user, userRoles]);
+  }, [user, permissionFlags.canAccessCalendar]);
 
   const handleLogin = async (email: string, password: string) => {
     setLoginLoading(true);
@@ -1011,7 +1696,8 @@ export default function App() {
         logoMediaId = await uploadMediaFile({
           file: projectLogoFile,
           token,
-          endpoint: "https://api.blizz-developments-official.de/api/admin/media/logos"
+          endpoint:
+            "https://api.blizz-developments-official.de/api/admin/media?category=logos"
         });
       }
 
@@ -1019,7 +1705,8 @@ export default function App() {
         bannerMediaId = await uploadMediaFile({
           file: projectBannerFile,
           token,
-          endpoint: "https://api.blizz-developments-official.de/api/admin/media/banners"
+          endpoint:
+            "https://api.blizz-developments-official.de/api/admin/media?category=banners"
         });
       }
 
@@ -1028,9 +1715,13 @@ export default function App() {
         slug: projectSlug,
         descriptionMarkdown: projectDescription,
         bannerMediaId,
+        coverMediaId: bannerMediaId,
         logoMediaId,
+        activityStatus: projectActivityStatus,
+        // @ts-ignore backend might accept snake_case
+        activity_status: projectActivityStatus,
         links: [],
-        status: projectStatus
+        status: "published"
       };
 
       if (hasModrinth) {
@@ -1057,6 +1748,175 @@ export default function App() {
     } finally {
       setProjectSaving(false);
     }
+  };
+
+  const handleEditProject = (project: ProjectItem) => {
+    setEditingProjectId(project.id);
+    setProjectTitle(project.title ?? "");
+    setProjectSlug(project.slug ?? "");
+    const descriptionValue =
+      project.description ??
+      project.descriptionMarkdown ??
+      // @ts-ignore backend may use snake case
+      (project as any).description_markdown ??
+      project.descriptionHtml ??
+      "";
+    setProjectDescription(
+      project.descriptionHtml ? stripHtml(descriptionValue) : descriptionValue
+    );
+    setProjectActivityStatus(project.activityStatus ?? "Active");
+    setProjectSource(project.srcModrinth ? "modrinth" : "manual");
+    setProjectModrinthId(project.modrinthId ?? project.modrinth_id ?? "");
+    setProjectLogoFile(null);
+    setProjectBannerFile(null);
+    setProjectSaveError(null);
+    setProjectSaveSuccess(false);
+    setEditorModal("project");
+  };
+
+  const handleNewProject = () => {
+    setEditingProjectId(null);
+    setProjectTitle("");
+    setProjectSlug("");
+    setProjectDescription("");
+    setProjectActivityStatus("Active");
+    setProjectSource("manual");
+    setProjectModrinthId("");
+    setProjectLogoFile(null);
+    setProjectBannerFile(null);
+    setProjectSaveError(null);
+    setProjectSaveSuccess(false);
+    setEditorModal("project");
+  };
+
+  const handleUpdateProject = async () => {
+    if (!user || !editingProjectId) {
+      setProjectSaveError("Du musst eingeloggt sein.");
+      return;
+    }
+
+    setProjectSaving(true);
+    setProjectSaveError(null);
+    setProjectSaveSuccess(false);
+
+    try {
+      const token = await user.getIdToken();
+      const trimmedModrinthId = projectModrinthId.trim();
+      const hasModrinth = projectSource === "modrinth" && Boolean(trimmedModrinthId);
+
+      let logoMediaId: string | null = null;
+      let bannerMediaId: string | null = null;
+
+      if (projectLogoFile) {
+        logoMediaId = await uploadMediaFile({
+          file: projectLogoFile,
+          token,
+          endpoint:
+            "https://api.blizz-developments-official.de/api/admin/media?category=logos"
+        });
+      }
+
+      if (projectBannerFile) {
+        bannerMediaId = await uploadMediaFile({
+          file: projectBannerFile,
+          token,
+          endpoint:
+            "https://api.blizz-developments-official.de/api/admin/media?category=banners"
+        });
+      }
+
+      const payload: Record<string, unknown> = {
+        title: projectTitle,
+        slug: projectSlug,
+        descriptionMarkdown: projectDescription,
+        bannerMediaId,
+        logoMediaId,
+        activityStatus: projectActivityStatus,
+        // @ts-ignore backend might accept snake_case
+        activity_status: projectActivityStatus,
+        links: [],
+        status: "published"
+      };
+
+      if (hasModrinth) {
+        payload.modrinthId = trimmedModrinthId;
+        payload.srcModrinth = true;
+      } else {
+        payload.srcModrinth = false;
+      }
+
+      await requestText(
+        `https://api.blizz-developments-official.de/api/admin/projects/${editingProjectId}`,
+        {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(payload)
+        }
+      );
+
+      setProjectItems((prev) =>
+        prev.map((project) =>
+          project.id === editingProjectId
+            ? normalizeProjectMedia({
+                ...project,
+                title: projectTitle,
+                slug: projectSlug,
+                description: projectDescription,
+                activityStatus: projectActivityStatus,
+                srcModrinth: hasModrinth
+              })
+            : project
+        )
+      );
+
+      setProjectSaveSuccess(true);
+      setEditingProjectId(null);
+    } catch (error) {
+      setProjectSaveError(
+        error instanceof Error ? error.message : "Projekt konnte nicht gespeichert werden."
+      );
+    } finally {
+      setProjectSaving(false);
+    }
+  };
+
+  const handleDeleteProject = async (projectId: string) => {
+    if (!user) {
+      setProjectDeleteError("Du musst eingeloggt sein.");
+      return;
+    }
+    setProjectDeleteError(null);
+    try {
+      const token = await user.getIdToken();
+      await requestText(
+        `https://api.blizz-developments-official.de/api/admin/projects/${projectId}`,
+        {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` }
+        }
+      );
+      setProjectItems((prev) => prev.filter((project) => project.id !== projectId));
+    } catch (error) {
+      setProjectDeleteError(
+        error instanceof Error ? error.message : "Projekt konnte nicht geloescht werden."
+      );
+    }
+  };
+
+  const requestDeleteProject = (project: ProjectItem) => {
+    setProjectDeleteCandidate(project);
+  };
+
+  const confirmDeleteProject = async () => {
+    if (!projectDeleteCandidate) {
+      return;
+    }
+    const id = projectDeleteCandidate.id;
+    setProjectDeleteCandidate(null);
+    await handleDeleteProject(id);
   };
 
   const handleJoinProject = async (projectId: string) => {
@@ -1097,8 +1957,8 @@ export default function App() {
     return (
       <AppShell>
         <div className="flex h-full w-full items-center justify-center">
-        <div className="loader" />
-      </div>
+          <div className="loader" />
+        </div>
       </AppShell>
     );
   }
@@ -1109,24 +1969,28 @@ export default function App() {
         <MainCard>
           <div className="grid h-full w-full min-h-0 grid-cols-[auto,1fr] grid-rows-[auto,1fr,auto]">
             <div className="col-start-1 row-span-3">
-              <SideIcons activeId={activePage} onChange={setActivePage} isAdmin={userRoles.includes("admin")} />
+              <SideIcons
+                activeId={activePage}
+                onChange={setActivePage}
+                visiblePages={visiblePages}
+              />
             </div>
             <div className="col-start-2 row-start-2 min-h-0 pl-[24px] pr-[340px] pt-[24px]">
               <div className="h-full min-h-0 overflow-hidden">
                 <div className="h-full min-h-0 overflow-auto pr-2">
-              {renderContent(
-                activePage,
-                setActivePage,
-                projectItems,
-                projectError,
-                modrinthProjects,
-                modrinthError,
-                calendarEvents,
-                calendarError,
-                mediaItems,
-                mediaLoading,
-                mediaError,
-                mediaPage,
+                  {renderContent(
+                    activePage,
+                    setActivePage,
+                    projectItems,
+                    projectError,
+                    modrinthProjects,
+                    modrinthError,
+                    calendarEvents,
+                    calendarError,
+                    mediaItems,
+                    mediaLoading,
+                    mediaError,
+                    mediaPage,
                 mediaHasMore,
                 fetchMediaPage,
                 mediaFilter,
@@ -1135,19 +1999,38 @@ export default function App() {
                 toggleMediaSelection,
                 handleDeleteMedia,
                 handleDeleteSelectedMedia,
+                projectDeleteError,
+                requestDeleteProject,
+                handleEditProject,
+                handleNewProject,
+                permissionFlags,
+                authzFetchLoading,
+                authzFetchError,
+                userProfileData,
+                redirectSeconds,
+                members,
+                membersLoading,
+                membersError,
+                openBanDialog,
+                openWarnDialog,
+                handleAuthzTest,
+                authzTestLoading,
+                authzTestError,
+                authzResult,
+                handleAuthzCopy,
+                authzCopied,
                 user,
-                username,
-                userProjectIds,
-                userRoles,
-                showLoginForm,
-                setShowLoginForm,
-                handleLogin,
-                loginLoading,
-                loginError,
-                setSelectedProject,
-                setEditorModal,
-                handleLogout
-              )}
+                    username,
+                    userProjectIds,
+                    showLoginForm,
+                    setShowLoginForm,
+                    handleLogin,
+                    loginLoading,
+                    loginError,
+                    setSelectedProject,
+                    setEditorModal,
+                    handleLogout
+                  )}
                 </div>
               </div>
             </div>
@@ -1195,6 +2078,156 @@ export default function App() {
           <div className="flex-1" />
           <div className="w-full h-[200px] bg-white rounded-t-lg" />
         </div>
+        {banCandidate && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 px-4">
+            <div className="w-full max-w-[420px] rounded-[18px] border border-[rgba(255,255,255,0.12)] bg-[#14161B] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
+              <div className="flex items-center justify-between">
+                <h2 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
+                  Nutzer bannen
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBanCandidate(null);
+                    resetBanHold();
+                  }}
+                  className="flex h-8 w-8 items-center justify-center rounded-full text-[rgba(255,255,255,0.7)] transition hover:bg-[rgba(255,255,255,0.08)]"
+                  aria-label="Dialog schliessen"
+                >
+                  <i className="fa-solid fa-xmark" aria-hidden="true" />
+                </button>
+              </div>
+              <p className="mt-3 text-[12px] text-[rgba(255,255,255,0.6)]">
+                Bist du sicher, dass du{" "}
+                <span className="text-[rgba(255,255,255,0.85)] font-semibold">
+                  {banCandidate.username ?? banCandidate.uid}
+                </span>{" "}
+                bannen willst?
+              </p>
+              <div className="mt-4 space-y-2">
+                <label className="text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]">
+                  Grund
+                </label>
+                <input
+                  value={banReason}
+                  onChange={(event) => setBanReason(event.target.value)}
+                  className="w-full rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[#0F1116] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.8)] outline-none focus:border-[#FF5B5B]"
+                  placeholder="Grund fuer den Bann"
+                />
+              </div>
+              {banError && (
+                <div className="mt-3 rounded-[10px] border border-[rgba(255,100,100,0.25)] bg-[rgba(255,100,100,0.08)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.8)]">
+                  {banError}
+                </div>
+              )}
+              <div className="mt-4 space-y-2">
+                <button
+                  type="button"
+                  onMouseDown={() => startBanHold(banCandidate)}
+                  onMouseUp={resetBanHold}
+                  onMouseLeave={resetBanHold}
+                  onTouchStart={() => startBanHold(banCandidate)}
+                  onTouchEnd={resetBanHold}
+                  disabled={banSubmitting}
+                  className="relative w-full overflow-hidden rounded-[12px] border border-[rgba(255,91,91,0.35)] bg-[rgba(255,91,91,0.12)] px-4 py-3 text-[12px] font-semibold text-[#FF8A8A] transition hover:bg-[rgba(255,91,91,0.2)] disabled:opacity-60"
+                >
+                  <span className="relative z-10">
+                    {banSubmitting ? "Wird gebannt..." : "3 Sekunden halten zum Bannen"}
+                  </span>
+                  <span
+                    className="absolute inset-0 z-0 bg-[rgba(255,91,91,0.4)] transition-all"
+                    style={{ width: `${banProgress * 100}%` }}
+                  />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBanCandidate(null);
+                    resetBanHold();
+                  }}
+                  className="w-full rounded-[12px] border border-[rgba(255,255,255,0.12)] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.7)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
+                >
+                  Abbrechen
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {warnCandidate && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 px-4">
+            <div className="w-full max-w-[420px] rounded-[18px] border border-[rgba(255,255,255,0.12)] bg-[#14161B] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
+              <div className="flex items-center justify-between">
+                <h2 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
+                  Nutzer warnen
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setWarnCandidate(null);
+                    resetWarnHold();
+                  }}
+                  className="flex h-8 w-8 items-center justify-center rounded-full text-[rgba(255,255,255,0.7)] transition hover:bg-[rgba(255,255,255,0.08)]"
+                  aria-label="Dialog schliessen"
+                >
+                  <i className="fa-solid fa-xmark" aria-hidden="true" />
+                </button>
+              </div>
+              <p className="mt-3 text-[12px] text-[rgba(255,255,255,0.6)]">
+                Sende eine Warnung an{" "}
+                <span className="text-[rgba(255,255,255,0.85)] font-semibold">
+                  {warnCandidate.username ?? warnCandidate.uid}
+                </span>
+                .
+              </p>
+              <div className="mt-4 space-y-2">
+                <label className="text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]">
+                  Nachricht
+                </label>
+                <input
+                  value={warnMessage}
+                  onChange={(event) => setWarnMessage(event.target.value)}
+                  className="w-full rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[#0F1116] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.8)] outline-none focus:border-[#FFD166]"
+                  placeholder="Warn-Nachricht"
+                />
+              </div>
+              {warnError && (
+                <div className="mt-3 rounded-[10px] border border-[rgba(255,201,120,0.25)] bg-[rgba(255,201,120,0.08)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.8)]">
+                  {warnError}
+                </div>
+              )}
+              <div className="mt-4 space-y-2">
+                <button
+                  type="button"
+                  onMouseDown={() => startWarnHold(warnCandidate)}
+                  onMouseUp={resetWarnHold}
+                  onMouseLeave={resetWarnHold}
+                  onTouchStart={() => startWarnHold(warnCandidate)}
+                  onTouchEnd={resetWarnHold}
+                  disabled={warnSubmitting}
+                  className="relative w-full overflow-hidden rounded-[12px] border border-[rgba(255,209,102,0.35)] bg-[rgba(255,209,102,0.12)] px-4 py-3 text-[12px] font-semibold text-[#FFD166] transition hover:bg-[rgba(255,209,102,0.2)] disabled:opacity-60"
+                >
+                  <span className="relative z-10">
+                    {warnSubmitting ? "Wird gesendet..." : "3 Sekunden halten zum Warnen"}
+                  </span>
+                  <span
+                    className="absolute inset-0 z-0 bg-[rgba(255,209,102,0.4)] transition-all"
+                    style={{ width: `${warnProgress * 100}%` }}
+                  />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setWarnCandidate(null);
+                    resetWarnHold();
+                  }}
+                  className="w-full rounded-[12px] border border-[rgba(255,255,255,0.12)] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.7)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
+                >
+                  Abbrechen
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {selectedProject && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 px-4">
             <div className="w-full max-w-[720px] overflow-hidden rounded-[24px] border border-[rgba(255,255,255,0.12)] bg-[#24262C] shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
@@ -1227,7 +2260,7 @@ export default function App() {
                     Beschreibung
                   </p>
                   <p className="mt-2 text-[13px] leading-[20px] text-[rgba(255,255,255,0.75)]">
-                    {selectedProject.description ?? fallbackProjectDescription}
+                    {getProjectDescriptionText(selectedProject) ?? fallbackProjectDescription}
                   </p>
                 </div>
                 <div className="mt-5 flex items-center justify-end gap-3">
@@ -1249,6 +2282,11 @@ export default function App() {
                       Verlassen
                     </button>
                   )}
+                  {isSelectedProjectEnded && (
+                    <span className="text-[12px] text-[rgba(255,255,255,0.55)]">
+                      Projekt beendet – keine Aenderungen moeglich.
+                    </span>
+                  )}
                   <button
                     type="button"
                     onClick={() => setSelectedProject(null)}
@@ -1266,7 +2304,8 @@ export default function App() {
             <div className={`w-full rounded-[20px] border border-[rgba(255,255,255,0.12)] bg-[#0F1116] p-6 shadow-[0_40px_80px_rgba(0,0,0,0.55)] ${editorModal === "project" ? "max-w-4xl" : "max-w-2xl"}`}>
               <div className="flex items-center justify-between">
                 <h2 className="text-[18px] font-semibold text-[rgba(255,255,255,0.92)]">
-                  {editorModal === "project" && "Neues Projekt erstellen"}
+                  {editorModal === "project" &&
+                    (editingProjectId ? "Projekt bearbeiten" : "Neues Projekt erstellen")}
                   {editorModal === "news" && "News erstellen"}
                   {editorModal === "event" && "Kalender-Event anlegen"}
                   {editorModal === "media" && "Bild hochladen"}
@@ -1294,22 +2333,20 @@ export default function App() {
                           setProjectSource("manual");
                           setProjectModrinthId("");
                         }}
-                        className={`px-4 py-2 text-[12px] font-semibold transition ${
-                          projectSource === "manual"
-                            ? "bg-[#2BFE71] text-[#0D0E12]"
-                            : "text-[rgba(255,255,255,0.70)] hover:text-white"
-                        }`}
+                        className={`px-4 py-2 text-[12px] font-semibold transition ${projectSource === "manual"
+                          ? "bg-[#2BFE71] text-[#0D0E12]"
+                          : "text-[rgba(255,255,255,0.70)] hover:text-white"
+                          }`}
                       >
                         Manuell
                       </button>
                       <button
                         type="button"
                         onClick={() => setProjectSource("modrinth")}
-                        className={`px-4 py-2 text-[12px] font-semibold transition ${
-                          projectSource === "modrinth"
-                            ? "bg-[#2BFE71] text-[#0D0E12]"
-                            : "text-[rgba(255,255,255,0.70)] hover:text-white"
-                        }`}
+                        className={`px-4 py-2 text-[12px] font-semibold transition ${projectSource === "modrinth"
+                          ? "bg-[#2BFE71] text-[#0D0E12]"
+                          : "text-[rgba(255,255,255,0.70)] hover:text-white"
+                          }`}
                       >
                         Modrinth
                       </button>
@@ -1386,16 +2423,22 @@ export default function App() {
                     </div>
                     <div className="space-y-2">
                       <label className="flex items-center gap-2 text-[12px] font-semibold text-[rgba(255,255,255,0.82)]">
-                        <i className="fa-solid fa-flag text-[13px] text-[#2BFE71]" aria-hidden="true" />
-                        Status
+                        <i className="fa-solid fa-bolt text-[13px] text-[#2BFE71]" aria-hidden="true" />
+                        Activity Status
                       </label>
                       <select
-                        value={projectStatus}
-                        onChange={(event) => setProjectStatus(event.target.value)}
+                        value={projectActivityStatus}
+                        onChange={(event) =>
+                          setProjectActivityStatus(
+                            event.target.value as NonNullable<ProjectItem["activityStatus"]>
+                          )
+                        }
                         className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71]"
                       >
-                        <option value="draft">draft</option>
-                        <option value="published">published</option>
+                        <option value="Active">Active</option>
+                        <option value="Starting shortly">Starting shortly</option>
+                        <option value="Coming Soon">Coming Soon</option>
+                        <option value="Ended">Ended</option>
                       </select>
                     </div>
                     <div className="space-y-2">
@@ -1422,16 +2465,22 @@ export default function App() {
                           </span>
                         )}
                         {projectSaveSuccess && !projectSaveError && (
-                          <span className="text-[#2BFE71]">Projekt gespeichert.</span>
+                          <span className="text-[#2BFE71]">
+                            {editingProjectId ? "Projekt aktualisiert." : "Projekt gespeichert."}
+                          </span>
                         )}
                       </div>
                       <button
                         type="button"
-                        onClick={handleCreateProject}
+                        onClick={editingProjectId ? handleUpdateProject : handleCreateProject}
                         disabled={projectSaving || (projectSource === "modrinth" && !projectModrinthId.trim())}
                         className="rounded-full bg-[#2BFE71] px-4 py-2 text-[12px] font-semibold text-[#0D0E12] disabled:opacity-60"
                       >
-                        {projectSaving ? "Speichern..." : "Projekt speichern"}
+                        {projectSaving
+                          ? "Speichern..."
+                          : editingProjectId
+                            ? "Projekt aktualisieren"
+                            : "Projekt speichern"}
                       </button>
                     </div>
                   </div>
@@ -1488,11 +2537,10 @@ export default function App() {
                             key={option.id}
                             type="button"
                             onClick={() => setMediaUploadType(option.id)}
-                            className={`px-4 py-2 text-[12px] font-semibold transition ${
-                              active
-                                ? "bg-[#2BFE71] text-[#0D0E12]"
-                                : "text-[rgba(255,255,255,0.70)] hover:text-white"
-                            }`}
+                            className={`px-4 py-2 text-[12px] font-semibold transition ${active
+                              ? "bg-[#2BFE71] text-[#0D0E12]"
+                              : "text-[rgba(255,255,255,0.70)] hover:text-white"
+                              }`}
                           >
                             {option.label}
                           </button>
@@ -1508,11 +2556,10 @@ export default function App() {
                         </span>
                       )}
                       <span
-                        className={`inline-flex items-center gap-2 text-[#2BFE71] transition-all duration-500 ${
-                          mediaUploadSuccess && !mediaUploadError
-                            ? "opacity-100 translate-y-0"
-                            : "opacity-0 -translate-y-1 pointer-events-none"
-                        }`}
+                        className={`inline-flex items-center gap-2 text-[#2BFE71] transition-all duration-500 ${mediaUploadSuccess && !mediaUploadError
+                          ? "opacity-100 translate-y-0"
+                          : "opacity-0 -translate-y-1 pointer-events-none"
+                          }`}
                       >
                         <i className="fa-solid fa-check" aria-hidden="true" />
                         Upload abgeschlossen.
@@ -1530,7 +2577,7 @@ export default function App() {
                 </div>
               )}
 
-{editorModal === "news" && (
+              {editorModal === "news" && (
                 <div className="mt-4 grid gap-4 md:grid-cols-2">
                   <div className="md:col-span-2">
                     <label className="text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]">
@@ -1569,19 +2616,6 @@ export default function App() {
                     >
                       News speichern
                     </button>
-                  </div>
-                </div>
-              )}
-
-              {editorModal === "media" && mediaUploadSuccess && (
-                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70">
-                  <div className="flex flex-col items-center gap-3 rounded-[20px] border border-[rgba(255,255,255,0.12)] bg-[#111319] px-8 py-6 text-center shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
-                    <div className="flex h-14 w-14 items-center justify-center rounded-full bg-[rgba(43,254,113,0.15)] text-[#2BFE71]">
-                      <i className="fa-solid fa-check text-[24px]" aria-hidden="true" />
-                    </div>
-                    <p className="text-[16px] font-semibold text-[rgba(255,255,255,0.9)]">
-                      Upload abgeschlossen
-                    </p>
                   </div>
                 </div>
               )}
@@ -1631,6 +2665,60 @@ export default function App() {
             </div>
           </div>
         )}
+        {projectDeleteCandidate && (
+          <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/70 px-4">
+            <div className="w-full max-w-md rounded-[18px] border border-[rgba(255,255,255,0.12)] bg-[#0F1116] p-6 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
+              <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
+                Projekt loeschen?
+              </h3>
+              <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.65)]">
+                {projectDeleteCandidate.title} wird dauerhaft geloescht.
+              </p>
+              <div className="mt-5 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setProjectDeleteCandidate(null)}
+                  className="rounded-[10px] border border-[rgba(255,255,255,0.12)] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.75)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
+                >
+                  Abbrechen
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmDeleteProject}
+                  className="rounded-[10px] bg-[#FF5B5B] px-4 py-2 text-[12px] font-semibold text-[#0D0E12] transition hover:brightness-95"
+                >
+                  Loeschen
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {mediaUploadSuccess && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-transparent">
+            <div className="flex flex-col items-center gap-3 rounded-[20px] border border-[rgba(255,255,255,0.12)] bg-[#111319] px-8 py-6 text-center shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
+              <div className="success-animation">
+                <svg
+                  className="checkmark"
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 52 52"
+                >
+                  <circle
+                    className="checkmark__circle"
+                    cx="26"
+                    cy="26"
+                    r="25"
+                    fill="none"
+                  />
+                  <path
+                    className="checkmark__check"
+                    fill="none"
+                    d="M14.1 27.2l7.1 7.2 16.7-16.8"
+                  />
+                </svg>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </AppShell>
   );
@@ -1657,10 +2745,29 @@ function renderContent(
   toggleMediaSelection: (section: string, id: string) => void,
   handleDeleteMedia: (section: string, id: string) => void,
   handleDeleteSelectedMedia: () => void,
+  projectDeleteError: string | null,
+  requestDeleteProject: (project: ProjectItem) => void,
+  handleEditProject: (project: ProjectItem) => void,
+  handleNewProject: () => void,
+  permissionFlags: PermissionFlags,
+  authzFetchLoading: boolean,
+  authzFetchError: string | null,
+  userProfileData: Record<string, unknown> | null,
+  redirectSeconds: number | null,
+  members: MemberProfile[],
+  membersLoading: boolean,
+  membersError: string | null,
+  onOpenBanDialog: (member: MemberProfile) => void,
+  onOpenWarnDialog: (member: MemberProfile) => void,
+  handleAuthzTest: () => void,
+  authzTestLoading: boolean,
+  authzTestError: string | null,
+  authzResult: string | null,
+  handleAuthzCopy: () => void,
+  authzCopied: boolean,
   user: User | null,
   username: string | null,
   userProjectIds: string[],
-  userRoles: string[],
   showLoginForm: boolean,
   setShowLoginForm: (value: boolean) => void,
   onLogin: (email: string, password: string) => Promise<void>,
@@ -1672,8 +2779,52 @@ function renderContent(
 ) {
   const modrinthCards = modrinthProjects.map(toModrinthCard);
   const groupedModrinth = groupModrinthCards(modrinthCards);
-  const isAdmin = userRoles.includes("admin");
   const myProjects = projects.filter((item) => userProjectIds.includes(item.id));
+  const canAccessPage = (pageId: string) => isPageAllowed(pageId, permissionFlags);
+  const isPublicPage = ["home", "explore", "settings", "settings-debug", "profile"].includes(
+    page
+  );
+
+  if (authzFetchLoading && !isPublicPage) {
+    return (
+      <div className="flex h-full w-full items-center justify-center">
+        <div className="loader" />
+      </div>
+    );
+  }
+
+  if (!canAccessPage(page)) {
+    return (
+      <div className="flex h-full w-full items-center justify-center">
+        <div className="w-full max-w-md rounded-[18px] border border-[rgba(255,255,255,0.12)] bg-[#0F1116] p-6 text-center shadow-[0_30px_60px_rgba(0,0,0,0.45)]">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[rgba(255,255,255,0.08)] text-[rgba(255,255,255,0.7)]">
+            <i className="fa-solid fa-lock text-[22px]" aria-hidden="true" />
+          </div>
+          <h2 className="mt-4 text-[18px] font-semibold text-[rgba(255,255,255,0.92)]">
+            Keine Berechtigung
+          </h2>
+          <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.60)]">
+            Diese Seite ist fuer dein Profil nicht freigeschaltet.
+          </p>
+          <p className="mt-4 text-[12px] text-[rgba(255,255,255,0.55)]">
+            Weiterleitung zu Home in{" "}
+            <span className="text-[#2BFE71] font-semibold">
+              {redirectSeconds ?? 0}
+            </span>{" "}
+            Sekunden
+          </p>
+          <button
+            type="button"
+            onClick={() => onNavigate("home")}
+            className="mt-5 inline-flex items-center gap-2 rounded-[10px] border border-[rgba(255,255,255,0.12)] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.75)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
+          >
+            <i className="fa-solid fa-house" aria-hidden="true" />
+            Zur Startseite
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (page === "home") {
     return (
@@ -1702,11 +2853,28 @@ function renderContent(
               <div className="relative z-10 flex h-full w-full overflow-hidden rounded-[15px] bg-[#24262C]">
                 <div className="flex w-[260px] shrink-0 flex-col">
                   {item.cover?.url ? (
-                    <img
-                      src={item.cover.url}
-                      alt={`${item.title} hero`}
-                      className="h-[180px] w-full bg-[#0D0E12] object-cover transition duration-200 group-hover:brightness-90"
-                    />
+                    <div className="relative h-[180px] w-full overflow-hidden">
+                      <img
+                        src={item.cover.url}
+                        alt={`${item.title} hero`}
+                        className="h-full w-full bg-[#0D0E12] object-cover transition duration-200 group-hover:brightness-90"
+                      />
+                      {(() => {
+                        const badge = getActivityStatusBadge(item.activityStatus ?? null);
+                        if (!badge) {
+                          return null;
+                        }
+                        return (
+                          <div className="absolute right-5 top-3">
+                            <span
+                              className={`inline-flex rounded-[10px] px-3 py-1 text-[11px] font-semibold ${badge.className}`}
+                            >
+                              {badge.label}
+                            </span>
+                          </div>
+                        );
+                      })()}
+                    </div>
                   ) : (
                     <div className="h-[180px] w-full bg-[#0D0E12]" />
                   )}
@@ -1726,7 +2894,7 @@ function renderContent(
                       </p>
                     </div>
                     <p className="mt-[12px] text-[12px] leading-[18px] text-[rgba(255,255,255,0.70)] max-h-[72px] overflow-hidden">
-                      {item.description ?? fallbackProjectDescription}
+                      {getProjectDescriptionText(item) ?? fallbackProjectDescription}
                     </p>
                   </div>
                 </div>
@@ -1746,7 +2914,7 @@ function renderContent(
                     </p>
                   )}
                   <p className="mt-3 text-[12px] leading-[18px] text-[rgba(255,255,255,0.7)]">
-                    {item.description ?? fallbackProjectDescription}
+                    {getProjectDescriptionText(item) ?? fallbackProjectDescription}
                   </p>
                 </div>
               </div>
@@ -1786,17 +2954,34 @@ function renderContent(
                 />
                 <div className="relative z-10 flex h-full w-full overflow-hidden rounded-[15px] bg-[#24262C]">
                   <div className="flex w-[260px] shrink-0 flex-col">
-                    {item.cover?.url ? (
+                  {item.cover?.url ? (
+                    <div className="relative h-[180px] w-full overflow-hidden">
                       <img
                         src={item.cover.url}
                         alt={`${item.title} hero`}
-                        className="h-[180px] w-full bg-[#0D0E12] object-cover transition duration-200 group-hover:brightness-90"
+                        className="h-full w-full bg-[#0D0E12] object-cover transition duration-200 group-hover:brightness-90"
                       />
-                    ) : (
-                      <div className="h-[180px] w-full bg-[#0D0E12]" />
-                    )}
-                    <div className="px-[16px] pb-[18px] pt-[14px]">
-                      <div className="flex items-center gap-[12px]">
+                      {(() => {
+                        const badge = getActivityStatusBadge(item.activityStatus ?? null);
+                        if (!badge) {
+                          return null;
+                        }
+                        return (
+                          <div className="absolute right-5 top-3">
+                            <span
+                              className={`inline-flex rounded-[10px] px-3 py-1 text-[11px] font-semibold ${badge.className}`}
+                            >
+                              {badge.label}
+                            </span>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  ) : (
+                    <div className="h-[180px] w-full bg-[#0D0E12]" />
+                  )}
+                  <div className="px-[16px] pb-[18px] pt-[14px]">
+                    <div className="flex items-center gap-[12px]">
                         {item.logoIcon?.url ? (
                           <img
                             src={item.logoIcon.url}
@@ -1806,13 +2991,13 @@ function renderContent(
                         ) : (
                           <div className="h-[48px] w-[48px] rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[#1B1D22]" />
                         )}
-                        <p className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
-                          {item.title}
-                        </p>
-                      </div>
-                      <p className="mt-[12px] text-[12px] leading-[18px] text-[rgba(255,255,255,0.70)] max-h-[72px] overflow-hidden">
-                        {item.description ?? fallbackProjectDescription}
+                      <p className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
+                        {item.title}
                       </p>
+                    </div>
+                    <p className="mt-[12px] text-[12px] leading-[18px] text-[rgba(255,255,255,0.70)] max-h-[72px] overflow-hidden">
+                      {getProjectDescriptionText(item) ?? fallbackProjectDescription}
+                    </p>
                     </div>
                   </div>
                   <div className="w-[260px] border-l border-[rgba(255,255,255,0.08)] px-[14px] py-[14px] opacity-0 transition-opacity duration-300 delay-0 group-hover:opacity-100 group-hover:delay-[5000ms]">
@@ -1831,7 +3016,7 @@ function renderContent(
                       </p>
                     )}
                     <p className="mt-3 text-[12px] leading-[18px] text-[rgba(255,255,255,0.7)]">
-                      {item.description ?? fallbackProjectDescription}
+                      {getProjectDescriptionText(item) ?? fallbackProjectDescription}
                     </p>
                   </div>
                 </div>
@@ -1852,7 +3037,7 @@ function renderContent(
   }
 
   if (page === "projects") {
-    if (!isAdmin) {
+    if (!permissionFlags.canAccessProjects) {
       return (
         <p className="text-[13px] text-[rgba(255,255,255,0.60)]">
           Keine Berechtigung.
@@ -1872,15 +3057,22 @@ function renderContent(
             <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
             Zurück
           </button>
-          <button
-            type="button"
-            onClick={() => setEditorModal("project")}
-            className="flex items-center gap-2 rounded-[12px] bg-[#2BFE71] px-6 py-3 text-[14px] font-semibold text-[#0D0E12] transition hover:bg-[#25e565]"
-          >
-            <i className="fa-solid fa-plus" aria-hidden="true" />
-            Neues Projekt
-          </button>
+          {permissionFlags.canCreateProject && (
+            <button
+              type="button"
+              onClick={handleNewProject}
+              className="flex items-center gap-2 rounded-[12px] bg-[#2BFE71] px-6 py-3 text-[14px] font-semibold text-[#0D0E12] transition hover:bg-[#25e565]"
+            >
+              <i className="fa-solid fa-plus" aria-hidden="true" />
+              Neues Projekt
+            </button>
+          )}
         </div>
+        {projectDeleteError && (
+          <div className="rounded-[12px] border border-[rgba(255,100,100,0.25)] bg-[rgba(255,100,100,0.08)] px-4 py-3 text-[12px] text-[rgba(255,255,255,0.75)]">
+            {projectDeleteError}
+          </div>
+        )}
 
         {/* Projektliste */}
         <div>
@@ -1935,28 +3127,44 @@ function renderContent(
 
                       {/* Action Buttons */}
                       <div className="mt-4 flex gap-2">
-                        <button
-                          type="button"
-                          className="flex-1 rounded-[10px] bg-[rgba(43,254,113,0.15)] px-4 py-2.5 text-[12px] font-semibold text-[#2BFE71] transition hover:bg-[rgba(43,254,113,0.25)]"
-                        >
-                          <i className="fa-solid fa-pen-to-square mr-2" aria-hidden="true" />
-                          Bearbeiten
-                        </button>
-                        <button
-                          type="button"
-                          className="rounded-[10px] border border-[rgba(255,100,100,0.3)] px-4 py-2.5 text-[12px] font-semibold text-[rgba(255,100,100,0.85)] transition hover:bg-[rgba(255,100,100,0.15)]"
-                        >
-                          <i className="fa-solid fa-trash" aria-hidden="true" />
-                        </button>
+                        {permissionFlags.canEditProject && (
+                          <button
+                            type="button"
+                            onClick={() => handleEditProject(project)}
+                            className="flex-1 rounded-[10px] bg-[rgba(43,254,113,0.15)] px-4 py-2.5 text-[12px] font-semibold text-[#2BFE71] transition hover:bg-[rgba(43,254,113,0.25)]"
+                          >
+                            <i className="fa-solid fa-pen-to-square mr-2" aria-hidden="true" />
+                            Bearbeiten
+                          </button>
+                        )}
+                        {permissionFlags.canDeleteProject && (
+                          <button
+                            type="button"
+                            onClick={() => requestDeleteProject(project)}
+                            className="rounded-[8px] bg-[#E24C4C] px-4 py-2.5 text-[12px] font-semibold text-white transition hover:bg-[#F06060]"
+                          >
+                            <i className="fa-solid fa-trash" aria-hidden="true" />
+                          </button>
+                        )}
                       </div>
                     </div>
 
                     {/* Status Badge */}
-                    <div className="absolute right-4 top-4">
-                      <div className="rounded-full bg-[rgba(43,254,113,0.2)] border border-[rgba(43,254,113,0.3)] px-3 py-1 text-[11px] font-semibold text-[#2BFE71] backdrop-blur-sm">
-                        Aktiv
-                      </div>
-                    </div>
+                    {(() => {
+                      const badge = getActivityStatusBadge(project.activityStatus ?? null);
+                      if (!badge) {
+                        return null;
+                      }
+                      return (
+                        <div className="absolute right-4 top-4">
+                          <div
+                            className={`rounded-full border px-3 py-1 text-[11px] font-semibold backdrop-blur-sm ${badge.className}`}
+                          >
+                            {badge.label}
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
               ))}
@@ -1966,7 +3174,7 @@ function renderContent(
       </div>
     );
   }
-if (page === "explore") {
+  if (page === "explore") {
     return (
       <div className="flex h-full flex-col overflow-hidden">
         <div className="mt-[16px] flex-1 overflow-auto pr-2 [&::-webkit-scrollbar]:hidden">
@@ -2080,7 +3288,7 @@ if (page === "explore") {
         </div>
       </div>
     );
-}
+  }
 
   if (page === "settings") {
     return (
@@ -2091,22 +3299,98 @@ if (page === "explore") {
         <p className="mt-[8px] text-[13px] text-[rgba(255,255,255,0.60)]">
           Einstellungen kommen spaeter.
         </p>
+        <button
+          type="button"
+          onClick={() => onNavigate("settings-debug")}
+          className="mt-4 rounded-[10px] border border-[rgba(255,255,255,0.12)] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.75)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
+        >
+          Profil-Debug (Test)
+        </button>
+        <div className="mt-4 rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-[12px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]">
+              Authz-Test
+            </p>
+            <button
+              type="button"
+              onClick={handleAuthzTest}
+              disabled={authzTestLoading}
+              className="rounded-[10px] border border-[rgba(255,255,255,0.12)] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.75)] transition hover:border-[#2BFE71] hover:text-[#2BFE71] disabled:opacity-60"
+            >
+              {authzTestLoading ? "Teste..." : "Authz pruefen"}
+            </button>
+          </div>
+          {authzTestError && (
+            <p className="mt-3 text-[12px] text-[rgba(255,100,100,0.85)]">
+              {authzTestError}
+            </p>
+          )}
+          {authzFetchError && (
+            <p className="mt-2 text-[12px] text-[rgba(255,160,160,0.8)]">
+              Authz konnte nicht geladen werden: {authzFetchError}
+            </p>
+          )}
+          {authzResult && !authzTestError && (
+            <div className="mt-3 rounded-[10px] border border-[rgba(255,255,255,0.08)] bg-[#0D0F14] p-3">
+              <pre className="text-[12px] text-[rgba(255,255,255,0.75)] whitespace-pre-wrap">
+                {authzResult}
+              </pre>
+              <div className="mt-3 flex items-center justify-start">
+                <button
+                  type="button"
+                  onClick={handleAuthzCopy}
+                  className="rounded-[8px] border border-[rgba(255,255,255,0.14)] px-3 py-1 text-[11px] font-semibold text-[rgba(255,255,255,0.75)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
+                >
+                  <span className="flex items-center gap-2">
+                    <i className="fa-solid fa-copy" aria-hidden="true" />
+                    {authzCopied ? "Kopiert" : "Kopieren"}
+                  </span>
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </>
     );
   }
 
+  if (page === "settings-debug") {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h1 className="text-[20px] font-semibold text-[rgba(255,255,255,0.92)]">
+            Profil-Debug
+          </h1>
+          <button
+            type="button"
+            onClick={() => onNavigate("settings")}
+            className="rounded-[10px] border border-[rgba(255,255,255,0.12)] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.75)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
+          >
+            Zurueck
+          </button>
+        </div>
+        <div className="rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] p-4">
+          <p className="text-[12px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]">
+            users/{user?.uid}
+          </p>
+          <pre className="mt-3 text-[12px] text-[rgba(255,255,255,0.75)] whitespace-pre-wrap">
+            {userProfileData ? JSON.stringify(userProfileData, null, 2) : "Keine Daten."}
+          </pre>
+        </div>
+      </div>
+    );
+  }
+
   if (page === "editor") {
-    if (!isAdmin) {
-      return (
-        <p className="text-[13px] text-[rgba(255,255,255,0.60)]">
-          Keine Berechtigung.
-        </p>
-      );
-    }
+    const canShowProjects = permissionFlags.canAccessProjects;
+    const canShowNews = permissionFlags.canAccessNews;
+    const canShowEvents = permissionFlags.canAccessCalendar;
+    const canShowMedia = permissionFlags.canAccessMedia;
     return (
       <div className="space-y-6">
         <div className="grid gap-8 lg:grid-cols-3">
           {/* Projekte Button - Grün */}
+          {canShowProjects && (
           <button
             type="button"
             onClick={() => onNavigate("projects")}
@@ -2128,8 +3412,10 @@ if (page === "explore") {
               </p>
             </div>
           </button>
+          )}
 
           {/* News Button - Blau */}
+          {canShowNews && (
           <button
             type="button"
             onClick={() => setEditorModal("news")}
@@ -2151,8 +3437,10 @@ if (page === "explore") {
               </p>
             </div>
           </button>
+          )}
 
           {/* Kalender Events Button - Lila */}
+          {canShowEvents && (
           <button
             type="button"
             onClick={() => setEditorModal("event")}
@@ -2174,8 +3462,10 @@ if (page === "explore") {
               </p>
             </div>
           </button>
+          )}
 
           {/* Media Button - Cyan */}
+          {canShowMedia && (
           <button
             type="button"
             onClick={() => onNavigate("media")}
@@ -2197,19 +3487,22 @@ if (page === "explore") {
               </p>
             </div>
           </button>
+          )}
         </div>
+        {!canShowProjects && !canShowNews && !canShowEvents && !canShowMedia && (
+          <p className="text-[13px] text-[rgba(255,255,255,0.60)]">
+            Keine Module freigeschaltet.
+          </p>
+        )}
       </div>
     );
   }
 
   if (page === "media") {
-    if (!isAdmin) {
-      return (
-        <p className="text-[13px] text-[rgba(255,255,255,0.60)]">
-          Keine Berechtigung.
-        </p>
-      );
-    }
+    const canAccessMedia = permissionFlags.canAccessMedia;
+    const canUploadMedia = permissionFlags.canUploadMedia;
+    const canDeleteMedia = permissionFlags.canDeleteMedia;
+    const visibleSections = canAccessMedia ? MEDIA_SECTIONS : [];
     return (
       <div className="space-y-6">
         <div className="flex items-center justify-between">
@@ -2222,34 +3515,38 @@ if (page === "explore") {
             <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
             Zurueck
           </button>
-          <button
-            type="button"
-            onClick={() => setEditorModal("media")}
-            className="flex items-center gap-2 rounded-[12px] bg-[#2BFE71] px-6 py-3 text-[14px] font-semibold text-[#0D0E12] transition hover:bg-[#25e565]"
-          >
-            <i className="fa-solid fa-plus" aria-hidden="true" />
-            Bild hochladen
-          </button>
+          {canUploadMedia && (
+            <button
+              type="button"
+              onClick={() => setEditorModal("media")}
+              className="flex items-center gap-2 rounded-[12px] bg-[#2BFE71] px-6 py-3 text-[14px] font-semibold text-[#0D0E12] transition hover:bg-[#25e565]"
+            >
+              <i className="fa-solid fa-plus" aria-hidden="true" />
+              Bild hochladen
+            </button>
+          )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 p-1">
           {([
             { id: "all", label: "Alle" },
             { id: "logos", label: "Logos" },
             { id: "banners", label: "Banner" },
             { id: "avatars", label: "Avatars" }
           ] as const).map((option) => {
+            if (!canAccessMedia) {
+              return null;
+            }
             const active = mediaFilter === option.id;
             return (
               <button
                 key={option.id}
                 type="button"
                 onClick={() => setMediaFilter(option.id)}
-                className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition ${
-                  active
-                    ? "border-[#2BFE71] bg-[rgba(43,254,113,0.12)] text-[#2BFE71]"
-                    : "border-[rgba(255,255,255,0.14)] text-[rgba(255,255,255,0.75)] hover:border-[#2BFE71] hover:text-[#2BFE71]"
-                }`}
+                className={`rounded-[8px] border px-4 py-2 text-[12px] font-semibold transition-all duration-300 ${active
+                  ? "border-[#2BFE71] bg-[rgba(43,254,113,0.12)] text-[#2BFE71] shadow-[0_0_15px_rgba(43,254,113,0.25)]"
+                  : "border-[rgba(255,255,255,0.14)] text-[rgba(255,255,255,0.75)] hover:border-[#2BFE71] hover:text-[#2BFE71] hover:bg-[rgba(43,254,113,0.05)]"
+                  }`}
               >
                 {option.label}
               </button>
@@ -2257,15 +3554,15 @@ if (page === "explore") {
           })}
         </div>
 
-        {selectedMediaIds.length > 0 && (
-          <div className="flex items-center justify-between rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#111319] px-4 py-3">
-            <p className="text-[12px] font-semibold text-[rgba(255,255,255,0.8)]">
+        {canDeleteMedia && selectedMediaIds.length > 0 && (
+          <div className="flex items-center justify-between rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#111319] px-4 py-3 animate-[slideDown_0.3s_ease-out]">
+            <p className="text-[12px] font-semibold text-[rgba(255,255,255,0.8)] transition-all duration-300">
               {selectedMediaIds.length} ausgewaehlt
             </p>
             <button
               type="button"
               onClick={handleDeleteSelectedMedia}
-              className="flex items-center gap-2 rounded-full border border-[rgba(255,255,255,0.14)] px-3 py-1 text-[11px] font-semibold text-[rgba(255,255,255,0.75)] transition hover:border-[#FF5B5B] hover:text-[#FF5B5B]"
+              className="flex items-center gap-2 rounded-[8px] border border-[rgba(255,255,255,0.14)] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.75)] transition-all duration-300 hover:border-[#FF5B5B] hover:text-[#FF5B5B] hover:bg-[rgba(255,91,91,0.1)] hover:scale-105"
             >
               <i className="fa-solid fa-trash-can" aria-hidden="true" />
               Loeschen
@@ -2273,7 +3570,7 @@ if (page === "explore") {
           </div>
         )}
 
-        {MEDIA_SECTIONS.map((section) => {
+        {visibleSections.map((section) => {
           if (mediaFilter !== "all" && mediaFilter !== section.key) {
             return null;
           }
@@ -2283,128 +3580,176 @@ if (page === "explore") {
           const pageValue = mediaPage[section.key] ?? 1;
           const hasMore = mediaHasMore[section.key] ?? false;
           return (
-            <div key={section.key} className="space-y-4">
+            <div key={section.key} className="space-y-4 animate-[fadeIn_0.4s_ease-out]">
               <div className="flex items-center justify-between">
-                <h2 className="text-[16px] font-semibold text-[rgba(255,255,255,0.9)]">
+                <h2 className="text-[16px] font-semibold text-[rgba(255,255,255,0.9)] transition-all duration-300">
                   {section.label}
                 </h2>
                 {section.endpoint ? (
                   <button
                     type="button"
                     onClick={() => fetchMediaPage(section.key, 1, true)}
-                    className="rounded-full border border-[rgba(255,255,255,0.14)] px-3 py-1 text-[11px] text-[rgba(255,255,255,0.75)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
+                    className="rounded-[8px] border border-[rgba(255,255,255,0.14)] px-4 py-2 text-[12px] text-[rgba(255,255,255,0.75)] transition-all duration-300 hover:border-[#2BFE71] hover:text-[#2BFE71] hover:bg-[rgba(43,254,113,0.08)] hover:scale-105"
+                    disabled={loading}
                   >
-                    Neu laden
+                    {loading ? (
+                      <span className="flex items-center gap-2">
+                        <i className="fa-solid fa-spinner fa-spin" aria-hidden="true" />
+                        Laden...
+                      </span>
+                    ) : (
+                      "Neu laden"
+                    )}
                   </button>
                 ) : null}
               </div>
 
               {error && (
-                <div className="rounded-[12px] border border-[rgba(255,100,100,0.25)] bg-[rgba(255,100,100,0.08)] px-4 py-3 text-[12px] text-[rgba(255,255,255,0.75)]">
-                  {error}
+                <div className="rounded-[12px] border border-[rgba(255,100,100,0.25)] bg-[rgba(255,100,100,0.08)] px-4 py-3 text-[12px] text-[rgba(255,255,255,0.75)] flex items-center gap-3 animate-[slideDown_0.3s_ease-out]">
+                  <i className="fa-solid fa-circle-exclamation text-[#FF5B5B] text-[16px]" aria-hidden="true" />
+                  <span>{error}</span>
                 </div>
               )}
 
               {!section.endpoint && (
-                <div className="text-[12px] text-[rgba(255,255,255,0.55)]">
+                <div className="flex items-center gap-3 rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.02)] px-4 py-3 text-[12px] text-[rgba(255,255,255,0.55)] animate-[fadeIn_0.4s_ease-out]">
+                  <i className="fa-solid fa-info-circle text-[rgba(255,255,255,0.35)]" aria-hidden="true" />
                   Avatar-Endpoint fehlt noch.
                 </div>
               )}
 
-              <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4">
-                {items.map((item, index) => {
-                  const preview =
-                    item.variants?.webpUrl ??
-                    item.variants?.originalUrl ??
-                    item.variants?.thumbUrl ??
-                    item.thumbUrl ??
-                    item.url ??
-                    null;
-                  const id = item.id ?? `${section.key}-${index}`;
-                  const isSelected = Boolean(
-                    item.id && selectedMediaIds.some((entry) => entry.id === item.id)
-                  );
-                  return (
+              <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-4 p-2">
+                {loading && items.length === 0 ? (
+                  // Skeleton Loading
+                  Array.from({ length: 8 }).map((_, idx) => (
                     <div
-                      key={id}
-                      className={`group relative overflow-hidden rounded-[10px] bg-[#0F1116] ${
-                        isSelected ? "ring-2 ring-[#2BFE71]" : "ring-1 ring-transparent"
-                      }`}
+                      key={`skeleton-${idx}`}
+                      className="relative overflow-hidden rounded-[10px] bg-[#0F1116] animate-pulse"
                     >
-                      {preview ? (
-                        <img
-                          src={preview}
-                          alt={item.id ?? "Media"}
-                          className="aspect-[4/3] w-full object-cover"
-                          loading="lazy"
-                        />
-                      ) : (
-                        <div className="flex aspect-[4/3] w-full items-center justify-center text-[11px] text-[rgba(255,255,255,0.35)]">
-                          Kein Preview
-                        </div>
-                      )}
-                      {item.id && (
-                        <>
-                          <div className="pointer-events-none absolute inset-0 bg-black/40 opacity-0 transition group-hover:opacity-100" />
-                          <div className="absolute right-2 top-2 flex gap-2 opacity-0 transition group-hover:opacity-100">
-                            <button
-                              type="button"
-                              onClick={() => toggleMediaSelection(section.key, item.id!)}
-                              className={`flex h-8 w-8 items-center justify-center rounded-full border text-[12px] transition ${
-                                isSelected
-                                  ? "border-[#2BFE71] bg-[#2BFE71] text-[#0D0E12]"
-                                  : "border-[rgba(255,255,255,0.35)] bg-black/40 text-white hover:border-[#2BFE71]"
-                              }`}
-                              aria-label="Auswaehlen"
-                            >
-                              <i className="fa-solid fa-check" aria-hidden="true" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteMedia(section.key, item.id!)}
-                              className="flex h-8 w-8 items-center justify-center rounded-full border border-[rgba(255,255,255,0.35)] bg-black/40 text-[12px] text-white transition hover:border-[#FF5B5B] hover:text-[#FF5B5B]"
-                              aria-label="Loeschen"
-                            >
-                              <i className="fa-solid fa-trash-can" aria-hidden="true" />
-                            </button>
-                          </div>
-                        </>
-                      )}
+                      <div className="aspect-[4/3] w-full bg-gradient-to-r from-[#0F1116] via-[#1A1C22] to-[#0F1116] bg-[length:200%_100%] animate-[shimmer_2s_infinite]" />
                     </div>
-                  );
-                })}
+                  ))
+                ) : (
+                  items.map((item, index) => {
+                    const preview =
+                      item.variants?.webpUrl ??
+                      item.variants?.originalUrl ??
+                      item.variants?.thumbUrl ??
+                      item.thumbUrl ??
+                      item.url ??
+                      null;
+                    const id = item.id ?? `${section.key}-${index}`;
+                    const isSelected = Boolean(
+                      item.id && selectedMediaIds.some((entry) => entry.id === item.id)
+                    );
+                    return (
+                      <div
+                        key={id}
+                        className={`group relative overflow-hidden rounded-[10px] bg-[#0F1116] transition-all duration-300 animate-[fadeInScale_0.4s_ease-out] ${isSelected ? "ring-2 ring-[#2BFE71] shadow-[0_0_20px_rgba(43,254,113,0.3)]" : "ring-1 ring-transparent hover:ring-[rgba(43,254,113,0.3)] hover:shadow-[0_4px_20px_rgba(0,0,0,0.3)]"
+                          }`}
+                        style={{ animationDelay: `${index * 0.05}s` }}
+                      >
+                        {preview ? (
+                          <img
+                            src={preview}
+                            alt={item.id ?? "Media"}
+                            className="aspect-[4/3] w-full object-cover transition-transform duration-500 group-hover:scale-110"
+                            loading="lazy"
+                          />
+                        ) : (
+                          <div className="flex aspect-[4/3] w-full items-center justify-center text-[11px] text-[rgba(255,255,255,0.35)]">
+                            Kein Preview
+                          </div>
+                        )}
+                        {item.id && (
+                          <>
+                            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                            {canDeleteMedia && (
+                              <div className="absolute right-2 top-2 flex gap-2 opacity-0 translate-y-[-10px] transition-all duration-300 group-hover:opacity-100 group-hover:translate-y-0">
+                                <button
+                                  type="button"
+                                  onClick={() => toggleMediaSelection(section.key, item.id!)}
+                                  className={`flex h-8 w-8 items-center justify-center rounded-[8px] border text-[12px] transition-all duration-300 transform hover:scale-110 ${isSelected
+                                    ? "border-[#2BFE71] bg-[#2BFE71] text-[#0D0E12] shadow-[0_0_15px_rgba(43,254,113,0.5)]"
+                                    : "border-[rgba(255,255,255,0.35)] bg-black/40 backdrop-blur-sm text-white hover:border-[#2BFE71] hover:bg-[rgba(43,254,113,0.2)]"
+                                    }`}
+                                  aria-label="Auswaehlen"
+                                >
+                                  <i className="fa-solid fa-check" aria-hidden="true" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteMedia(section.key, item.id!)}
+                                  className="flex h-8 w-8 items-center justify-center rounded-[8px] border border-[rgba(255,255,255,0.35)] bg-black/40 backdrop-blur-sm text-[12px] text-white transition-all duration-300 transform hover:scale-110 hover:border-[#FF5B5B] hover:text-[#FF5B5B] hover:bg-[rgba(255,91,91,0.2)]"
+                                  aria-label="Loeschen"
+                                >
+                                  <i className="fa-solid fa-trash-can" aria-hidden="true" />
+                                </button>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
               </div>
 
               {!items.length && !loading && !error && section.endpoint && (
-                <div className="text-[12px] text-[rgba(255,255,255,0.55)]">
-                  Keine Media-Dateien gefunden.
+                <div className="flex flex-col items-center justify-center py-12 animate-[fadeIn_0.5s_ease-out]">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[rgba(255,255,255,0.05)] mb-4">
+                    <i className="fa-solid fa-image text-[28px] text-[rgba(255,255,255,0.25)]" aria-hidden="true" />
+                  </div>
+                  <p className="text-[13px] text-[rgba(255,255,255,0.55)]">
+                    Keine Media-Dateien gefunden.
+                  </p>
                 </div>
               )}
 
               {section.endpoint && (
-                <div className="flex items-center justify-between">
-                  <div className="text-[11px] text-[rgba(255,255,255,0.45)]">
-                    {loading ? "Lade..." : hasMore ? "Weitere verfuegbar" : "Alles geladen"}
+                <div className="flex items-center justify-between mt-2 pt-4 border-t border-[rgba(255,255,255,0.05)]">
+                  <div className="text-[11px] text-[rgba(255,255,255,0.45)] transition-all duration-300 flex items-center gap-2">
+                    {loading && (
+                      <i className="fa-solid fa-spinner fa-spin text-[#2BFE71]" aria-hidden="true" />
+                    )}
+                    {loading ? "Lade..." : hasMore ? "Weitere verfuegbar" : (
+                      <span className="flex items-center gap-2">
+                        <i className="fa-solid fa-check text-[#2BFE71]" aria-hidden="true" />
+                        Alles geladen
+                      </span>
+                    )}
                   </div>
                   <button
                     type="button"
                     onClick={() => fetchMediaPage(section.key, pageValue + 1)}
                     disabled={!hasMore || loading}
-                    className="rounded-full border border-[rgba(255,255,255,0.14)] px-3 py-1 text-[11px] text-[rgba(255,255,255,0.75)] transition hover:border-[#2BFE71] hover:text-[#2BFE71] disabled:opacity-40"
+                    className="rounded-[8px] border border-[rgba(255,255,255,0.14)] px-4 py-2 text-[12px] text-[rgba(255,255,255,0.75)] transition-all duration-300 hover:border-[#2BFE71] hover:text-[#2BFE71] hover:bg-[rgba(43,254,113,0.08)] hover:scale-105 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:hover:bg-transparent"
                   >
-                    Mehr laden
+                    {loading ? (
+                      <span className="flex items-center gap-2">
+                        <i className="fa-solid fa-spinner fa-spin" aria-hidden="true" />
+                        Laden...
+                      </span>
+                    ) : (
+                      "Mehr laden"
+                    )}
                   </button>
                 </div>
               )}
             </div>
           );
         })}
+        {visibleSections.length === 0 && (
+          <div className="text-[12px] text-[rgba(255,255,255,0.55)]">
+            Keine Media-Module freigeschaltet.
+          </div>
+        )}
       </div>
     );
   }
 
   if (page === "analytics") {
-    if (!isAdmin) {
+    if (!permissionFlags.canAccessAnalytics) {
       return (
         <p className="text-[13px] text-[rgba(255,255,255,0.60)]">
           Keine Berechtigung.
@@ -2424,7 +3769,7 @@ if (page === "explore") {
   }
 
   if (page === "calendar") {
-    if (!isAdmin) {
+    if (!permissionFlags.canAccessCalendar) {
       return (
         <p className="text-[13px] text-[rgba(255,255,255,0.60)]">
           Keine Berechtigung.
@@ -2551,7 +3896,183 @@ if (page === "explore") {
   }
 
   if (page === "admin") {
-    if (!isAdmin) {
+    if (!permissionFlags.canAccessAdmin) {
+      return (
+        <p className="text-[13px] text-[rgba(255,255,255,0.60)]">
+          Keine Berechtigung.
+        </p>
+      );
+    }
+    const canShowMembers = permissionFlags.canAccessMembers;
+    const canShowRoles = permissionFlags.canAccessRoles;
+    return (
+      <div className="space-y-6">
+        <div className="grid gap-8 lg:grid-cols-3">
+          {/* Member Button - Orange */}
+          {canShowMembers && (
+            <button
+              type="button"
+              onClick={() => onNavigate("members")}
+              className="group relative flex flex-col items-center justify-center rounded-[24px] p-[3px] transition-all"
+            >
+              <span
+                aria-hidden="true"
+                className="rainbow-draw pointer-events-none absolute inset-0 rounded-[24px] blur-[2px]"
+              />
+              <div className="relative z-10 flex h-full w-full flex-col items-center justify-center rounded-[21px] bg-[#24262C] p-12">
+                <div className="flex h-32 w-32 items-center justify-center rounded-full bg-[rgba(255,152,43,0.2)] text-[#FF982B] transition-all">
+                  <i className="fa-solid fa-users text-[56px]" aria-hidden="true" />
+                </div>
+                <h3 className="mt-8 text-[24px] font-bold text-[rgba(255,255,255,0.92)]">
+                  Member
+                </h3>
+                <p className="mt-3 text-center text-[15px] text-[rgba(255,255,255,0.65)]">
+                  Verwalte Team-Mitglieder und Rollen
+                </p>
+              </div>
+            </button>
+          )}
+
+          {/* Roles Button - Purple */}
+          {canShowRoles && (
+            <button
+              type="button"
+              onClick={() => onNavigate("roles")}
+              className="group relative flex flex-col items-center justify-center rounded-[24px] p-[3px] transition-all"
+            >
+              <span
+                aria-hidden="true"
+                className="rainbow-draw pointer-events-none absolute inset-0 rounded-[24px] blur-[2px]"
+              />
+              <div className="relative z-10 flex h-full w-full flex-col items-center justify-center rounded-[21px] bg-[#24262C] p-12">
+                <div className="flex h-32 w-32 items-center justify-center rounded-full bg-[rgba(138,91,255,0.2)] text-[#8A5BFF] transition-all">
+                  <i className="fa-solid fa-user-shield text-[56px]" aria-hidden="true" />
+                </div>
+                <h3 className="mt-8 text-[24px] font-bold text-[rgba(255,255,255,0.92)]">
+                  Roles
+                </h3>
+                <p className="mt-3 text-center text-[15px] text-[rgba(255,255,255,0.65)]">
+                  Rollen und Berechtigungen verwalten
+                </p>
+              </div>
+            </button>
+          )}
+        </div>
+        {!canShowMembers && !canShowRoles && (
+          <p className="text-[13px] text-[rgba(255,255,255,0.60)]">
+            Keine Module freigeschaltet.
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  if (page === "members") {
+    if (!permissionFlags.canAccessMembers) {
+      return (
+        <p className="text-[13px] text-[rgba(255,255,255,0.60)]">
+          Keine Berechtigung.
+        </p>
+      );
+    }
+    return (
+      <div className="space-y-8">
+        <div className="flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => onNavigate("admin")}
+            className="flex items-center gap-2 rounded-[12px] border border-[rgba(255,255,255,0.12)] bg-[#16181c] px-4 py-3 text-[14px] font-semibold text-[rgba(255,255,255,0.70)] transition hover:border-[#2BFE71] hover:bg-[rgba(43,254,113,0.1)] hover:text-[#2BFE71]"
+            aria-label="Zurueck"
+          >
+            <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
+            Zurueck
+          </button>
+          <p className="text-[13px] text-[rgba(255,255,255,0.55)]">
+            {membersLoading ? "Lade..." : `${members.length} Mitglieder`}
+          </p>
+        </div>
+
+        {membersError && (
+          <div className="rounded-[12px] border border-[rgba(255,100,100,0.25)] bg-[rgba(255,100,100,0.08)] px-4 py-3 text-[12px] text-[rgba(255,255,255,0.75)]">
+            {membersError}
+          </div>
+        )}
+
+        <div className="overflow-hidden rounded-[16px] border border-[rgba(255,255,255,0.08)] bg-[#12141A]">
+          <div className="grid grid-cols-[1.6fr,1.3fr,1fr,1fr,0.7fr] gap-4 border-b border-[rgba(255,255,255,0.08)] px-4 py-3 text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]">
+            <span>User</span>
+            <span>UID</span>
+            <span>Roles</span>
+            <span>Details</span>
+            <span>Aktionen</span>
+          </div>
+          <div className="divide-y divide-[rgba(255,255,255,0.06)]">
+            {members.map((member) => (
+              <div
+                key={member.uid}
+                className="grid grid-cols-[1.6fr,1.3fr,1fr,1fr,0.7fr] gap-4 px-4 py-3 text-[12px] text-[rgba(255,255,255,0.75)]"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[rgba(255,255,255,0.08)] text-[rgba(255,255,255,0.8)]">
+                    <i className="fa-solid fa-user" aria-hidden="true" />
+                  </div>
+                  <div>
+                    <p className="text-[13px] font-semibold text-[rgba(255,255,255,0.92)]">
+                      {member.username ?? "Unbekannt"}
+                    </p>
+                    <p className="text-[11px] text-[rgba(255,255,255,0.55)]">
+                      {member.email ?? "Keine Email"}
+                    </p>
+                  </div>
+                </div>
+                <div className="text-[11px] text-[rgba(255,255,255,0.6)]">
+                  {member.uid}
+                </div>
+                <div className="text-[11px] text-[rgba(255,255,255,0.6)]">
+                  {member.roles && member.roles.length > 0
+                    ? member.roles.join(", ")
+                    : "—"}
+                </div>
+                <div className="text-[11px] text-[rgba(255,255,255,0.6)]">
+                  {member.minecraftName ? `MC: ${member.minecraftName}` : "—"}
+                  {typeof member.level === "number" ? ` · Lvl ${member.level}` : ""}
+                  {member.experience ? ` · ${member.experience}` : ""}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    className="flex h-8 w-8 items-center justify-center rounded-[6px] bg-[rgba(255,91,91,0.18)] text-[#FF8A8A] shadow-[0_0_0_1px_rgba(255,91,91,0.25)] transition hover:bg-[rgba(255,91,91,0.28)] hover:text-[#FF5B5B]"
+                    title="Bannen"
+                    aria-label="Bannen"
+                    onClick={() => onOpenBanDialog(member)}
+                  >
+                    <i className="fa-solid fa-ban" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    className="flex h-8 w-8 items-center justify-center rounded-[6px] bg-[rgba(255,209,102,0.18)] text-[#FFD166] shadow-[0_0_0_1px_rgba(255,209,102,0.25)] transition hover:bg-[rgba(255,209,102,0.28)] hover:text-[#FFC857]"
+                    title="Warnen"
+                    aria-label="Warnen"
+                    onClick={() => onOpenWarnDialog(member)}
+                  >
+                    <i className="fa-solid fa-triangle-exclamation" aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
+            ))}
+            {!membersLoading && !members.length && !membersError && (
+              <div className="px-4 py-6 text-[12px] text-[rgba(255,255,255,0.55)]">
+                Keine Mitglieder gefunden.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (page === "roles") {
+    if (!permissionFlags.canAccessRoles) {
       return (
         <p className="text-[13px] text-[rgba(255,255,255,0.60)]">
           Keine Berechtigung.
@@ -2560,29 +4081,21 @@ if (page === "explore") {
     }
     return (
       <div className="space-y-6">
-        <div className="grid gap-8 lg:grid-cols-3">
-          {/* Member Button - Orange */}
+        <div className="flex items-center justify-between">
           <button
             type="button"
-            onClick={() => setEditorModal("member")}
-            className="group relative flex flex-col items-center justify-center rounded-[24px] p-[3px] transition-all"
+            onClick={() => onNavigate("admin")}
+            className="flex items-center gap-2 rounded-[12px] border border-[rgba(255,255,255,0.12)] bg-[#16181c] px-4 py-3 text-[14px] font-semibold text-[rgba(255,255,255,0.70)] transition hover:border-[#2BFE71] hover:bg-[rgba(43,254,113,0.1)] hover:text-[#2BFE71]"
+            aria-label="Zurueck"
           >
-            <span
-              aria-hidden="true"
-              className="rainbow-draw pointer-events-none absolute inset-0 rounded-[24px] blur-[2px]"
-            />
-            <div className="relative z-10 flex h-full w-full flex-col items-center justify-center rounded-[21px] bg-[#24262C] p-12">
-              <div className="flex h-32 w-32 items-center justify-center rounded-full bg-[rgba(255,152,43,0.2)] text-[#FF982B] transition-all">
-                <i className="fa-solid fa-users text-[56px]" aria-hidden="true" />
-              </div>
-              <h3 className="mt-8 text-[24px] font-bold text-[rgba(255,255,255,0.92)]">
-                Member
-              </h3>
-              <p className="mt-3 text-center text-[15px] text-[rgba(255,255,255,0.65)]">
-                Verwalte Team-Mitglieder und Rollen
-              </p>
-            </div>
+            <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
+            Zurueck
           </button>
+        </div>
+        <div className="rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] p-4">
+          <p className="text-[13px] text-[rgba(255,255,255,0.65)]">
+            Roles-Verwaltung kommt noch.
+          </p>
         </div>
       </div>
     );

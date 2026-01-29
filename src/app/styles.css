@@ -14,27 +14,21 @@
     opacity: 0;
     transition: opacity 200ms ease-out;
     background-size: 200% 200%;
-    background: conic-gradient(
-      from 0deg,
-      #ff4d4d 0turn,
-      #ffd166 0.2turn,
-      #7efc6c 0.4turn,
-      #2bd9ff 0.6turn,
-      #8a5bff 0.8turn,
-      #ff4d4d 1turn
-    );
-    -webkit-mask: conic-gradient(
-      from 0deg,
-      #000 0turn var(--draw),
-      transparent var(--draw) calc(1turn - var(--draw)),
-      #000 calc(1turn - var(--draw)) 1turn
-    );
-    mask: conic-gradient(
-      from 0deg,
-      #000 0turn var(--draw),
-      transparent var(--draw) calc(1turn - var(--draw)),
-      #000 calc(1turn - var(--draw)) 1turn
-    );
+    background: conic-gradient(from 0deg,
+        #ff4d4d 0turn,
+        #ffd166 0.2turn,
+        #7efc6c 0.4turn,
+        #2bd9ff 0.6turn,
+        #8a5bff 0.8turn,
+        #ff4d4d 1turn);
+    -webkit-mask: conic-gradient(from 0deg,
+        #000 0turn var(--draw),
+        transparent var(--draw) calc(1turn - var(--draw)),
+        #000 calc(1turn - var(--draw)) 1turn);
+    mask: conic-gradient(from 0deg,
+        #000 0turn var(--draw),
+        transparent var(--draw) calc(1turn - var(--draw)),
+        #000 calc(1turn - var(--draw)) 1turn);
   }
 
   .group:hover .rainbow-draw {
@@ -57,10 +51,12 @@
   }
 
   @keyframes l18-1 {
+
     0%,
     100% {
       background-size: 20% 100%;
     }
+
     33%,
     66% {
       background-size: 20% 20%;
@@ -68,15 +64,18 @@
   }
 
   @keyframes l18-2 {
+
     0%,
     33% {
       background-position: 0 0, 50% 50%, 100% 100%;
     }
+
     66%,
     100% {
       background-position: 100% 0, 50% 50%, 0 100%;
     }
   }
+
   :root {
     color-scheme: dark;
   }
@@ -103,9 +102,131 @@
   }
 }
 
+.scrollbox {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
 
+.scrollbox::-webkit-scrollbar {
+  display: block;
+  width: 8px;
+  height: 8px;
+}
 
+.scrollbox::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+}
 
+.scrollbox::-webkit-scrollbar-track {
+  background: transparent;
+}
 
+.success-animation {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 
+.checkmark {
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  display: block;
+  stroke-width: 2;
+  stroke: #2bfe71;
+  stroke-miterlimit: 10;
+  box-shadow: inset 0px 0px 0px #2bfe71;
+  animation: fill 0.4s ease-in-out 0.4s forwards,
+    scale 0.3s ease-in-out 0.9s both;
+  position: relative;
+  top: 5px;
+  right: 5px;
+  margin: 0 auto;
+}
 
+.checkmark__circle {
+  stroke-dasharray: 166;
+  stroke-dashoffset: 166;
+  stroke-width: 2;
+  stroke-miterlimit: 10;
+  stroke: #2bfe71;
+  fill: #0f1116;
+  animation: stroke 0.6s cubic-bezier(0.65, 0, 0.45, 1) forwards;
+}
+
+.checkmark__check {
+  transform-origin: 50% 50%;
+  stroke-dasharray: 48;
+  stroke-dashoffset: 48;
+  animation: stroke 0.3s cubic-bezier(0.65, 0, 0.45, 1) 0.8s forwards;
+}
+
+@keyframes stroke {
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes scale {
+
+  0%,
+  100% {
+    transform: none;
+  }
+
+  50% {
+    transform: scale3d(1.1, 1.1, 1);
+  }
+}
+
+@keyframes fill {
+  100% {
+    box-shadow: inset 0px 0px 0px 30px #2bfe71;
+  }
+}
+
+/* Media Page Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes fadeInScale {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+
+  100% {
+    background-position: -200% 0;
+  }
+}
