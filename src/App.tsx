@@ -15,6 +15,9 @@ import { LoginView } from "./components/LoginView";
 import { auth, db } from "./firebase";
 
 interface NewsItem {
+  id: string;
+  deleteId?: string;
+  slug?: string;
   title: string;
   excerpt: string;
   cover: { url: string } | null;
@@ -27,6 +30,8 @@ interface ProjectItem {
   description?: string | null;
   descriptionHtml?: string | null;
   descriptionMarkdown?: string | null;
+  loader?: "Fabric" | "Forge" | "Vanilla" | string | null;
+  version?: string | null;
   cover: { url: string } | null;
   banner?: { url: string } | null;
   logoIcon?: { url: string } | null;
@@ -53,6 +58,8 @@ interface ModrinthProject {
   slug?: string;
   id?: string;
   project_type?: string;
+  loaders?: string[];
+  game_versions?: string[];
 }
 
 interface ModrinthCard {
@@ -79,12 +86,20 @@ interface MemberProfile {
   experience?: string | null;
   level?: number | null;
   minecraftName?: string | null;
+  avatarMediaId?: string | null;
+  avatarUrl?: string | null;
 }
 
 interface ModrinthGalleryItem {
   url?: string;
   raw_url?: string;
   featured?: boolean;
+}
+
+interface ModrinthVersion {
+  id?: string;
+  loaders?: string[];
+  game_versions?: string[];
 }
 
 interface MediaItem {
@@ -128,6 +143,8 @@ const modrinthTypeLabels: Record<string, string> = {
   shader: "Shader"
 };
 
+const MIN_MC_VERSION = "1.20";
+
 const activityStatusLabels: Record<
   NonNullable<ProjectItem["activityStatus"]>,
   string
@@ -148,6 +165,11 @@ const MEDIA_SECTIONS = [
     key: "banners",
     label: "Banner",
     endpoint: "https://api.blizz-developments-official.de/api/media/banners"
+  },
+  {
+    key: "news-banners",
+    label: "News Banner",
+    endpoint: "https://api.blizz-developments-official.de/api/media/news-banners"
   },
   {
     key: "avatars",
@@ -180,7 +202,6 @@ const MEDIA_PERMISSIONS = [
 ];
 const NEWS_PERMISSIONS = [
   "news.read",
-  "news.read.admin",
   "news.create",
   "news.edit",
   "news.delete",
@@ -227,12 +248,16 @@ type PermissionFlags = {
   canUploadMedia: boolean;
   canDeleteMedia: boolean;
   canAccessNews: boolean;
+  canDeleteNews: boolean;
   canAccessCalendar: boolean;
   canAccessEditor: boolean;
   canAccessAnalytics: boolean;
   canAccessAdmin: boolean;
   canAccessMembers: boolean;
   canAccessRoles: boolean;
+  canBanUsers: boolean;
+  canWarnUsers: boolean;
+  isModerator: boolean;
 };
 
 const buildPermissionFlags = (
@@ -245,6 +270,7 @@ const buildPermissionFlags = (
   const hasPrefix = (prefix: string) =>
     permissions.some((perm) => perm.startsWith(prefix));
   const hasAdminRole = roles.includes("admin");
+  const hasModeratorRole = roles.includes("moderator");
   if (hasAdminRole) {
     return {
       canAccessProjects: true,
@@ -255,12 +281,16 @@ const buildPermissionFlags = (
       canUploadMedia: true,
       canDeleteMedia: true,
       canAccessNews: true,
+      canDeleteNews: true,
       canAccessCalendar: true,
       canAccessEditor: true,
       canAccessAnalytics: true,
       canAccessAdmin: true,
       canAccessMembers: true,
-      canAccessRoles: true
+      canAccessRoles: true,
+      canBanUsers: true,
+      canWarnUsers: true,
+      isModerator: false
     };
   }
   const canAccessProjects =
@@ -273,6 +303,7 @@ const buildPermissionFlags = (
   const canDeleteMedia =
     has("media.delete") || has("media.moderate") || hasPrefix("media.delete");
   const canAccessNews = hasAny(NEWS_PERMISSIONS) || hasPrefix("news.");
+  const canDeleteNews = has("news.delete");
   const canAccessCalendar =
     hasAny(CALENDAR_PERMISSIONS) || hasPrefix("calendar.");
   const canAccessEditor =
@@ -281,6 +312,8 @@ const buildPermissionFlags = (
   const canAccessMembers = hasAny(MEMBER_PERMISSIONS);
   const canAccessRoles = hasAdminRole && hasAny(ROLE_PERMISSIONS);
   const canAccessAdmin = hasAny(ADMIN_PERMISSIONS);
+  const canBanUsers = has("users.ban");
+  const canWarnUsers = has("users.warn");
 
   return {
     canAccessProjects,
@@ -291,12 +324,16 @@ const buildPermissionFlags = (
     canUploadMedia,
     canDeleteMedia,
     canAccessNews,
+    canDeleteNews,
     canAccessCalendar,
     canAccessEditor,
     canAccessAnalytics,
     canAccessAdmin,
     canAccessMembers,
-    canAccessRoles
+    canAccessRoles,
+    canBanUsers,
+    canWarnUsers,
+    isModerator: hasModeratorRole
   };
 };
 
@@ -312,6 +349,8 @@ const isPageAllowed = (pageId: string, flags: PermissionFlags) => {
       return flags.canAccessEditor;
     case "projects":
       return flags.canAccessProjects;
+    case "news":
+      return flags.canAccessNews;
     case "media":
       return flags.canAccessMedia;
     case "analytics":
@@ -319,9 +358,9 @@ const isPageAllowed = (pageId: string, flags: PermissionFlags) => {
     case "calendar":
       return flags.canAccessCalendar;
     case "admin":
-      return flags.canAccessAdmin;
+      return flags.canAccessAdmin || flags.isModerator;
     case "members":
-      return flags.canAccessMembers;
+      return flags.canAccessMembers || flags.isModerator;
     case "roles":
       return flags.canAccessRoles;
     default:
@@ -434,6 +473,7 @@ function isPage(route: string) {
   return [
     "home",
     "projects",
+    "news",
     "explore",
     "media",
     "settings",
@@ -494,6 +534,42 @@ function stripHtml(value: string) {
   return value.replace(/<[^>]*>/g, "").trim();
 }
 
+function refreshPageSoon(delayMs = 800) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.setTimeout(() => {
+    window.location.reload();
+  }, delayMs);
+}
+
+function mapNewsItems(items: unknown[]) {
+  return items
+    .map((item) => {
+      const raw = item as any;
+      const deleteId =
+        raw.id ??
+        raw.newsId ??
+        raw.uuid ??
+        raw._id ??
+        raw.slug ??
+        null;
+      return {
+        ...raw,
+        id: deleteId ?? `${raw.title ?? "news"}-${Math.random()}`,
+        deleteId: deleteId ?? undefined,
+        slug: typeof raw.slug === "string" ? raw.slug : undefined
+      } as NewsItem;
+    })
+    .filter((item) => item.id);
+}
+
+function looksLikeUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value
+  );
+}
+
 const AUTHZ_CACHE_KEY = "vision.authz.cache.v1";
 
 function getProjectDescriptionText(item: ProjectItem) {
@@ -547,6 +623,79 @@ function getActivityStatusBadge(status: ProjectItem["activityStatus"]) {
 function getModrinthProjectLink(project: ModrinthProject) {
   const handle = project.slug ?? project.id ?? null;
   return handle ? `https://modrinth.com/project/${handle}` : null;
+}
+
+function getProjectModrinthLink(project: ProjectItem) {
+  const handle =
+    project.modrinthSlug ??
+    project.modrinth_slug ??
+    project.modrinthId ??
+    project.modrinth_id ??
+    null;
+  return handle ? `https://modrinth.com/project/${handle}` : null;
+}
+
+function isTruthyFlag(value: unknown) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return value === 1;
+  }
+  if (typeof value === "string") {
+    return value.toLowerCase() === "true" || value === "1";
+  }
+  return false;
+}
+
+function parseMcVersion(value: string) {
+  const parts = value.split(".").map((part) => Number(part));
+  if (parts.length < 2 || parts.some((part) => Number.isNaN(part))) {
+    return null;
+  }
+  const [major, minor, patch = 0] = parts;
+  return { major, minor, patch };
+}
+
+function isMcVersionAtLeast(value: string, min: string) {
+  const parsed = parseMcVersion(value);
+  const minParsed = parseMcVersion(min);
+  if (!parsed || !minParsed) {
+    return false;
+  }
+  if (parsed.major !== minParsed.major) {
+    return parsed.major > minParsed.major;
+  }
+  if (parsed.minor !== minParsed.minor) {
+    return parsed.minor > minParsed.minor;
+  }
+  return parsed.patch >= minParsed.patch;
+}
+
+function normalizeMediaId(value?: string | null) {
+  if (!value) {
+    return null;
+  }
+  let trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const urlMatch = trimmed.match(/\/media\/([^/]+)/i);
+  if (urlMatch?.[1]) {
+    trimmed = urlMatch[1];
+  }
+  trimmed = trimmed.replace(/\/thumb$/i, "");
+  trimmed = trimmed.replace(/-original$/i, "");
+  trimmed = trimmed.replace(/-thumb$/i, "");
+  return trimmed || null;
+}
+
+function getAvatarThumbUrl(avatarMediaId?: string | null) {
+  const normalized = normalizeMediaId(avatarMediaId);
+  if (!normalized) {
+    return null;
+  }
+  return `https://api.blizz-developments-official.de/media/${normalized}/thumb`;
 }
 
 function toModrinthCard(project: ModrinthProject) {
@@ -631,7 +780,11 @@ async function openModrinth(url: string | null) {
   }
 
   try {
-    await openUrl(url);
+    if (await isRunningInTauri()) {
+      await openUrl(url);
+    } else {
+      window.open(url, "_blank", "noopener,noreferrer");
+    }
   } catch (error) {
     console.error("Failed to open Modrinth URL", error);
   }
@@ -640,6 +793,13 @@ async function openModrinth(url: string | null) {
 async function fetchModrinthProject(modrinthId: string, signal: AbortSignal) {
   return requestJson<ModrinthProject>(
     `https://api.modrinth.com/v2/project/${modrinthId}`,
+    { signal }
+  );
+}
+
+async function fetchModrinthVersions(modrinthId: string, signal: AbortSignal) {
+  return requestJson<ModrinthVersion[]>(
+    `https://api.modrinth.com/v2/project/${modrinthId}/version`,
     { signal }
   );
 }
@@ -737,14 +897,40 @@ export default function App() {
   const [projectTitle, setProjectTitle] = useState("");
   const [projectSlug, setProjectSlug] = useState("");
   const [projectDescription, setProjectDescription] = useState("");
+  const [projectLoader, setProjectLoader] = useState<"" | "Fabric" | "Forge" | "Vanilla">(
+    ""
+  );
+  const [projectVersion, setProjectVersion] = useState("");
   const [projectActivityStatus, setProjectActivityStatus] = useState<
     NonNullable<ProjectItem["activityStatus"]>
   >("Active");
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [projectModrinthId, setProjectModrinthId] = useState("");
   const [projectSource, setProjectSource] = useState<"manual" | "modrinth">("manual");
+  const [modrinthAutoLoading, setModrinthAutoLoading] = useState(false);
+  const [modrinthAutoError, setModrinthAutoError] = useState<string | null>(null);
   const [projectLogoFile, setProjectLogoFile] = useState<File | null>(null);
   const [projectBannerFile, setProjectBannerFile] = useState<File | null>(null);
+  const [projectLogoMediaId, setProjectLogoMediaId] = useState<string>("");
+  const [projectBannerMediaId, setProjectBannerMediaId] = useState<string>("");
+  const [newsTitle, setNewsTitle] = useState("");
+  const [newsExcerpt, setNewsExcerpt] = useState("");
+  const [newsContent, setNewsContent] = useState("");
+  const [newsTags, setNewsTags] = useState("");
+  const [newsCoverMediaId, setNewsCoverMediaId] = useState("");
+  const [newsCoverFile, setNewsCoverFile] = useState<File | null>(null);
+  const [newsCoverUploading, setNewsCoverUploading] = useState(false);
+  const [newsSaving, setNewsSaving] = useState(false);
+  const [newsSaveError, setNewsSaveError] = useState<string | null>(null);
+  const [newsDeleteCandidate, setNewsDeleteCandidate] = useState<NewsItem | null>(null);
+  const [newsDeleteError, setNewsDeleteError] = useState<string | null>(null);
+  const [newsDeleting, setNewsDeleting] = useState(false);
+  const [existingLogos, setExistingLogos] = useState<MediaItem[]>([]);
+  const [existingBanners, setExistingBanners] = useState<MediaItem[]>([]);
+  const [existingMediaLoading, setExistingMediaLoading] = useState(false);
+  const [showExistingLogos, setShowExistingLogos] = useState(false);
+  const [showExistingBanners, setShowExistingBanners] = useState(false);
+  const [showExistingNewsBanners, setShowExistingNewsBanners] = useState(false);
   const [projectSaving, setProjectSaving] = useState(false);
   const [projectSaveError, setProjectSaveError] = useState<string | null>(null);
   const [projectSaveSuccess, setProjectSaveSuccess] = useState(false);
@@ -753,7 +939,7 @@ export default function App() {
     null
   );
   const [mediaUploadFile, setMediaUploadFile] = useState<File | null>(null);
-  const [mediaUploadType, setMediaUploadType] = useState<"logos" | "banners" | "avatars">(
+  const [mediaUploadType, setMediaUploadType] = useState<"logos" | "banners" | "avatars" | "news-banners">(
     "logos"
   );
   const [mediaUploadLoading, setMediaUploadLoading] = useState(false);
@@ -766,29 +952,34 @@ export default function App() {
   const [mediaItems, setMediaItems] = useState<Record<string, MediaItem[]>>({
     logos: [],
     banners: [],
+    "news-banners": [],
     avatars: []
   });
   const [mediaLoading, setMediaLoading] = useState<Record<string, boolean>>({
     logos: false,
     banners: false,
+    "news-banners": false,
     avatars: false
   });
   const [mediaError, setMediaError] = useState<Record<string, string | null>>({
     logos: null,
     banners: null,
+    "news-banners": null,
     avatars: null
   });
   const [mediaPage, setMediaPage] = useState<Record<string, number>>({
     logos: 1,
     banners: 1,
+    "news-banners": 1,
     avatars: 1
   });
   const [mediaHasMore, setMediaHasMore] = useState<Record<string, boolean>>({
     logos: true,
     banners: true,
+    "news-banners": true,
     avatars: true
   });
-  const [mediaFilter, setMediaFilter] = useState<"all" | "logos" | "banners" | "avatars">(
+  const [mediaFilter, setMediaFilter] = useState<"all" | "logos" | "banners" | "news-banners" | "avatars">(
     "all"
   );
   const [members, setMembers] = useState<MemberProfile[]>([]);
@@ -806,6 +997,15 @@ export default function App() {
   const [warnSubmitting, setWarnSubmitting] = useState(false);
   const [warnError, setWarnError] = useState<string | null>(null);
   const warnHoldIntervalRef = useRef<number | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastVariant, setToastVariant] = useState<"success" | "error">("success");
+  const [toastVisible, setToastVisible] = useState(false);
+  const [toastProgress, setToastProgress] = useState(0);
+  const toastTimerRef = useRef<number | null>(null);
+  const toastIntervalRef = useRef<number | null>(null);
+  const [mcVersions, setMcVersions] = useState<string[]>([]);
+  const [mcVersionsLoading, setMcVersionsLoading] = useState(false);
+  const [mcVersionsError, setMcVersionsError] = useState(false);
   const permissionFlags = useMemo(
     () => buildPermissionFlags(authzPermissions, authzRoles),
     [authzPermissions, authzRoles]
@@ -834,6 +1034,9 @@ export default function App() {
     permissionFlags.canAccessEditor
   ]);
   const [selectedProject, setSelectedProject] = useState<ProjectItem | null>(null);
+  const [projectParticipants, setProjectParticipants] = useState<MemberProfile[]>([]);
+  const [participantsLoading, setParticipantsLoading] = useState(false);
+  const [participantsError, setParticipantsError] = useState<string | null>(null);
   const isSelectedProjectEnded =
     selectedProject?.activityStatus === "Ended";
   const canJoinSelectedProject = Boolean(
@@ -855,6 +1058,23 @@ export default function App() {
     setMediaUploadFile(file ?? null);
   };
 
+  const normalizeModrinthLoader = (loader?: string | null) => {
+    if (!loader) {
+      return "";
+    }
+    const normalized = loader.toLowerCase();
+    if (normalized === "fabric" || normalized === "quilt") {
+      return "Fabric";
+    }
+    if (normalized === "forge" || normalized === "neoforge") {
+      return "Forge";
+    }
+    if (normalized === "vanilla") {
+      return "Vanilla";
+    }
+    return "";
+  };
+
   useEffect(() => {
     if (!mediaUploadFile) {
       setMediaPreviewUrl(null);
@@ -864,6 +1084,98 @@ export default function App() {
     setMediaPreviewUrl(previewUrl);
     return () => URL.revokeObjectURL(previewUrl);
   }, [mediaUploadFile]);
+
+  useEffect(() => {
+    const trimmed = projectModrinthId.trim();
+    if (!trimmed || projectSource !== "modrinth") {
+      setModrinthAutoError(null);
+      setModrinthAutoLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    let active = true;
+    setModrinthAutoLoading(true);
+    setModrinthAutoError(null);
+    Promise.all([
+      fetchModrinthProject(trimmed, controller.signal),
+      fetchModrinthVersions(trimmed, controller.signal)
+    ])
+      .then(([modrinth, versions]) => {
+        if (!active) {
+          return;
+        }
+        if (modrinth?.title) {
+          setProjectTitle(modrinth.title);
+        }
+        if (modrinth?.description) {
+          setProjectDescription(modrinth.description);
+        }
+        const latestVersion = Array.isArray(versions) ? versions[0] : null;
+        const versionValue =
+          latestVersion?.game_versions?.[0] ?? modrinth?.game_versions?.[0] ?? "";
+        if (versionValue) {
+          setProjectVersion(versionValue);
+        }
+        const loaderValue =
+          latestVersion?.loaders?.[0] ?? modrinth?.loaders?.[0] ?? "";
+        const normalizedLoader = normalizeModrinthLoader(loaderValue);
+        if (normalizedLoader) {
+          setProjectLoader(normalizedLoader as "Fabric" | "Forge" | "Vanilla");
+        }
+      })
+      .catch((error) => {
+        if (!active) {
+          return;
+        }
+        if (error instanceof Error && error.name === "AbortError") {
+          return;
+        }
+        setModrinthAutoError("Modrinth konnte nicht geladen werden.");
+      })
+      .finally(() => {
+        if (active) {
+          setModrinthAutoLoading(false);
+        }
+      });
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [projectModrinthId, projectSource]);
+
+  useEffect(() => {
+    let active = true;
+    setMcVersionsLoading(true);
+    setMcVersionsError(false);
+    requestJson<{
+      versions?: { id: string; type: string }[];
+    }>("https://launchermeta.mojang.com/mc/game/version_manifest_v2.json")
+      .then((data) => {
+        const versions = Array.isArray(data?.versions) ? data.versions : [];
+        const latestReleases = versions
+          .filter((version) => version.type === "release")
+          .map((version) => version.id)
+          .filter((version) => isMcVersionAtLeast(version, MIN_MC_VERSION));
+        if (active) {
+          setMcVersions(latestReleases);
+          setMcVersionsError(latestReleases.length === 0);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setMcVersionsError(true);
+          setMcVersions([]);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setMcVersionsLoading(false);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleMediaUpload = async () => {
     if (!user) {
@@ -879,10 +1191,14 @@ export default function App() {
     setMediaUploadSuccess(false);
     try {
       const token = await user.getIdToken();
+      const uploadEndpoint =
+        mediaUploadType === "news-banners"
+          ? "https://api.blizz-developments-official.de/api/admin/media/news-banners"
+          : `https://api.blizz-developments-official.de/api/admin/media?category=${mediaUploadType}`;
       await uploadMediaFile({
         file: mediaUploadFile,
         token,
-        endpoint: `https://api.blizz-developments-official.de/api/admin/media?category=${mediaUploadType}`
+        endpoint: uploadEndpoint
       });
       setMediaUploadFile(null);
       setMediaPreviewUrl(null);
@@ -892,12 +1208,227 @@ export default function App() {
         setMediaUploadSuccess(false);
       }, 1600);
       fetchMediaPage(mediaUploadType, 1, true);
+      showToast("Media erfolgreich hochgeladen.", "success");
+      refreshPageSoon(900);
     } catch (error) {
       setMediaUploadError(
         error instanceof Error ? error.message : "Upload fehlgeschlagen."
       );
+      showToast("Media-Upload fehlgeschlagen.", "error");
     } finally {
       setMediaUploadLoading(false);
+    }
+  };
+
+  const handleCreateNews = async () => {
+    if (!user) {
+      setNewsSaveError("Du musst eingeloggt sein.");
+      return;
+    }
+    if (!newsTitle.trim() || !newsExcerpt.trim() || !newsContent.trim()) {
+      setNewsSaveError("Titel, Kurztext und Inhalt sind erforderlich.");
+      return;
+    }
+
+    setNewsSaving(true);
+    setNewsSaveError(null);
+
+    try {
+      console.info("[news] create: start", {
+        title: newsTitle,
+        excerptLength: newsExcerpt.length,
+        contentLength: newsContent.length,
+        tags: newsTags,
+        coverMediaId: newsCoverMediaId,
+        hasCoverFile: Boolean(newsCoverFile)
+      });
+      const token = await user.getIdToken();
+      let coverMediaId = newsCoverMediaId || undefined;
+
+      if (newsCoverFile) {
+        setNewsCoverUploading(true);
+        const formData = new FormData();
+        formData.append("file", newsCoverFile);
+        const response = await fetch(
+          "https://api.blizz-developments-official.de/api/admin/media/news-banners",
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`
+            },
+            body: formData
+          }
+        );
+        const text = await response.text();
+        console.info("[news] cover upload response", {
+          ok: response.ok,
+          status: response.status,
+          body: text
+        });
+        if (!response.ok) {
+          throw new Error(text || "Cover-Upload fehlgeschlagen.");
+        }
+        let data: any = null;
+        try {
+          data = text ? JSON.parse(text) : null;
+        } catch {
+          data = null;
+        }
+        const id =
+          (typeof data?.id === "string" && data.id) ||
+          (typeof data?.mediaId === "string" && data.mediaId) ||
+          (typeof data?.media?.id === "string" && data.media.id);
+        if (!id) {
+          throw new Error("Cover-Upload hat keine Media-ID geliefert.");
+        }
+        coverMediaId = id as string;
+        console.info("[news] cover upload resolved id", coverMediaId);
+      }
+      const payload: Record<string, unknown> = {
+        title: newsTitle.trim(),
+        excerpt: newsExcerpt.trim(),
+        contentMarkdown: newsContent.trim(),
+        coverMediaId,
+        tags: newsTags
+          .split(",")
+          .map((tag) => tag.trim())
+          .filter(Boolean),
+        status: "published"
+      };
+
+      console.info("[news] create payload", payload);
+      await requestText("https://api.blizz-developments-official.de/api/admin/news", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+
+      setNewsTitle("");
+      setNewsExcerpt("");
+      setNewsContent("");
+      setNewsTags("");
+      setNewsCoverMediaId("");
+      setNewsCoverFile(null);
+      setShowExistingNewsBanners(false);
+      setEditorModal(null);
+      showToast("News erstellt.", "success");
+      refreshPageSoon(900);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "News konnte nicht erstellt werden.";
+      console.warn("[news] create failed", message, error);
+      setNewsSaveError(message);
+      showToast("News konnte nicht erstellt werden.", "error");
+    } finally {
+      setNewsSaving(false);
+      setNewsCoverUploading(false);
+    }
+  };
+
+  const reloadNewsItems = async (cacheBust = false) => {
+    const url = cacheBust
+      ? `https://api.blizz-developments-official.de/api/news?page=1&limit=5&_ts=${Date.now()}`
+      : "https://api.blizz-developments-official.de/api/news?page=1&limit=5";
+    const data = await requestJson<{ items?: NewsItem[] }>(url);
+    if (Array.isArray(data?.items)) {
+      setNewsItems(mapNewsItems(data.items));
+      setNewsError(false);
+    } else {
+      setNewsItems([]);
+    }
+  };
+
+  const requestDeleteNews = (item: NewsItem) => {
+    if (!permissionFlags.canDeleteNews) {
+      console.info("[news] delete blocked: missing permission", {
+        canDeleteNews: permissionFlags.canDeleteNews,
+        permissions: authzPermissions,
+        roles: authzRoles
+      });
+      return;
+    }
+    console.info("[news] delete requested", item);
+    setNewsDeleteCandidate(item);
+    setNewsDeleteError(null);
+  };
+
+  const confirmDeleteNews = async () => {
+    if (!newsDeleteCandidate || !user) {
+      return;
+    }
+    const deleteId = newsDeleteCandidate.deleteId ?? newsDeleteCandidate.slug ?? newsDeleteCandidate.id;
+    if (!deleteId) {
+      setNewsDeleteError("News-ID fehlt.");
+      return;
+    }
+    console.info("[news] delete permission check", {
+      canDeleteNews: permissionFlags.canDeleteNews,
+      permissions: authzPermissions,
+      roles: authzRoles
+    });
+    setNewsDeleting(true);
+    setNewsDeleteError(null);
+    try {
+      console.info("[news] delete start", {
+        id: newsDeleteCandidate.id,
+        deleteId
+      });
+      const token = await user.getIdToken();
+      let resolvedId: string | null = null;
+      try {
+        const adminList = await requestJson<{ items?: any[] }>(
+          "https://api.blizz-developments-official.de/api/admin/news?page=1&limit=50",
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        const adminItems = Array.isArray(adminList?.items) ? adminList.items : [];
+        const match = adminItems.find(
+          (item) => item?.id === deleteId || item?.slug === deleteId
+        );
+        resolvedId = typeof match?.id === "string" ? match.id : null;
+        console.info("[news] delete resolve", {
+          deleteId,
+          resolvedId,
+          found: Boolean(resolvedId)
+        });
+      } catch (error) {
+        console.warn("[news] delete resolve failed", error);
+      }
+      const finalId = resolvedId ?? (looksLikeUuid(deleteId) ? deleteId : null);
+      if (!finalId) {
+        throw new Error("News-ID konnte nicht aus dem Admin-Listing ermittelt werden.");
+      }
+      const response = await fetch(
+        `https://api.blizz-developments-official.de/api/admin/news/${finalId}`,
+        {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` }
+        }
+      );
+      const responseText = await response.text();
+      console.info("[news] delete response", {
+        ok: response.ok,
+        status: response.status,
+        body: responseText
+      });
+      if (!response.ok) {
+        throw new Error(responseText || `HTTP ${response.status}`);
+      }
+      setNewsItems((prev) =>
+        prev.filter((item) => item.id !== newsDeleteCandidate.id)
+      );
+      setNewsDeleteCandidate(null);
+      reloadNewsItems(true).catch(() => undefined);
+      showToast("News geloescht.", "success");
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "News konnte nicht geloescht werden.";
+      console.warn("[news] delete failed", message, error);
+      setNewsDeleteError(message);
+      showToast("News konnte nicht geloescht werden.", "error");
+    } finally {
+      setNewsDeleting(false);
     }
   };
 
@@ -1011,6 +1542,40 @@ export default function App() {
     setWarnProgress(0);
   };
 
+  const showToast = (message: string, variant: "success" | "error" = "success") => {
+    const duration = 4000;
+    if (toastTimerRef.current !== null) {
+      window.clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = null;
+    }
+    if (toastIntervalRef.current !== null) {
+      window.clearInterval(toastIntervalRef.current);
+      toastIntervalRef.current = null;
+    }
+    setToastMessage(message);
+    setToastVariant(variant);
+    setToastVisible(true);
+    setToastProgress(1);
+    const start = Date.now();
+    toastIntervalRef.current = window.setInterval(() => {
+      const elapsed = Date.now() - start;
+      const next = Math.max(0, 1 - elapsed / duration);
+      setToastProgress(next);
+      if (next <= 0) {
+        if (toastIntervalRef.current !== null) {
+          window.clearInterval(toastIntervalRef.current);
+          toastIntervalRef.current = null;
+        }
+      }
+    }, 50);
+    toastTimerRef.current = window.setTimeout(() => {
+      setToastVisible(false);
+      toastTimerRef.current = window.setTimeout(() => {
+        setToastMessage(null);
+      }, 400);
+    }, duration);
+  };
+
   const submitBan = async (member: MemberProfile, reason: string) => {
     if (!user) {
       setBanError("Bitte zuerst anmelden.");
@@ -1033,8 +1598,10 @@ export default function App() {
       );
       setBanCandidate(null);
       resetBanHold();
+      showToast("Ban erfolgreich gesetzt.", "success");
     } catch (error) {
       setBanError(error instanceof Error ? error.message : "Ban fehlgeschlagen.");
+      showToast("Ban fehlgeschlagen.", "error");
     } finally {
       setBanSubmitting(false);
     }
@@ -1062,8 +1629,10 @@ export default function App() {
       );
       setWarnCandidate(null);
       resetWarnHold();
+      showToast("Warnung gesendet.", "success");
     } catch (error) {
       setWarnError(error instanceof Error ? error.message : "Warnung fehlgeschlagen.");
+      showToast("Warnung fehlgeschlagen.", "error");
     } finally {
       setWarnSubmitting(false);
     }
@@ -1106,6 +1675,9 @@ export default function App() {
   };
 
   const openBanDialog = (member: MemberProfile) => {
+    if (!permissionFlags.canBanUsers) {
+      return;
+    }
     setBanCandidate(member);
     setBanReason("Spamming");
     setBanError(null);
@@ -1113,6 +1685,9 @@ export default function App() {
   };
 
   const openWarnDialog = (member: MemberProfile) => {
+    if (!permissionFlags.canWarnUsers) {
+      return;
+    }
     setWarnCandidate(member);
     setWarnMessage("Bitte keine Werbung im Chat.");
     setWarnError(null);
@@ -1140,20 +1715,25 @@ export default function App() {
     const controller = new AbortController();
 
     const loadNews = () => {
+      console.info("[news] load start");
       requestJson<{ items?: NewsItem[] }>(
-        "https://api.blizz-developments-official.de/api/news?page=1&limit=5",
+        `https://api.blizz-developments-official.de/api/news?page=1&limit=5&_ts=${Date.now()}`,
         { signal: controller.signal }
       )
         .then((data) => {
           if (Array.isArray(data?.items)) {
-            setNewsItems(data.items);
+            const mapped = mapNewsItems(data.items);
+            console.info("[news] load mapped", mapped);
+            setNewsItems(mapped);
           } else {
+            console.info("[news] load empty list");
             setNewsItems([]);
           }
           setNewsError(false);
         })
         .catch((error) => {
           if (error.name !== "AbortError") {
+            console.warn("[news] load failed", error);
             setNewsError(true);
           }
         })
@@ -1207,10 +1787,20 @@ export default function App() {
         }
 
         const items = (data.items as ProjectItem[]).map(normalizeProjectMedia);
+        if (!controller.signal.aborted) {
+          setProjectItems(items);
+          setProjectError(false);
+        }
         const enrichedItems = await Promise.all(
           items.map(async (item) => {
             const { modrinthId } = normalizeModrinthFields(item);
-            if (!modrinthId) {
+            const srcModrinth = isTruthyFlag(
+              item.srcModrinth ??
+                item.src_modrinth ??
+                (item as any).src_modrinth ??
+                false
+            );
+            if (!modrinthId || !srcModrinth) {
               return item;
             }
 
@@ -1385,6 +1975,83 @@ export default function App() {
   }, [user]);
 
   useEffect(() => {
+    if (!selectedProject?.id) {
+      setProjectParticipants([]);
+      setParticipantsError(null);
+      setParticipantsLoading(false);
+      return;
+    }
+    if (!user) {
+      setProjectParticipants([]);
+      setParticipantsError("Teilnehmende konnten nicht geladen werden.");
+      setParticipantsLoading(false);
+      return;
+    }
+
+    setParticipantsLoading(true);
+    setParticipantsError(null);
+
+    const projectId = selectedProject.id;
+
+    (async () => {
+      const collected: Record<string, unknown>[] = [];
+      let nextPageToken: string | null = null;
+      let pageCount = 0;
+
+      do {
+        const params = new URLSearchParams({
+          limit: "50",
+          project: projectId
+        });
+        if (nextPageToken) {
+          params.set("pageToken", nextPageToken);
+        }
+        const data = await requestJson<{
+          items?: Record<string, unknown>[];
+          nextPageToken?: string | null;
+        }>(`https://api.blizz-developments-official.de/api/users?${params.toString()}`);
+        const items = Array.isArray(data?.items) ? data.items : [];
+        collected.push(...items);
+        nextPageToken = typeof data?.nextPageToken === "string" ? data.nextPageToken : null;
+        pageCount += 1;
+      } while (nextPageToken && pageCount < 10);
+
+      const mapped = collected
+        .map((entry) => {
+          const record = entry as Record<string, unknown>;
+          const avatarMediaId =
+            typeof record.avatarMediaId === "string"
+              ? record.avatarMediaId
+              : typeof record.avatar_media_id === "string"
+                ? record.avatar_media_id
+                : null;
+          return {
+            uid: typeof record.uid === "string" ? record.uid : "",
+            username: typeof record.username === "string" ? record.username : null,
+            email: typeof record.email === "string" ? record.email : null,
+            roles: Array.isArray(record.roles) ? (record.roles as string[]) : [],
+            experience: typeof record.experience === "string" ? record.experience : null,
+            level: typeof record.level === "number" ? record.level : null,
+            minecraftName:
+              typeof record.minecraftName === "string" ? record.minecraftName : null,
+            avatarMediaId,
+            avatarUrl: getAvatarThumbUrl(avatarMediaId)
+          } as MemberProfile;
+        })
+        .filter((entry) => entry.uid);
+
+      setProjectParticipants(mapped);
+    })()
+      .catch((error) => {
+        console.error("Failed to load project participants", error);
+        setParticipantsError("Teilnehmende konnten nicht geladen werden.");
+      })
+      .finally(() => {
+        setParticipantsLoading(false);
+      });
+  }, [selectedProject?.id, user]);
+
+  useEffect(() => {
     if (!user) {
       return;
     }
@@ -1514,9 +2181,9 @@ export default function App() {
       return;
     }
 
-    setMediaItems({ logos: [], banners: [], avatars: [] });
-    setMediaHasMore({ logos: true, banners: true, avatars: true });
-    setMediaPage({ logos: 1, banners: 1, avatars: 1 });
+    setMediaItems({ logos: [], banners: [], "news-banners": [], avatars: [] });
+    setMediaHasMore({ logos: true, banners: true, "news-banners": true, avatars: true });
+    setMediaPage({ logos: 1, banners: 1, "news-banners": 1, avatars: 1 });
     if (!permissionFlags.canAccessMedia) {
       return;
     }
@@ -1529,10 +2196,54 @@ export default function App() {
   }, [activePage, permissionFlags.canAccessMedia]);
 
   useEffect(() => {
+    if (editorModal === "project" && projectSource !== "manual") {
+      return;
+    }
+    if (editorModal !== "project" && editorModal !== "news") {
+      return;
+    }
+    let active = true;
+    setExistingMediaLoading(true);
+    const bannersEndpoint =
+      editorModal === "news"
+        ? "https://api.blizz-developments-official.de/api/media/news-banners?page=1&limit=20"
+        : "https://api.blizz-developments-official.de/api/media/banners?page=1&limit=20";
+    const requests = [
+      requestJson<{ items?: MediaItem[] }>(
+        "https://api.blizz-developments-official.de/api/media/logos?page=1&limit=20"
+      ),
+      requestJson<{ items?: MediaItem[] }>(bannersEndpoint)
+    ];
+    Promise.all(requests)
+      .then(([logos, banners]) => {
+        if (!active) {
+          return;
+        }
+        setExistingLogos(Array.isArray(logos?.items) ? logos.items : []);
+        setExistingBanners(Array.isArray(banners?.items) ? banners.items : []);
+      })
+      .catch(() => {
+        if (!active) {
+          return;
+        }
+        setExistingLogos([]);
+        setExistingBanners([]);
+      })
+      .finally(() => {
+        if (active) {
+          setExistingMediaLoading(false);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [editorModal, projectSource]);
+
+  useEffect(() => {
     if (activePage !== "members") {
       return;
     }
-    if (!permissionFlags.canAccessMembers) {
+    if (!permissionFlags.canAccessMembers && !permissionFlags.isModerator) {
       return;
     }
     if (!user) {
@@ -1551,6 +2262,12 @@ export default function App() {
       const items = Array.isArray(data?.items) ? data.items : [];
       const mapped = items.map((entry) => {
         const record = entry as Record<string, unknown>;
+        const avatarMediaId =
+          typeof record.avatarMediaId === "string"
+            ? record.avatarMediaId
+            : typeof record.avatar_media_id === "string"
+              ? record.avatar_media_id
+              : null;
         return {
           uid: typeof record.uid === "string" ? record.uid : "",
           username: typeof record.username === "string" ? record.username : null,
@@ -1559,21 +2276,26 @@ export default function App() {
           experience: typeof record.experience === "string" ? record.experience : null,
           level: typeof record.level === "number" ? record.level : null,
           minecraftName:
-            typeof record.minecraftName === "string" ? record.minecraftName : null
+            typeof record.minecraftName === "string" ? record.minecraftName : null,
+          avatarMediaId,
+          avatarUrl: getAvatarThumbUrl(avatarMediaId)
         } as MemberProfile;
       });
-      setMembers(mapped.filter((item) => item.uid));
+      const filtered = mapped.filter((item) => item.uid);
+      setMembers(filtered);
+      showToast(`Mitglieder geladen (${filtered.length}).`, "success");
     })()
       .catch((error) => {
         const message =
           error instanceof Error ? error.message : "Unbekannter Fehler.";
         console.error("Failed to load members", error);
         setMembersError(`Mitglieder konnten nicht geladen werden. (${message})`);
+        showToast("Mitglieder konnten nicht geladen werden.", "error");
       })
       .finally(() => {
         setMembersLoading(false);
       });
-  }, [activePage, permissionFlags.canAccessMembers, user]);
+  }, [activePage, permissionFlags.canAccessMembers, permissionFlags.isModerator, user]);
 
   useEffect(() => {
     if (activePage === "home") {
@@ -1679,6 +2401,11 @@ export default function App() {
       setProjectSaveError("Du musst eingeloggt sein.");
       return;
     }
+    if (projectSource !== "modrinth" && (!projectLoader || !projectVersion)) {
+      setProjectSaveError("Bitte Loader und Version auswaehlen.");
+      showToast("Loader und Version fehlen.", "error");
+      return;
+    }
 
     setProjectSaving(true);
     setProjectSaveError(null);
@@ -1687,45 +2414,66 @@ export default function App() {
     try {
       const token = await user.getIdToken();
       const trimmedModrinthId = projectModrinthId.trim();
-      const hasModrinth = projectSource === "modrinth" && Boolean(trimmedModrinthId);
+      const hasModrinth = Boolean(trimmedModrinthId);
 
-      let logoMediaId: string | null = null;
-      let bannerMediaId: string | null = null;
+      let logoMediaId: string | null = projectLogoMediaId || null;
+      let bannerMediaId: string | null = projectBannerMediaId || null;
 
-      if (projectLogoFile) {
-        logoMediaId = await uploadMediaFile({
-          file: projectLogoFile,
-          token,
-          endpoint:
-            "https://api.blizz-developments-official.de/api/admin/media?category=logos"
-        });
-      }
+      let payload: Record<string, unknown>;
+      if (projectSource === "modrinth") {
+        if (!hasModrinth) {
+          setProjectSaveError("Bitte Modrinth ID eingeben.");
+          showToast("Modrinth ID fehlt.", "error");
+          return;
+        }
+        payload = {
+          srcModrinth: true,
+          // @ts-ignore backend might accept snake_case
+          src_modrinth: true,
+          modrinthId: trimmedModrinthId,
+          activityStatus: projectActivityStatus,
+          // @ts-ignore backend might accept snake_case
+          activity_status: projectActivityStatus,
+          status: "published"
+        };
+      } else {
+        if (projectLogoFile) {
+          logoMediaId = await uploadMediaFile({
+            file: projectLogoFile,
+            token,
+            endpoint:
+              "https://api.blizz-developments-official.de/api/admin/media?category=logos"
+          });
+        }
 
-      if (projectBannerFile) {
-        bannerMediaId = await uploadMediaFile({
-          file: projectBannerFile,
-          token,
-          endpoint:
-            "https://api.blizz-developments-official.de/api/admin/media?category=banners"
-        });
-      }
+        if (projectBannerFile) {
+          bannerMediaId = await uploadMediaFile({
+            file: projectBannerFile,
+            token,
+            endpoint:
+              "https://api.blizz-developments-official.de/api/admin/media?category=banners"
+          });
+        }
 
-      const payload: Record<string, unknown> = {
-        title: projectTitle,
-        slug: projectSlug,
-        descriptionMarkdown: projectDescription,
-        bannerMediaId,
-        coverMediaId: bannerMediaId,
-        logoMediaId,
-        activityStatus: projectActivityStatus,
-        // @ts-ignore backend might accept snake_case
-        activity_status: projectActivityStatus,
-        links: [],
-        status: "published"
-      };
+        payload = {
+          title: projectTitle,
+          slug: projectSlug,
+          descriptionMarkdown: projectDescription,
+          bannerMediaId,
+          coverMediaId: bannerMediaId,
+          logoMediaId,
+          loader: projectLoader,
+          version: projectVersion,
+          activityStatus: projectActivityStatus,
+          // @ts-ignore backend might accept snake_case
+          activity_status: projectActivityStatus,
+          links: [],
+          status: "published"
+        };
 
-      if (hasModrinth) {
-        payload.modrinthId = trimmedModrinthId;
+        if (hasModrinth) {
+          payload.modrinthId = trimmedModrinthId;
+        }
       }
 
       await requestText(
@@ -1741,10 +2489,12 @@ export default function App() {
       );
 
       setProjectSaveSuccess(true);
+      showToast("Projekt erstellt.", "success");
     } catch (error) {
       setProjectSaveError(
         error instanceof Error ? error.message : "Projekt konnte nicht gespeichert werden."
       );
+      showToast("Projekt konnte nicht gespeichert werden.", "error");
     } finally {
       setProjectSaving(false);
     }
@@ -1764,11 +2514,17 @@ export default function App() {
     setProjectDescription(
       project.descriptionHtml ? stripHtml(descriptionValue) : descriptionValue
     );
+    setProjectLoader((project.loader as "Fabric" | "Forge" | "Vanilla") ?? "");
+    setProjectVersion(project.version ?? "");
     setProjectActivityStatus(project.activityStatus ?? "Active");
-    setProjectSource(project.srcModrinth ? "modrinth" : "manual");
+    setProjectSource(isTruthyFlag(project.srcModrinth ?? (project as any).src_modrinth) ? "modrinth" : "manual");
     setProjectModrinthId(project.modrinthId ?? project.modrinth_id ?? "");
     setProjectLogoFile(null);
     setProjectBannerFile(null);
+    setProjectLogoMediaId("");
+    setProjectBannerMediaId("");
+    setShowExistingLogos(false);
+    setShowExistingBanners(false);
     setProjectSaveError(null);
     setProjectSaveSuccess(false);
     setEditorModal("project");
@@ -1779,11 +2535,17 @@ export default function App() {
     setProjectTitle("");
     setProjectSlug("");
     setProjectDescription("");
+    setProjectLoader("");
+    setProjectVersion("");
     setProjectActivityStatus("Active");
     setProjectSource("manual");
     setProjectModrinthId("");
     setProjectLogoFile(null);
     setProjectBannerFile(null);
+    setProjectLogoMediaId("");
+    setProjectBannerMediaId("");
+    setShowExistingLogos(false);
+    setShowExistingBanners(false);
     setProjectSaveError(null);
     setProjectSaveSuccess(false);
     setEditorModal("project");
@@ -1802,10 +2564,10 @@ export default function App() {
     try {
       const token = await user.getIdToken();
       const trimmedModrinthId = projectModrinthId.trim();
-      const hasModrinth = projectSource === "modrinth" && Boolean(trimmedModrinthId);
+      const hasModrinth = Boolean(trimmedModrinthId);
 
-      let logoMediaId: string | null = null;
-      let bannerMediaId: string | null = null;
+      let logoMediaId: string | null = projectLogoMediaId || null;
+      let bannerMediaId: string | null = projectBannerMediaId || null;
 
       if (projectLogoFile) {
         logoMediaId = await uploadMediaFile({
@@ -1831,6 +2593,8 @@ export default function App() {
         descriptionMarkdown: projectDescription,
         bannerMediaId,
         logoMediaId,
+        loader: projectLoader || undefined,
+        version: projectVersion || undefined,
         activityStatus: projectActivityStatus,
         // @ts-ignore backend might accept snake_case
         activity_status: projectActivityStatus,
@@ -1840,10 +2604,8 @@ export default function App() {
 
       if (hasModrinth) {
         payload.modrinthId = trimmedModrinthId;
-        payload.srcModrinth = true;
-      } else {
-        payload.srcModrinth = false;
       }
+      payload.srcModrinth = projectSource === "modrinth";
 
       await requestText(
         `https://api.blizz-developments-official.de/api/admin/projects/${editingProjectId}`,
@@ -1865,6 +2627,8 @@ export default function App() {
                 title: projectTitle,
                 slug: projectSlug,
                 description: projectDescription,
+                loader: projectLoader || project.loader || null,
+                version: projectVersion || project.version || null,
                 activityStatus: projectActivityStatus,
                 srcModrinth: hasModrinth
               })
@@ -1874,10 +2638,12 @@ export default function App() {
 
       setProjectSaveSuccess(true);
       setEditingProjectId(null);
+      showToast("Projekt aktualisiert.", "success");
     } catch (error) {
       setProjectSaveError(
         error instanceof Error ? error.message : "Projekt konnte nicht gespeichert werden."
       );
+      showToast("Projekt konnte nicht aktualisiert werden.", "error");
     } finally {
       setProjectSaving(false);
     }
@@ -1983,6 +2749,8 @@ export default function App() {
                     setActivePage,
                     projectItems,
                     projectError,
+                    newsItems,
+                    newsError,
                     modrinthProjects,
                     modrinthError,
                     calendarEvents,
@@ -1991,21 +2759,22 @@ export default function App() {
                     mediaLoading,
                     mediaError,
                     mediaPage,
-                mediaHasMore,
-                fetchMediaPage,
-                mediaFilter,
-                setMediaFilter,
-                selectedMediaIds,
-                toggleMediaSelection,
-                handleDeleteMedia,
-                handleDeleteSelectedMedia,
-                projectDeleteError,
-                requestDeleteProject,
-                handleEditProject,
-                handleNewProject,
-                permissionFlags,
-                authzFetchLoading,
-                authzFetchError,
+                    mediaHasMore,
+                    fetchMediaPage,
+                    mediaFilter,
+                    setMediaFilter,
+                    selectedMediaIds,
+                    toggleMediaSelection,
+                    handleDeleteMedia,
+                    handleDeleteSelectedMedia,
+                    projectDeleteError,
+                    requestDeleteProject,
+                    requestDeleteNews,
+                    handleEditProject,
+                    handleNewProject,
+                    permissionFlags,
+                    authzFetchLoading,
+                    authzFetchError,
                 userProfileData,
                 redirectSeconds,
                 members,
@@ -2228,6 +2997,23 @@ export default function App() {
             </div>
           </div>
         )}
+        {toastMessage && (
+          <div
+            className={`fixed bottom-6 left-1/2 z-[80] -translate-x-1/2 overflow-hidden rounded-[12px] border px-4 py-3 text-[12px] font-semibold shadow-[0_20px_40px_rgba(0,0,0,0.45)] transition-all duration-300 ${toastVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-2"} ${toastVariant === "success"
+              ? "border-[rgba(46,204,113,0.45)] bg-[rgba(21,40,28,0.92)] text-[#7CFFB0]"
+              : "border-[rgba(255,91,91,0.45)] bg-[rgba(48,16,16,0.92)] text-[#FF9C9C]"
+              }`}
+          >
+            <span>{toastMessage}</span>
+            <span
+              className={`pointer-events-none absolute bottom-0 left-0 h-[3px] transition-[width] ${toastVariant === "success"
+                ? "bg-[#2BFE71]"
+                : "bg-[#FF5B5B]"
+                }`}
+              style={{ width: `${toastProgress * 100}%` }}
+            />
+          </div>
+        )}
         {selectedProject && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 px-4">
             <div className="w-full max-w-[720px] overflow-hidden rounded-[24px] border border-[rgba(255,255,255,0.12)] bg-[#24262C] shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
@@ -2243,11 +3029,13 @@ export default function App() {
               <div className="px-5 pb-5 pt-4">
                 <div className="flex items-center gap-3">
                   {selectedProject.logoIcon?.url ? (
-                    <img
-                      src={selectedProject.logoIcon.url}
-                      alt={`${selectedProject.title} logo`}
-                      className="h-[52px] w-[52px] rounded-[12px] border border-[rgba(255,255,255,0.20)] bg-[#1B1D22] object-cover"
-                    />
+                    <div className="h-[52px] w-[52px] overflow-hidden rounded-[12px] border border-[rgba(255,255,255,0.20)] bg-[#1B1D22]">
+                      <img
+                        src={selectedProject.logoIcon.url}
+                        alt={`${selectedProject.title} logo`}
+                        className="h-full w-full object-cover"
+                      />
+                    </div>
                   ) : (
                     <div className="h-[52px] w-[52px] rounded-[12px] border border-[rgba(255,255,255,0.20)] bg-[#1B1D22]" />
                   )}
@@ -2263,7 +3051,75 @@ export default function App() {
                     {getProjectDescriptionText(selectedProject) ?? fallbackProjectDescription}
                   </p>
                 </div>
+                <div className="mt-5">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]">
+                      Teilnehmende
+                    </p>
+                    <span className="text-[11px] text-[rgba(255,255,255,0.55)]">
+                      {projectParticipants.length}
+                    </span>
+                  </div>
+                  {participantsLoading && (
+                    <p className="mt-2 text-[12px] text-[rgba(255,255,255,0.6)]">
+                      Teilnehmer werden geladen...
+                    </p>
+                  )}
+                  {participantsError && (
+                    <p className="mt-2 text-[12px] text-[rgba(255,180,180,0.8)]">
+                      {participantsError}
+                    </p>
+                  )}
+                  {!participantsLoading && !participantsError && (
+                    <>
+                      {projectParticipants.length ? (
+                        <div className="mt-3 flex flex-wrap gap-3">
+                          {projectParticipants.map((member) => (
+                            <div
+                              key={member.uid}
+                              className="flex items-center gap-2 rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#14161C] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.85)]"
+                            >
+                              {member.avatarUrl ? (
+                                <img
+                                  src={member.avatarUrl}
+                                  alt={`${member.username ?? "User"} avatar`}
+                                  className="h-7 w-7 rounded-full border border-[rgba(255,255,255,0.15)] object-cover"
+                                />
+                              ) : (
+                                <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[rgba(255,255,255,0.08)] text-[rgba(255,255,255,0.7)]">
+                                  <i className="fa-solid fa-user text-[10px]" aria-hidden="true" />
+                                </div>
+                              )}
+                              <span className="text-[12px]">
+                                {member.username ?? member.minecraftName ?? "Unbekannt"}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="mt-2 text-[12px] text-[rgba(255,255,255,0.6)]">
+                          Noch keine Teilnehmenden.
+                        </p>
+                      )}
+                    </>
+                  )}
+                </div>
                 <div className="mt-5 flex items-center justify-end gap-3">
+                  {(() => {
+                    const modrinthUrl = getProjectModrinthLink(selectedProject);
+                    if (!modrinthUrl) {
+                      return null;
+                    }
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => openModrinth(modrinthUrl)}
+                        className="rounded-[10px] bg-[#2BFE71] px-4 py-2 text-[13px] font-semibold text-[#0D0E12] transition hover:brightness-95"
+                      >
+                        Modrinth
+                      </button>
+                    );
+                  })()}
                   {canJoinSelectedProject && (
                     <button
                       type="button"
@@ -2281,11 +3137,6 @@ export default function App() {
                     >
                       Verlassen
                     </button>
-                  )}
-                  {isSelectedProjectEnded && (
-                    <span className="text-[12px] text-[rgba(255,255,255,0.55)]">
-                      Projekt beendet – keine Aenderungen moeglich.
-                    </span>
                   )}
                   <button
                     type="button"
@@ -2333,157 +3184,406 @@ export default function App() {
                           setProjectSource("manual");
                           setProjectModrinthId("");
                         }}
+                        disabled={Boolean(editingProjectId) && projectSource === "modrinth"}
                         className={`px-4 py-2 text-[12px] font-semibold transition ${projectSource === "manual"
                           ? "bg-[#2BFE71] text-[#0D0E12]"
                           : "text-[rgba(255,255,255,0.70)] hover:text-white"
-                          }`}
+                          } ${Boolean(editingProjectId) && projectSource === "modrinth"
+                          ? "opacity-40 cursor-not-allowed"
+                          : ""}`}
                       >
                         Manuell
                       </button>
                       <button
                         type="button"
                         onClick={() => setProjectSource("modrinth")}
+                        disabled={Boolean(editingProjectId) && projectSource === "manual"}
                         className={`px-4 py-2 text-[12px] font-semibold transition ${projectSource === "modrinth"
                           ? "bg-[#2BFE71] text-[#0D0E12]"
                           : "text-[rgba(255,255,255,0.70)] hover:text-white"
-                          }`}
+                          } ${Boolean(editingProjectId) && projectSource === "manual"
+                          ? "opacity-40 cursor-not-allowed"
+                          : ""}`}
                       >
                         Modrinth
                       </button>
                     </div>
                   </div>
 
-                  <div className="grid gap-6 md:grid-cols-2">
-                    <div className="space-y-2">
-                      <label className="flex items-center gap-2 text-[12px] font-semibold text-[rgba(255,255,255,0.82)]">
-                        <i className="fa-solid fa-pen-to-square text-[13px] text-[#2BFE71]" aria-hidden="true" />
-                        Name
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="Projektname"
-                        value={projectTitle}
-                        onChange={(event) => setProjectTitle(event.target.value)}
-                        className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71]"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="flex items-center gap-2 text-[12px] font-semibold text-[rgba(255,255,255,0.82)]">
-                        <i className="fa-solid fa-link text-[13px] text-[#2BFE71]" aria-hidden="true" />
-                        Slug
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="mein-projekt"
-                        value={projectSlug}
-                        onChange={(event) => setProjectSlug(event.target.value)}
-                        className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71]"
-                      />
-                    </div>
-                    <div className="md:col-span-2 space-y-2">
-                      <label className="flex items-center gap-2 text-[12px] font-semibold text-[rgba(255,255,255,0.82)]">
-                        <i className="fa-solid fa-align-left text-[13px] text-[#2BFE71]" aria-hidden="true" />
-                        Beschreibung
-                      </label>
-                      <textarea
-                        rows={4}
-                        placeholder="Kurze Projektbeschreibung"
-                        value={projectDescription}
-                        onChange={(event) => setProjectDescription(event.target.value)}
-                        className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71]"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="flex items-center gap-2 text-[12px] font-semibold text-[rgba(255,255,255,0.82)]">
-                        <i className="fa-solid fa-image text-[13px] text-[#2BFE71]" aria-hidden="true" />
-                        Logo (optional)
-                      </label>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={(event) =>
-                          setProjectLogoFile(event.target.files?.[0] ?? null)
-                        }
-                        className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-[rgba(255,255,255,0.75)] file:mr-3 file:rounded-full file:border-0 file:bg-[#1B2A22] file:px-3 file:py-1 file:text-[12px] file:text-[#2BFE71]"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="flex items-center gap-2 text-[12px] font-semibold text-[rgba(255,255,255,0.82)]">
-                        <i className="fa-solid fa-image text-[13px] text-[#2BFE71]" aria-hidden="true" />
-                        Banner (optional)
-                      </label>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={(event) =>
-                          setProjectBannerFile(event.target.files?.[0] ?? null)
-                        }
-                        className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-[rgba(255,255,255,0.75)] file:mr-3 file:rounded-full file:border-0 file:bg-[#1B2A22] file:px-3 file:py-1 file:text-[12px] file:text-[#2BFE71]"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="flex items-center gap-2 text-[12px] font-semibold text-[rgba(255,255,255,0.82)]">
-                        <i className="fa-solid fa-bolt text-[13px] text-[#2BFE71]" aria-hidden="true" />
-                        Activity Status
-                      </label>
-                      <select
-                        value={projectActivityStatus}
-                        onChange={(event) =>
-                          setProjectActivityStatus(
-                            event.target.value as NonNullable<ProjectItem["activityStatus"]>
-                          )
-                        }
-                        className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71]"
-                      >
-                        <option value="Active">Active</option>
-                        <option value="Starting shortly">Starting shortly</option>
-                        <option value="Coming Soon">Coming Soon</option>
-                        <option value="Ended">Ended</option>
-                      </select>
-                    </div>
-                    <div className="space-y-2">
-                      <label className="flex items-center gap-2 text-[12px] font-semibold text-[rgba(255,255,255,0.82)]">
-                        <i className="fa-solid fa-cloud-arrow-up text-[13px] text-[#2BFE71]" aria-hidden="true" />
-                        Modrinth ID {projectSource === "modrinth" ? "(pflicht)" : "(optional)"}
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="Modrinth Project ID"
-                        value={projectModrinthId}
-                        onChange={(event) => setProjectModrinthId(event.target.value)}
-                        className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71]"
-                      />
-                      <p className="text-[11px] text-[rgba(255,255,255,0.55)]">
-                        Wenn Modrinth aktiv ist, werden Titel, Beschreibung, Logo und Banner automatisch ersetzt.
-                      </p>
-                    </div>
-                    <div className="md:col-span-2 mt-2 flex items-center justify-between">
-                      <div className="text-[12px] text-[rgba(255,255,255,0.65)]">
-                        {projectSaveError && (
-                          <span className="text-[rgba(255,100,100,0.85)]">
-                            {projectSaveError}
-                          </span>
+                  {projectSource === "modrinth" ? (
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <label className="flex items-center gap-2 text-[12px] font-semibold text-[rgba(255,255,255,0.82)]">
+                          <i className="fa-solid fa-cloud-arrow-up text-[13px] text-[#2BFE71]" aria-hidden="true" />
+                          Modrinth-Projekt ID (erforderlich)
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="z.B. AANobbMI oder fabric-api"
+                          value={projectModrinthId}
+                          onChange={(event) => setProjectModrinthId(event.target.value)}
+                          className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71]"
+                        />
+                        {modrinthAutoLoading && (
+                          <p className="text-[11px] text-[rgba(255,255,255,0.55)]">
+                            Modrinth wird geladen...
+                          </p>
                         )}
-                        {projectSaveSuccess && !projectSaveError && (
-                          <span className="text-[#2BFE71]">
-                            {editingProjectId ? "Projekt aktualisiert." : "Projekt gespeichert."}
-                          </span>
+                        {modrinthAutoError && (
+                          <p className="text-[11px] text-[rgba(255,150,150,0.8)]">
+                            {modrinthAutoError}
+                          </p>
+                        )}
+                        <p className="text-[11px] text-[rgba(255,255,255,0.55)]">
+                          Modrinth-Daten werden im Client geladen.
+                        </p>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="flex items-center gap-2 text-[12px] font-semibold text-[rgba(255,255,255,0.82)]">
+                          <i className="fa-solid fa-bolt text-[13px] text-[#2BFE71]" aria-hidden="true" />
+                          Activity Status (erforderlich)
+                        </label>
+                        <select
+                          value={projectActivityStatus}
+                          onChange={(event) =>
+                            setProjectActivityStatus(
+                              event.target.value as NonNullable<ProjectItem["activityStatus"]>
+                            )
+                          }
+                          className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71]"
+                        >
+                          <option value="Active">Active</option>
+                          <option value="Starting shortly">Starting shortly</option>
+                          <option value="Coming Soon">Coming Soon</option>
+                          <option value="Ended">Ended</option>
+                        </select>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between">
+                        <div className="text-[12px] text-[rgba(255,255,255,0.65)]">
+                          {projectSaveError && (
+                            <span className="text-[rgba(255,100,100,0.85)]">
+                              {projectSaveError}
+                            </span>
+                          )}
+                          {projectSaveSuccess && !projectSaveError && (
+                            <span className="text-[#2BFE71]">
+                              {editingProjectId ? "Projekt aktualisiert." : "Projekt gespeichert."}
+                            </span>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={editingProjectId ? handleUpdateProject : handleCreateProject}
+                          disabled={projectSaving || !projectModrinthId.trim()}
+                          className="rounded-full bg-[#2BFE71] px-4 py-2 text-[12px] font-semibold text-[#0D0E12] disabled:opacity-60"
+                        >
+                          {projectSaving
+                            ? "Speichern..."
+                            : editingProjectId
+                              ? "Projekt aktualisieren"
+                              : "Projekt speichern"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid gap-6 md:grid-cols-2">
+                      <div className="space-y-2">
+                        <label className="flex items-center gap-2 text-[12px] font-semibold text-[rgba(255,255,255,0.82)]">
+                          <i className="fa-solid fa-pen-to-square text-[13px] text-[#2BFE71]" aria-hidden="true" />
+                          Projektname
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="z.B. Mein Minecraft Modpack"
+                          value={projectTitle}
+                          onChange={(event) => setProjectTitle(event.target.value)}
+                          className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71]"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="flex items-center gap-2 text-[12px] font-semibold text-[rgba(255,255,255,0.82)]">
+                          <i className="fa-solid fa-link text-[13px] text-[#2BFE71]" aria-hidden="true" />
+                          URL-Slug
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="mein-minecraft-modpack"
+                          value={projectSlug}
+                          onChange={(event) => setProjectSlug(event.target.value)}
+                          className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71]"
+                        />
+                      </div>
+                      <div className="md:col-span-2 space-y-2">
+                        <label className="flex items-center gap-2 text-[12px] font-semibold text-[rgba(255,255,255,0.82)]">
+                          <i className="fa-solid fa-align-left text-[13px] text-[#2BFE71]" aria-hidden="true" />
+                          Beschreibung
+                        </label>
+                        <textarea
+                          rows={4}
+                          placeholder="Beschreibe dein Projekt: Features, Zielgruppe und Besonderheiten..."
+                          value={projectDescription}
+                          onChange={(event) => setProjectDescription(event.target.value)}
+                          className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71]"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="flex items-center gap-2 text-[12px] font-semibold text-[rgba(255,255,255,0.82)]">
+                          <i className="fa-solid fa-image text-[13px] text-[#2BFE71]" aria-hidden="true" />
+                          Logo (optional)
+                        </label>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={(event) => {
+                            setProjectLogoFile(event.target.files?.[0] ?? null);
+                            setProjectLogoMediaId("");
+                          }}
+                          className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-[rgba(255,255,255,0.75)] file:mr-3 file:rounded-full file:border-0 file:bg-[#1B2A22] file:px-3 file:py-1 file:text-[12px] file:text-[#2BFE71]"
+                        />
+                        <div className="mt-2">
+                          <button
+                            type="button"
+                            onClick={() => setShowExistingLogos((prev) => !prev)}
+                            className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]"
+                          >
+                            <i
+                              className={`fa-solid fa-chevron-${showExistingLogos ? "up" : "down"} text-[10px]`}
+                              aria-hidden="true"
+                            />
+                            Aus Medienbibliothek wählen
+                          </button>
+                          {showExistingLogos && (
+                            <>
+                              {existingMediaLoading && (
+                                <p className="mt-2 text-[12px] text-[rgba(255,255,255,0.6)]">
+                                  Lade Logos...
+                                </p>
+                              )}
+                              {!existingMediaLoading && (
+                                <div className="mt-2 grid grid-cols-5 gap-2">
+                                  {existingLogos.map((item) => {
+                                    const url = item.thumbUrl ?? item.variants?.thumbUrl ?? item.url;
+                                    if (!item.id || !url) {
+                                      return null;
+                                    }
+                                    const isSelected = projectLogoMediaId === item.id;
+                                    return (
+                                      <button
+                                        key={item.id}
+                                        type="button"
+                                        onClick={() => {
+                                          setProjectLogoMediaId(item.id ?? "");
+                                          setProjectLogoFile(null);
+                                        }}
+                                        className={`relative h-12 w-full overflow-hidden rounded-[10px] border ${isSelected
+                                          ? "border-[#2BFE71]"
+                                          : "border-[rgba(255,255,255,0.12)]"
+                                          }`}
+                                        title={item.id}
+                                      >
+                                        <img src={url} alt="Logo" className="h-full w-full object-cover" />
+                                      </button>
+                                    );
+                                  })}
+                                  {!existingLogos.length && (
+                                    <p className="col-span-5 text-[12px] text-[rgba(255,255,255,0.5)]">
+                                      Keine Logos gefunden.
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="flex items-center gap-2 text-[12px] font-semibold text-[rgba(255,255,255,0.82)]">
+                          <i className="fa-solid fa-image text-[13px] text-[#2BFE71]" aria-hidden="true" />
+                          Banner (optional)
+                        </label>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={(event) => {
+                            setProjectBannerFile(event.target.files?.[0] ?? null);
+                            setProjectBannerMediaId("");
+                          }}
+                          className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-[rgba(255,255,255,0.75)] file:mr-3 file:rounded-full file:border-0 file:bg-[#1B2A22] file:px-3 file:py-1 file:text-[12px] file:text-[#2BFE71]"
+                        />
+                        <div className="mt-2">
+                          <button
+                            type="button"
+                            onClick={() => setShowExistingBanners((prev) => !prev)}
+                            className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]"
+                          >
+                            <i
+                              className={`fa-solid fa-chevron-${showExistingBanners ? "up" : "down"} text-[10px]`}
+                              aria-hidden="true"
+                            />
+                            Aus Medienbibliothek wählen
+                          </button>
+                          {showExistingBanners && (
+                            <>
+                              {existingMediaLoading && (
+                                <p className="mt-2 text-[12px] text-[rgba(255,255,255,0.6)]">
+                                  Lade Banner...
+                                </p>
+                              )}
+                              {!existingMediaLoading && (
+                                <div className="mt-2 grid grid-cols-4 gap-2">
+                                  {existingBanners.map((item) => {
+                                    const url = item.thumbUrl ?? item.variants?.thumbUrl ?? item.url;
+                                    if (!item.id || !url) {
+                                      return null;
+                                    }
+                                    const isSelected = projectBannerMediaId === item.id;
+                                    return (
+                                      <button
+                                        key={item.id}
+                                        type="button"
+                                        onClick={() => {
+                                          setProjectBannerMediaId(item.id ?? "");
+                                          setProjectBannerFile(null);
+                                        }}
+                                        className={`relative h-16 w-full overflow-hidden rounded-[10px] border ${isSelected
+                                          ? "border-[#2BFE71]"
+                                          : "border-[rgba(255,255,255,0.12)]"
+                                          }`}
+                                        title={item.id}
+                                      >
+                                        <img src={url} alt="Banner" className="h-full w-full object-cover" />
+                                      </button>
+                                    );
+                                  })}
+                                  {!existingBanners.length && (
+                                    <p className="col-span-4 text-[12px] text-[rgba(255,255,255,0.5)]">
+                                      Keine Banner gefunden.
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="flex items-center gap-2 text-[12px] font-semibold text-[rgba(255,255,255,0.82)]">
+                          <i className="fa-solid fa-bolt text-[13px] text-[#2BFE71]" aria-hidden="true" />
+                          Entwicklungsstatus
+                        </label>
+                        <select
+                          value={projectActivityStatus}
+                          onChange={(event) =>
+                            setProjectActivityStatus(
+                              event.target.value as NonNullable<ProjectItem["activityStatus"]>
+                            )
+                          }
+                          className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71]"
+                        >
+                          <option value="Active">Active</option>
+                          <option value="Starting shortly">Starting shortly</option>
+                          <option value="Coming Soon">Coming Soon</option>
+                          <option value="Ended">Ended</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="flex items-center gap-2 text-[12px] font-semibold text-[rgba(255,255,255,0.82)]">
+                          <i className="fa-solid fa-layer-group text-[13px] text-[#2BFE71]" aria-hidden="true" />
+                          Mod-Loader (erforderlich)
+                        </label>
+                        <select
+                          value={projectLoader}
+                          onChange={(event) =>
+                            setProjectLoader(event.target.value as "Fabric" | "Forge" | "Vanilla" | "")
+                          }
+                          className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71]"
+                        >
+                          <option value="">Loader auswählen...</option>
+                          <option value="Fabric">Fabric</option>
+                          <option value="Forge">Forge</option>
+                          <option value="Vanilla">Vanilla</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="flex items-center gap-2 text-[12px] font-semibold text-[rgba(255,255,255,0.82)]">
+                          <i className="fa-solid fa-cube text-[13px] text-[#2BFE71]" aria-hidden="true" />
+                          Minecraft-Version (erforderlich)
+                        </label>
+                        {mcVersionsError ? (
+                          <input
+                            type="text"
+                            placeholder="z.B. 1.21.4 oder 1.20.1"
+                            value={projectVersion}
+                            onChange={(event) => setProjectVersion(event.target.value)}
+                            className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71]"
+                          />
+                        ) : (
+                          <select
+                            value={projectVersion}
+                            onChange={(event) => setProjectVersion(event.target.value)}
+                            disabled={mcVersionsLoading}
+                            className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71] disabled:opacity-60"
+                          >
+                            <option value="">
+                              {mcVersionsLoading ? "Lade Versionen..." : "Version auswählen..."}
+                            </option>
+                            {mcVersions.map((version) => (
+                              <option key={version} value={version}>
+                                {version}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                        {mcVersionsError && (
+                          <p className="text-[11px] text-[rgba(255,255,255,0.55)]">
+                            Versionsliste nicht verfügbar. Gib die Version manuell ein.
+                          </p>
                         )}
                       </div>
-                      <button
-                        type="button"
-                        onClick={editingProjectId ? handleUpdateProject : handleCreateProject}
-                        disabled={projectSaving || (projectSource === "modrinth" && !projectModrinthId.trim())}
-                        className="rounded-full bg-[#2BFE71] px-4 py-2 text-[12px] font-semibold text-[#0D0E12] disabled:opacity-60"
-                      >
-                        {projectSaving
-                          ? "Speichern..."
-                          : editingProjectId
-                            ? "Projekt aktualisieren"
-                            : "Projekt speichern"}
-                      </button>
+                      <div className="space-y-2">
+                        <label className="flex items-center gap-2 text-[12px] font-semibold text-[rgba(255,255,255,0.82)]">
+                          <i className="fa-solid fa-cloud-arrow-up text-[13px] text-[#2BFE71]" aria-hidden="true" />
+                          Modrinth-Verknüpfung (optional)
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="Verknüpfe mit einem Modrinth-Projekt für zusätzliche Infos"
+                          value={projectModrinthId}
+                          onChange={(event) => setProjectModrinthId(event.target.value)}
+                          className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71]"
+                        />
+                      </div>
+                      <div className="md:col-span-2 mt-2 flex items-center justify-between">
+                        <div className="text-[12px] text-[rgba(255,255,255,0.65)]">
+                          {projectSaveError && (
+                            <span className="text-[rgba(255,100,100,0.85)]">
+                              {projectSaveError}
+                            </span>
+                          )}
+                          {projectSaveSuccess && !projectSaveError && (
+                            <span className="text-[#2BFE71]">
+                              {editingProjectId ? "Projekt aktualisiert." : "Projekt gespeichert."}
+                            </span>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={editingProjectId ? handleUpdateProject : handleCreateProject}
+                          disabled={
+                            projectSaving ||
+                            (!editingProjectId && (!projectLoader || !projectVersion))
+                          }
+                          className="rounded-full bg-[#2BFE71] px-4 py-2 text-[12px] font-semibold text-[#0D0E12] disabled:opacity-60"
+                        >
+                          {projectSaving
+                            ? "Speichern..."
+                            : editingProjectId
+                              ? "Projekt aktualisieren"
+                              : "Projekt speichern"}
+                        </button>
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
               )}
 
@@ -2529,6 +3629,7 @@ export default function App() {
                       {([
                         { id: "logos", label: "Logo" },
                         { id: "banners", label: "Banner" },
+                        { id: "news-banners", label: "News Banner" },
                         { id: "avatars", label: "Avatar" }
                       ] as const).map((option) => {
                         const active = mediaUploadType === option.id;
@@ -2586,6 +3687,8 @@ export default function App() {
                     <input
                       type="text"
                       placeholder="News-Titel"
+                      value={newsTitle}
+                      onChange={(event) => setNewsTitle(event.target.value)}
                       className="mt-2 w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71]"
                     />
                   </div>
@@ -2596,25 +3699,121 @@ export default function App() {
                     <textarea
                       rows={3}
                       placeholder="Kurzer Teaser"
+                      value={newsExcerpt}
+                      onChange={(event) => setNewsExcerpt(event.target.value)}
                       className="mt-2 w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71]"
                     />
                   </div>
-                  <div>
+                  <div className="md:col-span-2">
                     <label className="text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]">
-                      Cover-Bild
+                      Inhalt (Markdown)
+                    </label>
+                    <textarea
+                      rows={5}
+                      placeholder="Langer Inhalt in Markdown..."
+                      value={newsContent}
+                      onChange={(event) => setNewsContent(event.target.value)}
+                      className="mt-2 w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71]"
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]">
+                      Tags (optional)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="update, release"
+                      value={newsTags}
+                      onChange={(event) => setNewsTags(event.target.value)}
+                      className="mt-2 w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71]"
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]">
+                      Neues Cover hochladen
                     </label>
                     <input
                       type="file"
                       accept="image/*"
+                      onChange={(event) => {
+                        setNewsCoverFile(event.target.files?.[0] ?? null);
+                        setNewsCoverMediaId("");
+                      }}
                       className="mt-2 w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-[rgba(255,255,255,0.75)] file:mr-3 file:rounded-full file:border-0 file:bg-[#1B2A22] file:px-3 file:py-1 file:text-[12px] file:text-[#2BFE71]"
                     />
+                    {newsCoverFile && (
+                      <p className="mt-2 text-[11px] text-[rgba(255,255,255,0.55)]">
+                        Datei ausgewählt: {newsCoverFile.name}
+                      </p>
+                    )}
                   </div>
-                  <div className="md:col-span-2 mt-2">
+                  <div className="md:col-span-2">
                     <button
                       type="button"
-                      className="rounded-full bg-[#2BFE71] px-4 py-2 text-[12px] font-semibold text-[#0D0E12]"
+                      onClick={() => setShowExistingNewsBanners((prev) => !prev)}
+                      className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]"
                     >
-                      News speichern
+                      <i
+                        className={`fa-solid fa-chevron-${showExistingNewsBanners ? "up" : "down"} text-[10px]`}
+                        aria-hidden="true"
+                      />
+                      Cover-Bild aus Media
+                    </button>
+                    {showExistingNewsBanners && (
+                      <>
+                        {existingMediaLoading && (
+                          <p className="mt-2 text-[12px] text-[rgba(255,255,255,0.6)]">
+                            Lade Banner...
+                          </p>
+                        )}
+                        {!existingMediaLoading && (
+                          <div className="mt-2 grid grid-cols-4 gap-2">
+                            {existingBanners.map((item) => {
+                              const url = item.thumbUrl ?? item.variants?.thumbUrl ?? item.url;
+                              if (!item.id || !url) {
+                                return null;
+                              }
+                              const isSelected = newsCoverMediaId === item.id;
+                              return (
+                                <button
+                                  key={item.id}
+                                  type="button"
+                                  onClick={() => setNewsCoverMediaId(item.id ?? "")}
+                                  className={`relative h-16 w-full overflow-hidden rounded-[10px] border ${isSelected
+                                    ? "border-[#2BFE71]"
+                                    : "border-[rgba(255,255,255,0.12)]"
+                                    }`}
+                                  title={item.id}
+                                >
+                                  <img src={url} alt="Banner" className="h-full w-full object-cover" />
+                                </button>
+                              );
+                            })}
+                            {!existingBanners.length && (
+                              <p className="col-span-4 text-[12px] text-[rgba(255,255,255,0.5)]">
+                                Keine Banner gefunden.
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                  <div className="md:col-span-2 mt-2 flex items-center justify-between">
+                    <div className="text-[12px] text-[rgba(255,255,255,0.65)]">
+                      {newsSaveError && (
+                        <span className="text-[rgba(255,100,100,0.85)]">
+                          {newsSaveError}
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleCreateNews}
+                      disabled={newsSaving || newsCoverUploading}
+                      className="rounded-full bg-[#2BFE71] px-4 py-2 text-[12px] font-semibold text-[#0D0E12] disabled:opacity-60"
+                    >
+                      {newsSaving || newsCoverUploading ? "Speichern..." : "News speichern"}
                     </button>
                   </div>
                 </div>
@@ -2693,6 +3892,41 @@ export default function App() {
             </div>
           </div>
         )}
+        {newsDeleteCandidate && (
+          <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/70 px-4">
+            <div className="w-full max-w-md rounded-[18px] border border-[rgba(255,255,255,0.12)] bg-[#0F1116] p-6 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
+              <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
+                News loeschen?
+              </h3>
+              <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.65)]">
+                {newsDeleteCandidate.title} wird dauerhaft geloescht.
+              </p>
+              {newsDeleteError && (
+                <div className="mt-3 rounded-[10px] border border-[rgba(255,100,100,0.25)] bg-[rgba(255,100,100,0.08)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.8)]">
+                  {newsDeleteError}
+                </div>
+              )}
+              <div className="mt-5 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setNewsDeleteCandidate(null)}
+                  className="rounded-[10px] border border-[rgba(255,255,255,0.12)] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.75)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
+                  disabled={newsDeleting}
+                >
+                  Abbrechen
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmDeleteNews}
+                  className="rounded-[10px] bg-[#FF5B5B] px-4 py-2 text-[12px] font-semibold text-[#0D0E12] transition hover:brightness-95 disabled:opacity-60"
+                  disabled={newsDeleting}
+                >
+                  {newsDeleting ? "Loeschen..." : "Loeschen"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {mediaUploadSuccess && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center bg-transparent">
             <div className="flex flex-col items-center gap-3 rounded-[20px] border border-[rgba(255,255,255,0.12)] bg-[#111319] px-8 py-6 text-center shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
@@ -2729,6 +3963,8 @@ function renderContent(
   onNavigate: (pageId: string) => void,
   projects: ProjectItem[],
   projectError: boolean,
+  newsItems: NewsItem[],
+  newsError: boolean,
   modrinthProjects: ModrinthProject[],
   modrinthError: boolean,
   calendarEvents: CalendarEvent[],
@@ -2739,14 +3975,15 @@ function renderContent(
   mediaPage: Record<string, number>,
   mediaHasMore: Record<string, boolean>,
   fetchMediaPage: (section: string, page: number, replace?: boolean) => void,
-  mediaFilter: "all" | "logos" | "banners" | "avatars",
-  setMediaFilter: (value: "all" | "logos" | "banners" | "avatars") => void,
+  mediaFilter: "all" | "logos" | "banners" | "news-banners" | "avatars",
+  setMediaFilter: (value: "all" | "logos" | "banners" | "news-banners" | "avatars") => void,
   selectedMediaIds: { id: string; section: string }[],
   toggleMediaSelection: (section: string, id: string) => void,
   handleDeleteMedia: (section: string, id: string) => void,
   handleDeleteSelectedMedia: () => void,
   projectDeleteError: string | null,
   requestDeleteProject: (project: ProjectItem) => void,
+  requestDeleteNews: (item: NewsItem) => void,
   handleEditProject: (project: ProjectItem) => void,
   handleNewProject: () => void,
   permissionFlags: PermissionFlags,
@@ -2844,14 +4081,14 @@ function renderContent(
               type="button"
               key={item.title}
               onClick={() => onSelectProject(item)}
-              className="group relative flex h-full w-[260px] flex-col rounded-[18px] p-[3px] text-left transition-[width] duration-300 delay-0 group-hover:w-[520px] group-hover:delay-[5000ms]"
+              className="group relative flex h-[320px] w-[260px] flex-col rounded-[18px] p-[3px] text-left"
             >
               <span
                 aria-hidden="true"
                 className="rainbow-draw pointer-events-none absolute inset-0 rounded-[18px] blur-[2px]"
               />
               <div className="relative z-10 flex h-full w-full overflow-hidden rounded-[15px] bg-[#24262C]">
-                <div className="flex w-[260px] shrink-0 flex-col">
+                <div className="flex w-full flex-col">
                   {item.cover?.url ? (
                     <div className="relative h-[180px] w-full overflow-hidden">
                       <img
@@ -2881,41 +4118,24 @@ function renderContent(
                   <div className="px-[16px] pb-[18px] pt-[14px]">
                     <div className="flex items-center gap-[12px]">
                       {item.logoIcon?.url ? (
-                        <img
-                          src={item.logoIcon.url}
-                          alt={`${item.title} logo`}
-                          className="h-[48px] w-[48px] rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[#1B1D22] object-cover"
-                        />
+                        <div className="h-[48px] w-[48px] overflow-hidden rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[#1B1D22]">
+                          <img
+                            src={item.logoIcon.url}
+                            alt={`${item.title} logo`}
+                            className="h-full w-full object-cover"
+                          />
+                        </div>
                       ) : (
                         <div className="h-[48px] w-[48px] rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[#1B1D22]" />
                       )}
-                      <p className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
+                      <p className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)] line-clamp-1">
                         {item.title}
                       </p>
                     </div>
-                    <p className="mt-[12px] text-[12px] leading-[18px] text-[rgba(255,255,255,0.70)] max-h-[72px] overflow-hidden">
+                    <p className="mt-[12px] text-[12px] leading-[18px] text-[rgba(255,255,255,0.70)] line-clamp-3">
                       {getProjectDescriptionText(item) ?? fallbackProjectDescription}
                     </p>
                   </div>
-                </div>
-                <div className="w-[260px] border-l border-[rgba(255,255,255,0.08)] px-[14px] py-[14px] opacity-0 transition-opacity duration-300 delay-0 group-hover:opacity-100 group-hover:delay-[5000ms]">
-                  <p className="text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]">
-                    Details
-                  </p>
-                  <p className="mt-2 text-[13px] font-semibold text-[rgba(255,255,255,0.92)]">
-                    {item.title}
-                  </p>
-                  <p className="mt-2 text-[11px] text-[rgba(255,255,255,0.6)]">
-                    ID: {item.id}
-                  </p>
-                  {item.slug && (
-                    <p className="mt-1 text-[11px] text-[rgba(255,255,255,0.6)]">
-                      Slug: {item.slug}
-                    </p>
-                  )}
-                  <p className="mt-3 text-[12px] leading-[18px] text-[rgba(255,255,255,0.7)]">
-                    {getProjectDescriptionText(item) ?? fallbackProjectDescription}
-                  </p>
                 </div>
               </div>
             </button>
@@ -2946,14 +4166,14 @@ function renderContent(
                 type="button"
                 key={item.title}
                 onClick={() => onSelectProject(item)}
-                className="group relative flex h-full w-[260px] flex-col rounded-[18px] p-[3px] text-left transition-[width] duration-300 delay-0 group-hover:w-[520px] group-hover:delay-[5000ms]"
+                className="group relative flex h-[320px] w-[260px] flex-col rounded-[18px] p-[3px] text-left"
               >
                 <span
                   aria-hidden="true"
                   className="rainbow-draw pointer-events-none absolute inset-0 rounded-[18px] blur-[2px]"
                 />
                 <div className="relative z-10 flex h-full w-full overflow-hidden rounded-[15px] bg-[#24262C]">
-                  <div className="flex w-[260px] shrink-0 flex-col">
+                  <div className="flex w-full flex-col">
                   {item.cover?.url ? (
                     <div className="relative h-[180px] w-full overflow-hidden">
                       <img
@@ -2983,41 +4203,24 @@ function renderContent(
                   <div className="px-[16px] pb-[18px] pt-[14px]">
                     <div className="flex items-center gap-[12px]">
                         {item.logoIcon?.url ? (
-                          <img
-                            src={item.logoIcon.url}
-                            alt={`${item.title} logo`}
-                            className="h-[48px] w-[48px] rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[#1B1D22] object-cover"
-                          />
+                          <div className="h-[48px] w-[48px] overflow-hidden rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[#1B1D22]">
+                            <img
+                              src={item.logoIcon.url}
+                              alt={`${item.title} logo`}
+                              className="h-full w-full object-cover"
+                            />
+                          </div>
                         ) : (
                           <div className="h-[48px] w-[48px] rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[#1B1D22]" />
                         )}
-                      <p className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
+                      <p className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)] line-clamp-1">
                         {item.title}
                       </p>
                     </div>
-                    <p className="mt-[12px] text-[12px] leading-[18px] text-[rgba(255,255,255,0.70)] max-h-[72px] overflow-hidden">
+                    <p className="mt-[12px] text-[12px] leading-[18px] text-[rgba(255,255,255,0.70)] line-clamp-3">
                       {getProjectDescriptionText(item) ?? fallbackProjectDescription}
                     </p>
                     </div>
-                  </div>
-                  <div className="w-[260px] border-l border-[rgba(255,255,255,0.08)] px-[14px] py-[14px] opacity-0 transition-opacity duration-300 delay-0 group-hover:opacity-100 group-hover:delay-[5000ms]">
-                    <p className="text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]">
-                      Details
-                    </p>
-                    <p className="mt-2 text-[13px] font-semibold text-[rgba(255,255,255,0.92)]">
-                      {item.title}
-                    </p>
-                    <p className="mt-2 text-[11px] text-[rgba(255,255,255,0.6)]">
-                      ID: {item.id}
-                    </p>
-                    {item.slug && (
-                      <p className="mt-1 text-[11px] text-[rgba(255,255,255,0.6)]">
-                        Slug: {item.slug}
-                      </p>
-                    )}
-                    <p className="mt-3 text-[12px] leading-[18px] text-[rgba(255,255,255,0.7)]">
-                      {getProjectDescriptionText(item) ?? fallbackProjectDescription}
-                    </p>
                   </div>
                 </div>
               </button>
@@ -3225,52 +4428,51 @@ function renderContent(
                 <div className="mt-[10px] overflow-x-hidden pb-2 pr-1">
                   <div className="grid grid-flow-col auto-cols-[260px] gap-[12px]">
                     {group.items.map((item) => (
-                      <div
+                      <button
                         key={item.id}
-                        className="group relative overflow-hidden rounded-[18px] bg-[#24262C]"
+                        type="button"
+                        onClick={() => item.url && openModrinth(item.url)}
+                        className="group relative flex h-[320px] w-[260px] flex-col rounded-[18px] p-[3px] text-left"
                       >
-                        {item.url && (
-                          <button
-                            type="button"
-                            onClick={() => openModrinth(item.url)}
-                            className="absolute left-1/2 top-0 z-10 w-[210px] -translate-x-1/2 -translate-y-2 rounded-b-2xl rounded-t-none bg-[#16181c] px-4 py-2 shadow-lg opacity-0 transition duration-200 group-hover:translate-y-0 group-hover:opacity-100"
-                            aria-label="Open on Modrinth"
-                          >
-                            <div className="flex items-center justify-center">
-                              <img src={modrinthLogo} alt="Modrinth" className="h-7 w-auto" />
-                            </div>
-                          </button>
-                        )}
-
-                        {item.coverUrl ? (
-                          <img
-                            src={item.coverUrl}
-                            alt={`${item.title} hero`}
-                            className="h-[180px] w-full bg-[#0D0E12] object-cover transition duration-200 group-hover:brightness-90"
-                          />
-                        ) : (
-                          <div className="h-[180px] w-full bg-[#0D0E12]" />
-                        )}
-                        <div className="px-[16px] pb-[18px] pt-[14px]">
-                          <div className="flex items-center gap-[12px]">
-                            {item.iconUrl ? (
-                              <img
-                                src={item.iconUrl}
-                                alt={`${item.title} logo`}
-                                className="h-[48px] w-[48px] rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[#1B1D22] object-cover"
-                              />
+                        <span
+                          aria-hidden="true"
+                          className="rainbow-draw pointer-events-none absolute inset-0 rounded-[18px] blur-[2px]"
+                        />
+                        <div className="relative z-10 flex h-full w-full overflow-hidden rounded-[15px] bg-[#24262C]">
+                          <div className="flex w-full flex-col">
+                            {item.coverUrl ? (
+                              <div className="relative h-[180px] w-full overflow-hidden">
+                                <img
+                                  src={item.coverUrl}
+                                  alt={`${item.title} hero`}
+                                  className="h-full w-full bg-[#0D0E12] object-cover transition duration-200 group-hover:brightness-90"
+                                />
+                              </div>
                             ) : (
-                              <div className="h-[48px] w-[48px] rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[#1B1D22]" />
+                              <div className="h-[180px] w-full bg-[#0D0E12]" />
                             )}
-                            <p className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
-                              {item.title}
-                            </p>
+                            <div className="px-[16px] pb-[18px] pt-[14px]">
+                              <div className="flex items-center gap-[12px]">
+                                {item.iconUrl ? (
+                                  <img
+                                    src={item.iconUrl}
+                                    alt={`${item.title} logo`}
+                                    className="h-[48px] w-[48px] rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[#1B1D22] object-cover"
+                                  />
+                                ) : (
+                                  <div className="h-[48px] w-[48px] rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[#1B1D22]" />
+                                )}
+                                <p className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)] line-clamp-1">
+                                  {item.title}
+                                </p>
+                              </div>
+                              <p className="mt-[12px] text-[12px] leading-[18px] text-[rgba(255,255,255,0.70)] line-clamp-3">
+                                {item.description ?? fallbackProjectDescription}
+                              </p>
+                            </div>
                           </div>
-                          <p className="mt-[12px] text-[12px] leading-[18px] text-[rgba(255,255,255,0.70)] max-h-[72px] overflow-hidden">
-                            {item.description ?? fallbackProjectDescription}
-                          </p>
                         </div>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 </div>
@@ -3418,7 +4620,7 @@ function renderContent(
           {canShowNews && (
           <button
             type="button"
-            onClick={() => setEditorModal("news")}
+            onClick={() => onNavigate("news")}
             className="group relative flex flex-col items-center justify-center rounded-[24px] p-[3px] transition-all"
           >
             <span
@@ -3498,6 +4700,105 @@ function renderContent(
     );
   }
 
+  if (page === "news") {
+    if (!permissionFlags.canAccessNews) {
+      return (
+        <p className="text-[13px] text-[rgba(255,255,255,0.60)]">
+          Keine Berechtigung.
+        </p>
+      );
+    }
+    return (
+      <div className="space-y-8">
+        <div className="flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => onNavigate("editor")}
+            className="flex items-center gap-2 rounded-[12px] border border-[rgba(255,255,255,0.12)] bg-[#16181c] px-4 py-3 text-[14px] font-semibold text-[rgba(255,255,255,0.70)] transition hover:border-[#2BFE71] hover:bg-[rgba(43,254,113,0.1)] hover:text-[#2BFE71]"
+            aria-label="Zurueck"
+          >
+            <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
+            Zurueck
+          </button>
+          <button
+            type="button"
+            onClick={() => setEditorModal("news")}
+            className="flex items-center gap-2 rounded-[12px] bg-[#2BFE71] px-6 py-3 text-[14px] font-semibold text-[#0D0E12] transition hover:bg-[#25e565]"
+          >
+            <i className="fa-solid fa-plus" aria-hidden="true" />
+            Neue News
+          </button>
+        </div>
+
+        <div>
+          {newsItems.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20 text-center">
+              <div className="mb-6 flex h-24 w-24 items-center justify-center rounded-full bg-[rgba(255,255,255,0.05)]">
+                <i className="fa-solid fa-newspaper text-[40px] text-[rgba(255,255,255,0.3)]" aria-hidden="true" />
+              </div>
+              <h3 className="text-[18px] font-semibold text-[rgba(255,255,255,0.85)]">
+                Noch keine News
+              </h3>
+              <p className="mt-2 text-[14px] text-[rgba(255,255,255,0.55)] max-w-md">
+                Erstelle deine erste News, um Updates zu teilen
+              </p>
+            </div>
+          ) : (
+            <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+              {newsItems.map((item) => (
+                <div
+                  key={item.id}
+                  className="group relative overflow-hidden rounded-[20px] p-[3px]"
+                >
+                  <span
+                    aria-hidden="true"
+                    className="rainbow-draw pointer-events-none absolute inset-0 rounded-[20px] blur-[2px]"
+                  />
+                  <div className="relative z-10 overflow-hidden rounded-[17px] bg-[#24262C]">
+                    {item.cover?.url ? (
+                      <div className="relative h-48 w-full overflow-hidden">
+                        <img
+                          src={item.cover.url}
+                          alt={item.title}
+                          className="h-full w-full bg-[#0D0E12] object-cover transition duration-300 group-hover:scale-105"
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-[#24262C] via-transparent to-transparent opacity-60" />
+                      </div>
+                    ) : (
+                      <div className="flex h-48 w-full items-center justify-center bg-[#0D0E12]">
+                        <i className="fa-solid fa-image text-[48px] text-[rgba(255,255,255,0.15)]" aria-hidden="true" />
+                      </div>
+                    )}
+                    <div className="p-5">
+                      <div className="flex items-start justify-between gap-3">
+                        <h4 className="truncate text-[16px] font-bold text-[rgba(255,255,255,0.95)]">
+                          {item.title}
+                        </h4>
+                        {permissionFlags.canDeleteNews && (
+                          <button
+                            type="button"
+                            onClick={() => requestDeleteNews(item)}
+                            className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-[rgba(255,91,91,0.18)] text-[#FF8A8A] shadow-[0_0_0_1px_rgba(255,91,91,0.25)] transition hover:bg-[rgba(255,91,91,0.28)] hover:text-[#FF5B5B]"
+                            aria-label="News loeschen"
+                          >
+                            <i className="fa-solid fa-trash" aria-hidden="true" />
+                          </button>
+                        )}
+                      </div>
+                      <p className="mt-2 line-clamp-3 text-[13px] leading-relaxed text-[rgba(255,255,255,0.60)] min-h-[54px]">
+                        {item.excerpt}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   if (page === "media") {
     const canAccessMedia = permissionFlags.canAccessMedia;
     const canUploadMedia = permissionFlags.canUploadMedia;
@@ -3532,6 +4833,7 @@ function renderContent(
             { id: "all", label: "Alle" },
             { id: "logos", label: "Logos" },
             { id: "banners", label: "Banner" },
+            { id: "news-banners", label: "News Banner" },
             { id: "avatars", label: "Avatars" }
           ] as const).map((option) => {
             if (!canAccessMedia) {
@@ -3896,14 +5198,15 @@ function renderContent(
   }
 
   if (page === "admin") {
-    if (!permissionFlags.canAccessAdmin) {
+    if (!permissionFlags.canAccessAdmin && !permissionFlags.isModerator) {
       return (
         <p className="text-[13px] text-[rgba(255,255,255,0.60)]">
           Keine Berechtigung.
         </p>
       );
     }
-    const canShowMembers = permissionFlags.canAccessMembers;
+    const canShowMembers =
+      permissionFlags.canAccessMembers || permissionFlags.isModerator;
     const canShowRoles = permissionFlags.canAccessRoles;
     return (
       <div className="space-y-6">
@@ -3968,13 +5271,16 @@ function renderContent(
   }
 
   if (page === "members") {
-    if (!permissionFlags.canAccessMembers) {
+    if (!permissionFlags.canAccessMembers && !permissionFlags.isModerator) {
       return (
         <p className="text-[13px] text-[rgba(255,255,255,0.60)]">
           Keine Berechtigung.
         </p>
       );
     }
+    const canBanUsers = permissionFlags.canBanUsers;
+    const canWarnUsers = permissionFlags.canWarnUsers;
+    const showActions = canBanUsers || canWarnUsers;
     return (
       <div className="space-y-8">
         <div className="flex items-center justify-between">
@@ -3999,23 +5305,45 @@ function renderContent(
         )}
 
         <div className="overflow-hidden rounded-[16px] border border-[rgba(255,255,255,0.08)] bg-[#12141A]">
-          <div className="grid grid-cols-[1.6fr,1.3fr,1fr,1fr,0.7fr] gap-4 border-b border-[rgba(255,255,255,0.08)] px-4 py-3 text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]">
+          <div
+            className={`grid gap-4 border-b border-[rgba(255,255,255,0.08)] px-4 py-3 text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)] ${showActions
+              ? "grid-cols-[1.6fr,1.3fr,1fr,1fr,0.7fr]"
+              : "grid-cols-[1.6fr,1.3fr,1fr,1fr]"
+              }`}
+          >
             <span>User</span>
             <span>UID</span>
             <span>Roles</span>
             <span>Details</span>
-            <span>Aktionen</span>
+            {showActions && <span>Aktionen</span>}
           </div>
           <div className="divide-y divide-[rgba(255,255,255,0.06)]">
             {members.map((member) => (
               <div
                 key={member.uid}
-                className="grid grid-cols-[1.6fr,1.3fr,1fr,1fr,0.7fr] gap-4 px-4 py-3 text-[12px] text-[rgba(255,255,255,0.75)]"
+                className={`grid gap-4 px-4 py-3 text-[12px] text-[rgba(255,255,255,0.75)] ${showActions
+                  ? "grid-cols-[1.6fr,1.3fr,1fr,1fr,0.7fr]"
+                  : "grid-cols-[1.6fr,1.3fr,1fr,1fr]"
+                  }`}
               >
                 <div className="flex items-center gap-3">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[rgba(255,255,255,0.08)] text-[rgba(255,255,255,0.8)]">
-                    <i className="fa-solid fa-user" aria-hidden="true" />
-                  </div>
+                  {member.avatarUrl ? (
+                    <img
+                      src={member.avatarUrl}
+                      alt={`${member.username ?? "User"} avatar`}
+                      className="h-9 w-9 rounded-full border border-[rgba(255,255,255,0.12)] object-cover"
+                      onLoad={() =>
+                        console.log("Avatar geladen:", member.avatarUrl)
+                      }
+                      onError={() =>
+                        console.warn("Avatar konnte nicht geladen werden:", member.avatarUrl)
+                      }
+                    />
+                  ) : (
+                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[rgba(255,255,255,0.08)] text-[rgba(255,255,255,0.8)]">
+                      <i className="fa-solid fa-user" aria-hidden="true" />
+                    </div>
+                  )}
                   <div>
                     <p className="text-[13px] font-semibold text-[rgba(255,255,255,0.92)]">
                       {member.username ?? "Unbekannt"}
@@ -4038,26 +5366,32 @@ function renderContent(
                   {typeof member.level === "number" ? ` · Lvl ${member.level}` : ""}
                   {member.experience ? ` · ${member.experience}` : ""}
                 </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    className="flex h-8 w-8 items-center justify-center rounded-[6px] bg-[rgba(255,91,91,0.18)] text-[#FF8A8A] shadow-[0_0_0_1px_rgba(255,91,91,0.25)] transition hover:bg-[rgba(255,91,91,0.28)] hover:text-[#FF5B5B]"
-                    title="Bannen"
-                    aria-label="Bannen"
-                    onClick={() => onOpenBanDialog(member)}
-                  >
-                    <i className="fa-solid fa-ban" aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    className="flex h-8 w-8 items-center justify-center rounded-[6px] bg-[rgba(255,209,102,0.18)] text-[#FFD166] shadow-[0_0_0_1px_rgba(255,209,102,0.25)] transition hover:bg-[rgba(255,209,102,0.28)] hover:text-[#FFC857]"
-                    title="Warnen"
-                    aria-label="Warnen"
-                    onClick={() => onOpenWarnDialog(member)}
-                  >
-                    <i className="fa-solid fa-triangle-exclamation" aria-hidden="true" />
-                  </button>
-                </div>
+                {showActions && (
+                  <div className="flex items-center gap-2">
+                    {canBanUsers && (
+                      <button
+                        type="button"
+                        className="flex h-8 w-8 items-center justify-center rounded-[6px] bg-[rgba(255,91,91,0.18)] text-[#FF8A8A] shadow-[0_0_0_1px_rgba(255,91,91,0.25)] transition hover:bg-[rgba(255,91,91,0.28)] hover:text-[#FF5B5B]"
+                        title="Bannen"
+                        aria-label="Bannen"
+                        onClick={() => onOpenBanDialog(member)}
+                      >
+                        <i className="fa-solid fa-ban" aria-hidden="true" />
+                      </button>
+                    )}
+                    {canWarnUsers && (
+                      <button
+                        type="button"
+                        className="flex h-8 w-8 items-center justify-center rounded-[6px] bg-[rgba(255,209,102,0.18)] text-[#FFD166] shadow-[0_0_0_1px_rgba(255,209,102,0.25)] transition hover:bg-[rgba(255,209,102,0.28)] hover:text-[#FFC857]"
+                        title="Warnen"
+                        aria-label="Warnen"
+                        onClick={() => onOpenWarnDialog(member)}
+                      >
+                        <i className="fa-solid fa-triangle-exclamation" aria-hidden="true" />
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
             {!membersLoading && !members.length && !membersError && (
