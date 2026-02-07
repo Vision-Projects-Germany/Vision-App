@@ -4,12 +4,14 @@ interface SideIconsProps {
   activeId: string;
   onChange: (id: string) => void;
   visiblePages?: string[] | null;
+  avatarUrl?: string | null;
 }
 
 export const SideIcons = memo(function SideIcons({
   activeId,
   onChange,
-  visiblePages = null
+  visiblePages = null,
+  avatarUrl = null
 }: SideIconsProps) {
   const items = [
     { id: "home", label: "Home", icon: "fa-house" },
@@ -103,7 +105,15 @@ export const SideIcons = memo(function SideIcons({
             aria-label="Profile"
             title="Profile"
           >
-            <i className="fa-solid fa-user" aria-hidden="true" />
+            {avatarUrl ? (
+              <img
+                src={avatarUrl}
+                alt="Profilbild"
+                className="h-9 w-9 rounded-full object-cover"
+              />
+            ) : (
+              <i className="fa-solid fa-user" aria-hidden="true" />
+            )}
           </button>
         )}
       </div>

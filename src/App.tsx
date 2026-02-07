@@ -7,12 +7,12 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faChevronRight } from "@fortawesome/free-solid-svg-icons";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut, type User } from "firebase/auth";
 import { arrayRemove, arrayUnion, doc, getDoc, updateDoc } from "firebase/firestore";
-import modrinthLogo from "./assets/logos/modrinth/modrinth_logo.png";
 import { AppShell } from "./components/AppShell";
 import { MainCard } from "./components/MainCard";
 import { SideIcons } from "./components/SideIcons";
 import { LoginView } from "./components/LoginView";
 import { auth, db } from "./firebase";
+import clippyImage from "./assets/clippy/Clippy.png";
 
 interface NewsItem {
   id: string;
@@ -122,6 +122,24 @@ interface HttpResponse {
   body: string;
 }
 
+interface OAuthProviderConfig {
+  client_id: string;
+  client_secret?: string | null;
+  authorization_endpoint: string;
+  token_endpoint: string;
+  redirect_uri: string;
+  scopes: string[];
+  extra_auth_params?: Record<string, string> | null;
+  extra_token_params?: Record<string, string> | null;
+}
+
+interface OAuthPrepareLoginResponse {
+  state: string;
+  code_verifier: string;
+  code_challenge: string;
+  authorization_url: string;
+}
+
 const fallbackProjectDescription =
   "Projektbeschreibung folgt. Mehr Details kommen spaeter, inklusive Features, Updates und Plattformen.";
 
@@ -153,6 +171,13 @@ const activityStatusLabels: Record<
   "Coming Soon": "Coming Soon",
   Active: "Active",
   Ended: "Ended"
+};
+
+const activityStatusOrder: Record<string, number> = {
+  Active: 0,
+  "Coming Soon": 1,
+  "Starting shortly": 2,
+  Ended: 3
 };
 
 const MEDIA_SECTIONS = [
@@ -534,6 +559,21 @@ function stripHtml(value: string) {
   return value.replace(/<[^>]*>/g, "").trim();
 }
 
+function formatNewsDate(value?: string | null) {
+  if (!value) {
+    return null;
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  return parsed.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric"
+  });
+}
+
 function refreshPageSoon(delayMs = 800) {
   if (typeof window === "undefined") {
     return;
@@ -635,6 +675,17 @@ function getProjectModrinthLink(project: ProjectItem) {
   return handle ? `https://modrinth.com/project/${handle}` : null;
 }
 
+function sortProjectsByActivity(items: ProjectItem[]) {
+  return [...items].sort((a, b) => {
+    const orderA = activityStatusOrder[a.activityStatus ?? ""] ?? 99;
+    const orderB = activityStatusOrder[b.activityStatus ?? ""] ?? 99;
+    if (orderA !== orderB) {
+      return orderA - orderB;
+    }
+    return (a.title ?? "").localeCompare(b.title ?? "");
+  });
+}
+
 function isTruthyFlag(value: unknown) {
   if (typeof value === "boolean") {
     return value;
@@ -646,6 +697,32 @@ function isTruthyFlag(value: unknown) {
     return value.toLowerCase() === "true" || value === "1";
   }
   return false;
+}
+
+function getOAuthProviderConfig(): OAuthProviderConfig {
+  const authBase =
+    (import.meta.env.VITE_AUTH_BASE_URL as string | undefined)?.trim() ||
+    "https://api.blizz-developments-official.de";
+  const clientId =
+    (import.meta.env.VITE_OAUTH_CLIENT_ID as string | undefined)?.trim() || "vision-desktop";
+  const redirectUri =
+    (import.meta.env.VITE_OAUTH_REDIRECT_URI as string | undefined)?.trim() ||
+    "vision://auth/callback";
+  const scopesRaw =
+    (import.meta.env.VITE_OAUTH_SCOPES as string | undefined)?.trim() ||
+    "openid profile email offline_access";
+  const scopes = scopesRaw
+    .split(/[ ,]+/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  return {
+    client_id: clientId,
+    authorization_endpoint: `${authBase.replace(/\/+$/, "")}/oauth/authorize`,
+    token_endpoint: `${authBase.replace(/\/+$/, "")}/oauth/token`,
+    redirect_uri: redirectUri,
+    scopes
+  };
 }
 
 function parseMcVersion(value: string) {
@@ -890,6 +967,7 @@ export default function App() {
   const [redirectSeconds, setRedirectSeconds] = useState<number | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginLoading, setLoginLoading] = useState(false);
+  const [oauthLoginLoading, setOauthLoginLoading] = useState(false);
   const [showLoginForm, setShowLoginForm] = useState(false);
   const [editorModal, setEditorModal] = useState<
     "project" | "news" | "event" | "member" | "media" | null
@@ -1006,6 +1084,7 @@ export default function App() {
   const [mcVersions, setMcVersions] = useState<string[]>([]);
   const [mcVersionsLoading, setMcVersionsLoading] = useState(false);
   const [mcVersionsError, setMcVersionsError] = useState(false);
+  const [showClippy, setShowClippy] = useState(false);
   const permissionFlags = useMemo(
     () => buildPermissionFlags(authzPermissions, authzRoles),
     [authzPermissions, authzRoles]
@@ -1033,6 +1112,16 @@ export default function App() {
     permissionFlags.canAccessCalendar,
     permissionFlags.canAccessEditor
   ]);
+  const userAvatarUrl = useMemo(() => {
+    const record = userProfileData ?? {};
+    const avatarMediaId =
+      typeof (record as any).avatarMediaId === "string"
+        ? (record as any).avatarMediaId
+        : typeof (record as any).avatar_media_id === "string"
+          ? (record as any).avatar_media_id
+          : null;
+    return getAvatarThumbUrl(avatarMediaId);
+  }, [userProfileData]);
   const [selectedProject, setSelectedProject] = useState<ProjectItem | null>(null);
   const [projectParticipants, setProjectParticipants] = useState<MemberProfile[]>([]);
   const [participantsLoading, setParticipantsLoading] = useState(false);
@@ -1712,6 +1801,17 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.altKey && event.key === "#") {
+        event.preventDefault();
+        setShowClippy(true);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  useEffect(() => {
     const controller = new AbortController();
 
     const loadNews = () => {
@@ -1752,6 +1852,51 @@ export default function App() {
       controller.abort();
     };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    if (activePage !== "home") {
+      return () => {
+        active = false;
+      };
+    }
+    const appId = (import.meta.env.VITE_DISCORD_APP_ID as string | undefined) ?? "";
+    if (!appId) {
+      console.warn("[discord] VITE_DISCORD_APP_ID missing; presence not updated.");
+      return () => {
+        active = false;
+      };
+    }
+    (async () => {
+      if (!(await isRunningInTauri())) {
+        return;
+      }
+      if (!active) {
+        return;
+      }
+      try {
+        await invoke("discord_update_presence", {
+          appId,
+          presence: {
+            state: "Managing Projects",
+            startTimestamp: 1507665886,
+            endTimestamp: 150766588,
+            largeImageKey: "launcher_icon_full",
+            largeImageText: "Vision",
+            smallImageKey: "grass_block",
+            smallImageText: "Vision Desktop",
+            partyId: "ae488379-351d-4a4f-ad32-2b9b01c91657",
+            joinSecret: "MTI4NzM0OjFpMmhuZToxMjMxMjM= "
+          }
+        });
+      } catch (error) {
+        console.error("[discord] presence update failed", error);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [activePage]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1910,7 +2055,9 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    let unlisten: (() => void) | null = null;
+    let unlistenNavigate: (() => void) | null = null;
+    let unlistenAuthError: (() => void) | null = null;
+    let unlistenAuthChanged: (() => void) | null = null;
 
     invoke<string | null>("deeplink_get_current_route")
       .then((route) => {
@@ -1927,16 +2074,42 @@ export default function App() {
       }
     })
       .then((stop) => {
-        unlisten = stop;
+        unlistenNavigate = stop;
+      })
+      .catch(() => undefined);
+
+    listen("auth:error", (event) => {
+      const message = String(event.payload ?? "").trim();
+      showToast(message || "Login fehlgeschlagen.", "error");
+    })
+      .then((stop) => {
+        unlistenAuthError = stop;
+      })
+      .catch(() => undefined);
+
+    listen("auth:changed", () => {
+      setLoginError(null);
+      setOauthLoginLoading(false);
+      setShowLoginForm(false);
+      showToast("OAuth Login abgeschlossen.", "success");
+    })
+      .then((stop) => {
+        unlistenAuthChanged = stop;
       })
       .catch(() => undefined);
 
     return () => {
-      if (unlisten) {
-        unlisten();
+      if (unlistenNavigate) {
+        unlistenNavigate();
+      }
+      if (unlistenAuthError) {
+        unlistenAuthError();
+      }
+      if (unlistenAuthChanged) {
+        unlistenAuthChanged();
       }
     };
-  }, []);
+  }, [showToast]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -2388,6 +2561,30 @@ export default function App() {
     }
   };
 
+  const handleOAuthLogin = async () => {
+    setOauthLoginLoading(true);
+    setLoginError(null);
+    try {
+      if (!(await isRunningInTauri())) {
+        throw new Error("OAuth Login ist nur in der Desktop-App verfuegbar.");
+      }
+
+      const provider = getOAuthProviderConfig();
+      const prepared = await invoke<OAuthPrepareLoginResponse>("oauth_prepare_login", {
+        provider
+      });
+
+      await openUrl(prepared.authorization_url);
+      showToast("Browser fuer OAuth Login geoeffnet.", "success");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "OAuth Login fehlgeschlagen.";
+      setLoginError(message);
+      showToast("OAuth Login fehlgeschlagen.", "error");
+    } finally {
+      setOauthLoginLoading(false);
+    }
+  };
+
   const handleLogout = async () => {
     try {
       await signOut(auth);
@@ -2739,6 +2936,7 @@ export default function App() {
                 activeId={activePage}
                 onChange={setActivePage}
                 visiblePages={visiblePages}
+                avatarUrl={user ? userAvatarUrl : null}
               />
             </div>
             <div className="col-start-2 row-start-2 min-h-0 pl-[24px] pr-[340px] pt-[24px]">
@@ -2794,7 +2992,9 @@ export default function App() {
                     showLoginForm,
                     setShowLoginForm,
                     handleLogin,
+                    handleOAuthLogin,
                     loginLoading,
+                    oauthLoginLoading,
                     loginError,
                     setSelectedProject,
                     setEditorModal,
@@ -2808,29 +3008,33 @@ export default function App() {
         <div className="absolute right-0 top-0 bottom-0 w-[300px] bg-[#131419] border-t border-[rgba(255,255,255,0.06)] flex flex-col z-10">
           <div className="h-[20px]" />
           <div className="px-4 pt-0 pb-3">
-            <h2 className="text-base font-semibold text-[rgba(255,255,255,0.92)]">News:</h2>
+            <h2 className="text-[18px] font-normal text-[rgba(255,255,255,0.92)]">News</h2>
           </div>
-          <div className="px-4 space-y-4 overflow-auto">
+          <div className="px-4 space-y-6 overflow-auto">
             {newsItems.map((item) => (
-              <div
-                key={item.title}
-                className="w-full rounded-lg border border-[rgba(255,255,255,0.06)] bg-[#13151A] overflow-hidden"
-              >
-                {item.cover?.url ? (
-                  <div
-                    className="h-[120px] w-full bg-[#0D0E12] bg-cover bg-center"
-                    style={{ backgroundImage: `url(${item.cover.url})` }}
-                  />
-                ) : (
-                  <div className="h-[120px] w-full bg-[#0D0E12]" />
-                )}
-                <div className="px-3 py-3">
-                  <p className="text-sm font-semibold text-[rgba(255,255,255,0.92)]">
+              <div key={item.title} className="w-full">
+                <div className="w-full overflow-hidden rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#0D0E12]">
+                  {item.cover?.url ? (
+                    <div
+                      className="h-[160px] w-full bg-cover bg-center"
+                      style={{ backgroundImage: `url(${item.cover.url})` }}
+                    />
+                  ) : (
+                    <div className="h-[160px] w-full bg-[#0D0E12]" />
+                  )}
+                </div>
+                <div className="px-1 pt-3">
+                  <p className="text-[16px] font-semibold text-[rgba(255,255,255,0.96)]">
                     {item.title}
                   </p>
-                  <p className="mt-1 text-xs text-[rgba(255,255,255,0.60)]">
+                  <p className="mt-2 text-[12px] leading-[18px] text-[rgba(255,255,255,0.62)]">
                     {item.excerpt}
                   </p>
+                  {formatNewsDate((item as any).publishedAt ?? (item as any).createdAt ?? null) && (
+                    <p className="mt-3 text-[11px] text-[rgba(255,255,255,0.45)]">
+                      {formatNewsDate((item as any).publishedAt ?? (item as any).createdAt ?? null)}
+                    </p>
+                  )}
                 </div>
               </div>
             ))}
@@ -3927,6 +4131,16 @@ export default function App() {
             </div>
           </div>
         )}
+        {showClippy && (
+          <div className="fixed bottom-6 right-6 z-[90]">
+            <img
+              src={clippyImage}
+              alt="Clippy"
+              className="h-28 w-auto select-none"
+              draggable={false}
+            />
+          </div>
+        )}
         {mediaUploadSuccess && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center bg-transparent">
             <div className="flex flex-col items-center gap-3 rounded-[20px] border border-[rgba(255,255,255,0.12)] bg-[#111319] px-8 py-6 text-center shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
@@ -4008,7 +4222,9 @@ function renderContent(
   showLoginForm: boolean,
   setShowLoginForm: (value: boolean) => void,
   onLogin: (email: string, password: string) => Promise<void>,
+  onOAuthLogin: () => Promise<void>,
   loginLoading: boolean,
+  oauthLoginLoading: boolean,
   loginError: string | null,
   onSelectProject: (project: ProjectItem | null) => void,
   setEditorModal: (value: "project" | "news" | "event" | "member" | "media" | null) => void,
@@ -4016,7 +4232,11 @@ function renderContent(
 ) {
   const modrinthCards = modrinthProjects.map(toModrinthCard);
   const groupedModrinth = groupModrinthCards(modrinthCards);
-  const myProjects = projects.filter((item) => userProjectIds.includes(item.id));
+  const myProjects = sortProjectsByActivity(
+    projects.filter((item) => userProjectIds.includes(item.id))
+  );
+  const sortedProjects = sortProjectsByActivity(projects);
+  void newsError;
   const canAccessPage = (pageId: string) => isPageAllowed(pageId, permissionFlags);
   const isPublicPage = ["home", "explore", "settings", "settings-debug", "profile"].includes(
     page
@@ -4161,7 +4381,7 @@ function renderContent(
             </button>
           </div>
           <div className="mt-[16px] flex flex-wrap items-start gap-[12px]">
-            {projects.map((item) => (
+            {sortedProjects.map((item) => (
               <button
                 type="button"
                 key={item.title}
@@ -5439,7 +5659,13 @@ function renderContent(
     if (!user) {
       if (showLoginForm) {
         return (
-          <LoginView onLogin={onLogin} loading={loginLoading} error={loginError} />
+          <LoginView
+            onLogin={onLogin}
+            onOAuthLogin={onOAuthLogin}
+            loading={loginLoading}
+            oauthLoading={oauthLoginLoading}
+            error={loginError}
+          />
         );
       }
 

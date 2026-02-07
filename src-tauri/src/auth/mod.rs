@@ -17,6 +17,8 @@ const TOKEN_SERVICE: &str = "vision-desktop";
 const TOKEN_ACCOUNT: &str = "oauth_tokens";
 const STORE_PATH: &str = "auth.json";
 const STORE_KEY: &str = "tokens";
+const STORE_PENDING_KEY: &str = "oauth_pending";
+const STORE_PROVIDER_KEY: &str = "oauth_provider";
 const REFRESH_WINDOW_SECS: i64 = 60;
 
 #[derive(Debug, thiserror::Error)]
@@ -33,6 +35,8 @@ pub enum AuthError {
     PendingExpired,
     #[error("no pending login state")]
     NoPendingState,
+    #[error("authorization denied: {0}")]
+    AuthorizationDenied(String),
     #[error("token exchange failed with status {0}")]
     TokenExchangeFailed(StatusCode),
     #[error("refresh token missing")]
@@ -82,6 +86,14 @@ struct PendingAuth {
     created_at: Instant,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct PendingAuthRecord {
+    state: String,
+    code_verifier: String,
+    provider: ProviderConfig,
+    created_at_epoch: i64,
+}
+
 pub struct AuthState {
     pending: Mutex<Option<PendingAuth>>,
     processing: Mutex<bool>,
@@ -106,6 +118,7 @@ pub struct AuthStatus {
 
 #[tauri::command]
 pub fn oauth_prepare_login(
+    app: AppHandle,
     state: State<'_, AuthState>,
     provider: ProviderConfig,
 ) -> Result<PrepareLoginResponse, String> {
@@ -125,6 +138,18 @@ pub fn oauth_prepare_login(
     let mut provider_state = state.provider.lock().map_err(|_| "lock failed")?;
     *provider_state = Some(provider.clone());
     drop(provider_state);
+
+    persist_provider(&app, &provider).map_err(|err| err.to_string())?;
+    persist_pending(
+        &app,
+        &PendingAuthRecord {
+            state: state_value.clone(),
+            code_verifier: code_verifier.clone(),
+            provider: provider.clone(),
+            created_at_epoch: now_epoch(),
+        },
+    )
+    .map_err(|err| err.to_string())?;
 
     let authorization_url = build_authorization_url(&provider, &state_value, &code_challenge)
         .map_err(|err| err.to_string())?;
@@ -154,13 +179,24 @@ pub async fn oauth_refresh_if_needed(
     app: AppHandle,
     state: State<'_, AuthState>,
 ) -> Result<AuthStatus, String> {
-    let provider = state
-        .provider
-        .lock()
-        .map_err(|_| "lock failed")?
-        .clone()
-        .ok_or(AuthError::ProviderConfigMissing)
-        .map_err(|err| err.to_string())?;
+    let provider = {
+        let in_memory = state
+            .provider
+            .lock()
+            .map_err(|_| "lock failed")?
+            .clone();
+        if let Some(provider) = in_memory {
+            provider
+        } else {
+            let stored = load_provider(&app)
+                .map_err(|err| err.to_string())?
+                .ok_or(AuthError::ProviderConfigMissing)
+                .map_err(|err| err.to_string())?;
+            let mut provider_state = state.provider.lock().map_err(|_| "lock failed")?;
+            *provider_state = Some(stored.clone());
+            stored
+        }
+    };
 
     let Some(tokens) = load_tokens(&app).map_err(|err| err.to_string())? else {
         return Ok(AuthStatus {
@@ -233,27 +269,52 @@ pub async fn handle_callback_url(
 ) -> Result<(), AuthError> {
     let guard = ProcessingGuard::lock(&state.processing)?;
 
-    let code = extract_query(&url, "code").ok_or(AuthError::MissingCode)?;
-    let returned_state = extract_query(&url, "state").ok_or(AuthError::MissingState)?;
+    let callback_error = extract_query(&url, "error");
+    let callback_error_description = extract_query(&url, "error_description");
+    let returned_state = extract_query(&url, "state");
+    let code = extract_query(&url, "code");
 
-    let pending = state
-        .pending
-        .lock()
-        .map_err(|_| AuthError::Storage("pending lock failed".into()))?
-        .take()
-        .ok_or(AuthError::NoPendingState)?;
+    if let Some(error_code) = callback_error {
+        clear_pending(state, app)?;
+        if returned_state.is_none() {
+            return Err(AuthError::MissingState);
+        }
+        let description = callback_error_description
+            .map(|value| format!("{error_code}: {value}"))
+            .unwrap_or(error_code)
+            .replace('+', " ");
+        return Err(AuthError::AuthorizationDenied(description));
+    }
 
-    if pending.created_at.elapsed() > PENDING_TTL {
+    let code = match code {
+        Some(value) => value,
+        None => {
+            clear_pending(state, app)?;
+            return Err(AuthError::MissingCode);
+        }
+    };
+    let returned_state = match returned_state {
+        Some(value) => value,
+        None => {
+            clear_pending(state, app)?;
+            return Err(AuthError::MissingState);
+        }
+    };
+
+    let pending = consume_pending(state, app)?;
+
+    if now_epoch() - pending.created_at_epoch > PENDING_TTL.as_secs() as i64 {
         return Err(AuthError::PendingExpired);
     }
 
     if pending.state != returned_state {
+        clear_pending(state, app)?;
         return Err(AuthError::StateMismatch);
     }
 
-    let token_set =
-        exchange_code_for_token(&pending.provider, &code, &pending.code_verifier).await?;
+    let token_set = exchange_code_for_token(&pending.provider, &code, &pending.code_verifier).await?;
     save_tokens(app, &token_set)?;
+    persist_provider(app, &pending.provider)?;
     emit_auth_changed(app, &token_set);
 
     drop(guard);
@@ -447,7 +508,117 @@ fn clear_tokens(app: &AppHandle) -> Result<(), AuthError> {
     if let Ok(entry) = keyring::Entry::new(TOKEN_SERVICE, TOKEN_ACCOUNT) {
         let _ = entry.delete_password();
     }
+    clear_provider_store(app)?;
+    clear_pending_store(app)?;
     clear_tokens_store(app)
+}
+
+fn persist_provider(app: &AppHandle, provider: &ProviderConfig) -> Result<(), AuthError> {
+    let json = serde_json::to_string(provider)
+        .map_err(|err| AuthError::Serialization(err.to_string()))?;
+    let store = app
+        .store(STORE_PATH)
+        .map_err(|err| AuthError::Storage(err.to_string()))?;
+    store.set(STORE_PROVIDER_KEY, json);
+    store
+        .save()
+        .map_err(|err| AuthError::Storage(err.to_string()))?;
+    Ok(())
+}
+
+fn load_provider(app: &AppHandle) -> Result<Option<ProviderConfig>, AuthError> {
+    let store = app
+        .store(STORE_PATH)
+        .map_err(|err| AuthError::Storage(err.to_string()))?;
+    let Some(value) = store.get(STORE_PROVIDER_KEY) else {
+        return Ok(None);
+    };
+    let json = value
+        .as_str()
+        .ok_or_else(|| AuthError::Serialization("invalid provider format".into()))?;
+    let provider = serde_json::from_str::<ProviderConfig>(json)
+        .map_err(|err| AuthError::Serialization(err.to_string()))?;
+    Ok(Some(provider))
+}
+
+fn clear_provider_store(app: &AppHandle) -> Result<(), AuthError> {
+    let store = app
+        .store(STORE_PATH)
+        .map_err(|err| AuthError::Storage(err.to_string()))?;
+    store.delete(STORE_PROVIDER_KEY);
+    store
+        .save()
+        .map_err(|err| AuthError::Storage(err.to_string()))?;
+    Ok(())
+}
+
+fn persist_pending(app: &AppHandle, pending: &PendingAuthRecord) -> Result<(), AuthError> {
+    let json = serde_json::to_string(pending)
+        .map_err(|err| AuthError::Serialization(err.to_string()))?;
+    let store = app
+        .store(STORE_PATH)
+        .map_err(|err| AuthError::Storage(err.to_string()))?;
+    store.set(STORE_PENDING_KEY, json);
+    store
+        .save()
+        .map_err(|err| AuthError::Storage(err.to_string()))?;
+    Ok(())
+}
+
+fn load_pending_store(app: &AppHandle) -> Result<Option<PendingAuthRecord>, AuthError> {
+    let store = app
+        .store(STORE_PATH)
+        .map_err(|err| AuthError::Storage(err.to_string()))?;
+    let Some(value) = store.get(STORE_PENDING_KEY) else {
+        return Ok(None);
+    };
+    let json = value
+        .as_str()
+        .ok_or_else(|| AuthError::Serialization("invalid pending format".into()))?;
+    let pending = serde_json::from_str::<PendingAuthRecord>(json)
+        .map_err(|err| AuthError::Serialization(err.to_string()))?;
+    Ok(Some(pending))
+}
+
+fn clear_pending_store(app: &AppHandle) -> Result<(), AuthError> {
+    let store = app
+        .store(STORE_PATH)
+        .map_err(|err| AuthError::Storage(err.to_string()))?;
+    store.delete(STORE_PENDING_KEY);
+    store
+        .save()
+        .map_err(|err| AuthError::Storage(err.to_string()))?;
+    Ok(())
+}
+
+fn consume_pending(state: &State<'_, AuthState>, app: &AppHandle) -> Result<PendingAuthRecord, AuthError> {
+    let in_memory = state
+        .pending
+        .lock()
+        .map_err(|_| AuthError::Storage("pending lock failed".into()))?
+        .take();
+
+    let pending = if let Some(pending) = in_memory {
+        let elapsed = pending.created_at.elapsed().as_secs() as i64;
+        PendingAuthRecord {
+            state: pending.state,
+            code_verifier: pending.code_verifier,
+            provider: pending.provider,
+            created_at_epoch: now_epoch().saturating_sub(elapsed),
+        }
+    } else {
+        load_pending_store(app)?.ok_or(AuthError::NoPendingState)?
+    };
+
+    clear_pending_store(app)?;
+    Ok(pending)
+}
+
+fn clear_pending(state: &State<'_, AuthState>, app: &AppHandle) -> Result<(), AuthError> {
+    if let Ok(mut guard) = state.pending.lock() {
+        *guard = None;
+    }
+    clear_pending_store(app)
 }
 
 fn load_tokens_store(app: &AppHandle) -> Result<Option<TokenSet>, AuthError> {

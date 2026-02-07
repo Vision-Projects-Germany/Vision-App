@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+use std::sync::{Mutex, OnceLock};
+use discord_rich_presence::{activity, DiscordIpc, DiscordIpcClient};
 use std::collections::HashMap;
 use tauri::Manager;
 
@@ -23,6 +25,106 @@ struct HttpRequest {
 struct HttpResponse {
     status: u16,
     body: String,
+}
+
+#[derive(Deserialize)]
+struct DiscordPresencePayload {
+    state: Option<String>,
+    startTimestamp: Option<i64>,
+    endTimestamp: Option<i64>,
+    largeImageKey: Option<String>,
+    largeImageText: Option<String>,
+    smallImageKey: Option<String>,
+    smallImageText: Option<String>,
+    partyId: Option<String>,
+    joinSecret: Option<String>,
+}
+
+static DISCORD_CLIENT: OnceLock<Mutex<Option<DiscordIpcClient>>> = OnceLock::new();
+
+fn discord_client() -> &'static Mutex<Option<DiscordIpcClient>> {
+    DISCORD_CLIENT.get_or_init(|| Mutex::new(None))
+}
+
+fn normalize_timestamp(value: i64) -> i64 {
+    if value < 1_000_000_000_000 {
+        value * 1000
+    } else {
+        value
+    }
+}
+
+#[tauri::command]
+fn discord_update_presence(app_id: String, presence: DiscordPresencePayload) -> Result<(), String> {
+    let mut guard = discord_client()
+        .lock()
+        .map_err(|_| "discord client lock failed")?;
+
+    if guard.is_none() {
+        let mut client = DiscordIpcClient::new(&app_id);
+        client
+            .connect()
+            .map_err(|error| format!("discord connect failed: {error}"))?;
+        *guard = Some(client);
+    }
+
+    let client = guard
+        .as_mut()
+        .ok_or_else(|| "discord client missing".to_string())?;
+
+    let mut activity = activity::Activity::new();
+
+    if let Some(state) = presence.state.as_deref() {
+        activity = activity.state(state);
+    }
+
+    if presence.startTimestamp.is_some() || presence.endTimestamp.is_some() {
+        let mut timestamps = activity::Timestamps::new();
+        if let Some(start) = presence.startTimestamp {
+            timestamps = timestamps.start(normalize_timestamp(start));
+        }
+        if let Some(end) = presence.endTimestamp {
+            timestamps = timestamps.end(normalize_timestamp(end));
+        }
+        activity = activity.timestamps(timestamps);
+    }
+
+    if presence.largeImageKey.is_some()
+        || presence.largeImageText.is_some()
+        || presence.smallImageKey.is_some()
+        || presence.smallImageText.is_some()
+    {
+        let mut assets = activity::Assets::new();
+        if let Some(large_key) = presence.largeImageKey.as_deref() {
+            assets = assets.large_image(large_key);
+        }
+        if let Some(large_text) = presence.largeImageText.as_deref() {
+            assets = assets.large_text(large_text);
+        }
+        if let Some(small_key) = presence.smallImageKey.as_deref() {
+            assets = assets.small_image(small_key);
+        }
+        if let Some(small_text) = presence.smallImageText.as_deref() {
+            assets = assets.small_text(small_text);
+        }
+        activity = activity.assets(assets);
+    }
+
+    if let Some(party_id) = presence.partyId.as_deref() {
+        let party = activity::Party::new().id(party_id);
+        activity = activity.party(party);
+    }
+
+    if let Some(join_secret) = presence.joinSecret.as_deref() {
+        let secrets = activity::Secrets::new().join(join_secret);
+        activity = activity.secrets(secrets);
+    }
+
+    client
+        .set_activity(activity)
+        .map_err(|error| format!("discord update failed: {error}"))?;
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -80,6 +182,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_app_info,
             http_request,
+            discord_update_presence,
             auth::oauth_prepare_login,
             auth::oauth_handle_callback,
             auth::oauth_refresh_if_needed,

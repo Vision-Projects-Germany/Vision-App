@@ -2,11 +2,19 @@ import { useState } from "react";
 
 interface LoginViewProps {
   onLogin: (email: string, password: string) => Promise<void>;
+  onOAuthLogin: () => Promise<void>;
   loading: boolean;
+  oauthLoading: boolean;
   error: string | null;
 }
 
-export function LoginView({ onLogin, loading, error }: LoginViewProps) {
+export function LoginView({
+  onLogin,
+  onOAuthLogin,
+  loading,
+  oauthLoading,
+  error
+}: LoginViewProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
@@ -46,10 +54,18 @@ export function LoginView({ onLogin, loading, error }: LoginViewProps) {
         <button
           type="button"
           onClick={() => onLogin(email, password)}
-          disabled={loading}
+          disabled={loading || oauthLoading}
           className="mt-[16px] w-full rounded-[10px] bg-[#2BFE71] px-[12px] py-[10px] text-[13px] font-semibold text-[#0D0E12] transition disabled:cursor-not-allowed disabled:opacity-60"
         >
           {loading ? "Anmelden..." : "Anmelden"}
+        </button>
+        <button
+          type="button"
+          onClick={() => void onOAuthLogin()}
+          disabled={loading || oauthLoading}
+          className="mt-[10px] w-full rounded-[10px] border border-[rgba(255,255,255,0.14)] bg-[#16181c] px-[12px] py-[10px] text-[13px] font-semibold text-[rgba(255,255,255,0.86)] transition hover:border-[#2BFE71] hover:text-[#2BFE71] disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {oauthLoading ? "OAuth wird gestartet..." : "Mit Vision OAuth anmelden"}
         </button>
       </div>
     </div>

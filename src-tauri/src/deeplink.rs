@@ -47,7 +47,9 @@ pub fn setup_deeplinks(app: &AppHandle) {
             for url in urls {
                 if is_oauth_callback(&url) {
                     let state = app.state::<auth::AuthState>();
-                    let _ = auth::handle_callback_url(&app, &state, url).await;
+                    if let Err(err) = auth::handle_callback_url(&app, &state, url).await {
+                        let _ = app.emit("auth:error", err.to_string());
+                    }
                     focus_main_window(&app);
                 } else if let Some(route) = extract_route(&url) {
                     let state = app.state::<DeepLinkState>();
@@ -66,7 +68,9 @@ pub fn setup_deeplinks(app: &AppHandle) {
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move {
                     let state = app.state::<auth::AuthState>();
-                    let _ = auth::handle_callback_url(&app, &state, url).await;
+                    if let Err(err) = auth::handle_callback_url(&app, &state, url).await {
+                        let _ = app.emit("auth:error", err.to_string());
+                    }
                     focus_main_window(&app);
                 });
             } else if let Some(route) = extract_route(&url) {
@@ -100,7 +104,20 @@ fn extract_route(url: &Url) -> Option<String> {
     };
 
     match route {
-        "home" | "projects" | "explore" | "settings" | "profile" => Some(route.to_string()),
+        "home"
+        | "projects"
+        | "news"
+        | "explore"
+        | "media"
+        | "settings"
+        | "settings-debug"
+        | "profile"
+        | "editor"
+        | "analytics"
+        | "calendar"
+        | "admin"
+        | "roles"
+        | "members" => Some(route.to_string()),
         _ => None,
     }
 }
