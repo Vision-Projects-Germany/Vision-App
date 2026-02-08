@@ -2985,7 +2985,7 @@ export default function App() {
 
   if (isAuthGateLoading) {
     return (
-      <AppShell>
+      <AppShell withSidebar={false}>
         <div className="flex h-full w-full items-center justify-center">
           <div className="loader" />
         </div>
@@ -2999,7 +2999,7 @@ export default function App() {
       (import.meta.env.VITE_AUTH_BASE_URL as string | undefined)?.trim() ||
       "https://new.vision-projects.eu";
     return (
-      <AppShell>
+      <AppShell withSidebar={false}>
         <LoginView
           onOAuthLogin={handleOAuthLogin}
           onOpenWebsite={() => void openUrl(authBase)}
