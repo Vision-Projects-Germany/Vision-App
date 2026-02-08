@@ -140,6 +140,11 @@ interface OAuthPrepareLoginResponse {
   authorization_url: string;
 }
 
+interface OAuthAuthStatus {
+  is_authenticated: boolean;
+  expires_at?: number | null;
+}
+
 const fallbackProjectDescription =
   "Projektbeschreibung folgt. Mehr Details kommen spaeter, inklusive Features, Updates und Plattformen.";
 
@@ -968,6 +973,10 @@ export default function App() {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginLoading, setLoginLoading] = useState(false);
   const [oauthLoginLoading, setOauthLoginLoading] = useState(false);
+  const [oauthAuthReady, setOauthAuthReady] = useState(false);
+  const [oauthIsAuthenticated, setOauthIsAuthenticated] = useState(false);
+  const [oauthExpiresAt, setOauthExpiresAt] = useState<number | null>(null);
+  const [authzUid, setAuthzUid] = useState<string | null>(null);
   const [showLoginForm, setShowLoginForm] = useState(false);
   const [editorModal, setEditorModal] = useState<
     "project" | "news" | "event" | "member" | "media" | null
@@ -1267,7 +1276,7 @@ export default function App() {
   }, []);
 
   const handleMediaUpload = async () => {
-    if (!user) {
+    if (!user && !oauthIsAuthenticated) {
       setMediaUploadError("Bitte zuerst anmelden.");
       return;
     }
@@ -1279,7 +1288,7 @@ export default function App() {
     setMediaUploadError(null);
     setMediaUploadSuccess(false);
     try {
-      const token = await user.getIdToken();
+      const token = await getApiToken();
       const uploadEndpoint =
         mediaUploadType === "news-banners"
           ? "https://api.blizz-developments-official.de/api/admin/media/news-banners"
@@ -1310,7 +1319,7 @@ export default function App() {
   };
 
   const handleCreateNews = async () => {
-    if (!user) {
+    if (!user && !oauthIsAuthenticated) {
       setNewsSaveError("Du musst eingeloggt sein.");
       return;
     }
@@ -1331,7 +1340,7 @@ export default function App() {
         coverMediaId: newsCoverMediaId,
         hasCoverFile: Boolean(newsCoverFile)
       });
-      const token = await user.getIdToken();
+      const token = await getApiToken();
       let coverMediaId = newsCoverMediaId || undefined;
 
       if (newsCoverFile) {
@@ -1444,7 +1453,7 @@ export default function App() {
   };
 
   const confirmDeleteNews = async () => {
-    if (!newsDeleteCandidate || !user) {
+    if (!newsDeleteCandidate || (!user && !oauthIsAuthenticated)) {
       return;
     }
     const deleteId = newsDeleteCandidate.deleteId ?? newsDeleteCandidate.slug ?? newsDeleteCandidate.id;
@@ -1464,7 +1473,7 @@ export default function App() {
         id: newsDeleteCandidate.id,
         deleteId
       });
-      const token = await user.getIdToken();
+      const token = await getApiToken();
       let resolvedId: string | null = null;
       try {
         const adminList = await requestJson<{ items?: any[] }>(
@@ -1532,12 +1541,12 @@ export default function App() {
   };
 
   const handleDeleteMedia = async (section: string, id: string) => {
-    if (!user) {
+    if (!user && !oauthIsAuthenticated) {
       setMediaError((prev) => ({ ...prev, [section]: "Bitte zuerst anmelden." }));
       return;
     }
     try {
-      const token = await user.getIdToken();
+      const token = await getApiToken();
       await requestText(
         `https://api.blizz-developments-official.de/api/admin/media/${id}`,
         {
@@ -1575,7 +1584,7 @@ export default function App() {
   const [authzCopied, setAuthzCopied] = useState(false);
 
   const handleAuthzTest = async () => {
-    if (!user) {
+    if (!user && !oauthIsAuthenticated) {
       setAuthzTestError("Bitte zuerst anmelden.");
       return;
     }
@@ -1583,7 +1592,7 @@ export default function App() {
     setAuthzTestError(null);
     setAuthzResult(null);
     try {
-      const token = await user.getIdToken();
+      const token = await getApiToken();
       const response = await requestText(
         "https://api.blizz-developments-official.de/me/authz",
         {
@@ -1666,14 +1675,14 @@ export default function App() {
   };
 
   const submitBan = async (member: MemberProfile, reason: string) => {
-    if (!user) {
+    if (!user && !oauthIsAuthenticated) {
       setBanError("Bitte zuerst anmelden.");
       return;
     }
     setBanSubmitting(true);
     setBanError(null);
     try {
-      const token = await user.getIdToken();
+      const token = await getApiToken();
       await requestText(
         `https://api.blizz-developments-official.de/api/admin/users/${member.uid}/ban`,
         {
@@ -1697,14 +1706,14 @@ export default function App() {
   };
 
   const submitWarn = async (member: MemberProfile, message: string) => {
-    if (!user) {
+    if (!user && !oauthIsAuthenticated) {
       setWarnError("Bitte zuerst anmelden.");
       return;
     }
     setWarnSubmitting(true);
     setWarnError(null);
     try {
-      const token = await user.getIdToken();
+      const token = await getApiToken();
       await requestText(
         `https://api.blizz-developments-official.de/api/admin/users/${member.uid}/warn`,
         {
@@ -2080,6 +2089,7 @@ export default function App() {
 
     listen("auth:error", (event) => {
       const message = String(event.payload ?? "").trim();
+      setOauthLoginLoading(false);
       showToast(message || "Login fehlgeschlagen.", "error");
     })
       .then((stop) => {
@@ -2087,11 +2097,18 @@ export default function App() {
       })
       .catch(() => undefined);
 
-    listen("auth:changed", () => {
+    listen("auth:changed", (event) => {
+      const payload = (event.payload ?? {}) as Partial<OAuthAuthStatus>;
+      const isAuthenticated = payload.is_authenticated === true;
+      setOauthAuthReady(true);
+      setOauthIsAuthenticated(isAuthenticated);
+      setOauthExpiresAt(typeof payload.expires_at === "number" ? payload.expires_at : null);
       setLoginError(null);
       setOauthLoginLoading(false);
-      setShowLoginForm(false);
-      showToast("OAuth Login abgeschlossen.", "success");
+      if (isAuthenticated) {
+        setShowLoginForm(false);
+        showToast("OAuth Login abgeschlossen.", "success");
+      }
     })
       .then((stop) => {
         unlistenAuthChanged = stop;
@@ -2121,14 +2138,42 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let active = true;
+    (async () => {
+      if (!(await isRunningInTauri())) {
+        if (active) {
+          setOauthAuthReady(true);
+        }
+        return;
+      }
+      try {
+        const status = await invoke<OAuthAuthStatus>("oauth_get_auth_state");
+        if (!active) {
+          return;
+        }
+        setOauthIsAuthenticated(Boolean(status?.is_authenticated));
+        setOauthExpiresAt(typeof status?.expires_at === "number" ? status.expires_at : null);
+      } catch {
+        if (active) {
+          setOauthIsAuthenticated(false);
+          setOauthExpiresAt(null);
+        }
+      } finally {
+        if (active) {
+          setOauthAuthReady(true);
+        }
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!user) {
       setUsername(null);
       setUserProjectIds([]);
       setUserProfileData(null);
-      setAuthzPermissions([]);
-      setAuthzRoles([]);
-      setAuthzFetchError(null);
-      setAuthzFetchLoading(false);
       return;
     }
 
@@ -2151,12 +2196,6 @@ export default function App() {
     if (!selectedProject?.id) {
       setProjectParticipants([]);
       setParticipantsError(null);
-      setParticipantsLoading(false);
-      return;
-    }
-    if (!user) {
-      setProjectParticipants([]);
-      setParticipantsError("Teilnehmende konnten nicht geladen werden.");
       setParticipantsLoading(false);
       return;
     }
@@ -2222,10 +2261,15 @@ export default function App() {
       .finally(() => {
         setParticipantsLoading(false);
       });
-  }, [selectedProject?.id, user]);
+  }, [selectedProject?.id]);
 
   useEffect(() => {
-    if (!user) {
+    if (!user && !oauthIsAuthenticated) {
+      setAuthzUid(null);
+      setAuthzPermissions([]);
+      setAuthzRoles([]);
+      setAuthzFetchError(null);
+      setAuthzFetchLoading(false);
       return;
     }
     let active = true;
@@ -2238,9 +2282,10 @@ export default function App() {
           roles: string[];
           expiresAt: number;
         };
-        if (cached.uid === user.uid && cached.expiresAt > Date.now()) {
+        if (cached.expiresAt > Date.now() && (user ? cached.uid === user.uid : true)) {
           setAuthzPermissions(Array.isArray(cached.permissions) ? cached.permissions : []);
           setAuthzRoles(Array.isArray(cached.roles) ? cached.roles : []);
+          setAuthzUid(typeof cached.uid === "string" ? cached.uid : null);
           setAuthzFetchError(null);
           setAuthzFetchLoading(false);
         }
@@ -2252,7 +2297,7 @@ export default function App() {
     setAuthzFetchLoading(true);
     setAuthzFetchError(null);
     (async () => {
-      const token = await user.getIdToken();
+      const token = await getApiToken();
       const response = await requestJson<{
         uid: string;
         roles?: string[];
@@ -2261,6 +2306,7 @@ export default function App() {
       }>("https://api.blizz-developments-official.de/me/authz", {
         headers: { Authorization: `Bearer ${token}` }
       });
+      setAuthzUid(typeof response?.uid === "string" ? response.uid : null);
       const permissions = Array.isArray(response?.permissions)
         ? response.permissions
         : [];
@@ -2276,7 +2322,7 @@ export default function App() {
       localStorage.setItem(
         AUTHZ_CACHE_KEY,
         JSON.stringify({
-          uid: user.uid,
+          uid: typeof response?.uid === "string" ? response.uid : user?.uid ?? "",
           permissions,
           roles,
           expiresAt
@@ -2288,6 +2334,7 @@ export default function App() {
           return;
         }
         setAuthzFetchError(error instanceof Error ? error.message : "Authz Fehler.");
+        setAuthzUid(null);
         setAuthzPermissions([]);
         setAuthzRoles([]);
       })
@@ -2300,7 +2347,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [user]);
+  }, [user, oauthIsAuthenticated]);
 
   const fetchMediaPage = async (section: string, page: number, replace = false) => {
     const config = MEDIA_SECTIONS.find((entry) => entry.key === section);
@@ -2419,14 +2466,17 @@ export default function App() {
     if (!permissionFlags.canAccessMembers && !permissionFlags.isModerator) {
       return;
     }
-    if (!user) {
+    if (!user && !oauthIsAuthenticated) {
+      setMembers([]);
+      setMembersLoading(false);
+      setMembersError("Bitte zuerst anmelden.");
       return;
     }
     setMembers([]);
     setMembersLoading(true);
     setMembersError(null);
     (async () => {
-      const token = await user.getIdToken();
+      const token = await getApiToken();
       const data = await requestJson<{
         items?: Record<string, unknown>[];
       }>("https://api.blizz-developments-official.de/api/admin/users?limit=200", {
@@ -2468,7 +2518,13 @@ export default function App() {
       .finally(() => {
         setMembersLoading(false);
       });
-  }, [activePage, permissionFlags.canAccessMembers, permissionFlags.isModerator, user]);
+  }, [
+    activePage,
+    permissionFlags.canAccessMembers,
+    permissionFlags.isModerator,
+    user,
+    oauthIsAuthenticated
+  ]);
 
   useEffect(() => {
     if (activePage === "home") {
@@ -2505,7 +2561,7 @@ export default function App() {
     const controller = new AbortController();
     const canLoadCalendar = permissionFlags.canAccessCalendar;
 
-    if (!user || !canLoadCalendar) {
+    if ((!user && !oauthIsAuthenticated) || !canLoadCalendar) {
       setCalendarEvents([]);
       setCalendarError(false);
       return () => controller.abort();
@@ -2513,7 +2569,7 @@ export default function App() {
 
     const loadCalendar = async () => {
       try {
-        const token = await user.getIdToken();
+        const token = await getApiToken();
         const now = new Date();
         const year = now.getFullYear();
         const start = new Date(Date.UTC(year, 0, 1, 0, 0, 0)).toISOString();
@@ -2546,7 +2602,7 @@ export default function App() {
     loadCalendar();
 
     return () => controller.abort();
-  }, [user, permissionFlags.canAccessCalendar]);
+  }, [user, oauthIsAuthenticated, permissionFlags.canAccessCalendar]);
 
   const handleLogin = async (email: string, password: string) => {
     setLoginLoading(true);
@@ -2585,16 +2641,43 @@ export default function App() {
     }
   };
 
+  const getApiToken = async () => {
+    if (user) {
+      return user.getIdToken();
+    }
+    if (await isRunningInTauri()) {
+      return invoke<string>("oauth_get_access_token");
+    }
+    throw new Error("Du musst eingeloggt sein.");
+  };
+
   const handleLogout = async () => {
     try {
-      await signOut(auth);
+      if (await isRunningInTauri()) {
+        try {
+          await invoke("oauth_logout");
+        } catch {
+          // ignore
+        }
+      }
+      setOauthIsAuthenticated(false);
+      setOauthExpiresAt(null);
+      setAuthzUid(null);
+      setAuthzPermissions([]);
+      setAuthzRoles([]);
+
+      try {
+        await signOut(auth);
+      } catch {
+        // ignore
+      }
     } catch (error) {
       console.error("Logout fehlgeschlagen", error);
     }
   };
 
   const handleCreateProject = async () => {
-    if (!user) {
+    if (!user && !oauthIsAuthenticated) {
       setProjectSaveError("Du musst eingeloggt sein.");
       return;
     }
@@ -2609,7 +2692,7 @@ export default function App() {
     setProjectSaveSuccess(false);
 
     try {
-      const token = await user.getIdToken();
+      const token = await getApiToken();
       const trimmedModrinthId = projectModrinthId.trim();
       const hasModrinth = Boolean(trimmedModrinthId);
 
@@ -2749,7 +2832,7 @@ export default function App() {
   };
 
   const handleUpdateProject = async () => {
-    if (!user || !editingProjectId) {
+    if ((!user && !oauthIsAuthenticated) || !editingProjectId) {
       setProjectSaveError("Du musst eingeloggt sein.");
       return;
     }
@@ -2759,7 +2842,7 @@ export default function App() {
     setProjectSaveSuccess(false);
 
     try {
-      const token = await user.getIdToken();
+      const token = await getApiToken();
       const trimmedModrinthId = projectModrinthId.trim();
       const hasModrinth = Boolean(trimmedModrinthId);
 
@@ -2847,13 +2930,13 @@ export default function App() {
   };
 
   const handleDeleteProject = async (projectId: string) => {
-    if (!user) {
+    if (!user && !oauthIsAuthenticated) {
       setProjectDeleteError("Du musst eingeloggt sein.");
       return;
     }
     setProjectDeleteError(null);
     try {
-      const token = await user.getIdToken();
+      const token = await getApiToken();
       await requestText(
         `https://api.blizz-developments-official.de/api/admin/projects/${projectId}`,
         {
@@ -2987,6 +3070,10 @@ export default function App() {
                 handleAuthzCopy,
                 authzCopied,
                 user,
+                oauthIsAuthenticated,
+                oauthAuthReady,
+                oauthExpiresAt,
+                authzUid,
                     username,
                     userProjectIds,
                     showLoginForm,
@@ -4217,6 +4304,10 @@ function renderContent(
   handleAuthzCopy: () => void,
   authzCopied: boolean,
   user: User | null,
+  oauthIsAuthenticated: boolean,
+  oauthAuthReady: boolean,
+  oauthExpiresAt: number | null,
+  authzUid: string | null,
   username: string | null,
   userProjectIds: string[],
   showLoginForm: boolean,
@@ -5656,7 +5747,7 @@ function renderContent(
   }
 
   if (page === "profile") {
-    if (!user) {
+    if (!user && !oauthIsAuthenticated) {
       if (showLoginForm) {
         return (
           <LoginView
@@ -5683,6 +5774,44 @@ function renderContent(
             className="mt-[12px] rounded-[10px] bg-[#2BFE71] px-[14px] py-[8px] text-[12px] font-semibold text-[#0D0E12]"
           >
             Anmelden
+          </button>
+        </div>
+      );
+    }
+
+    if (!user && oauthIsAuthenticated) {
+      const expiresLabel =
+        typeof oauthExpiresAt === "number"
+          ? new Date(oauthExpiresAt * 1000).toLocaleString()
+          : null;
+      return (
+        <div className="rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#13151A] px-[16px] py-[14px]">
+          <p className="text-[14px] font-semibold text-[rgba(255,255,255,0.92)]">
+            Profil
+          </p>
+          <p className="mt-[6px] text-[12px] text-[rgba(255,255,255,0.60)]">
+            Status:{" "}
+            <span className="text-[#2BFE71] font-semibold">
+              {oauthAuthReady ? "OAuth angemeldet" : "OAuth wird geprueft..."}
+            </span>
+          </p>
+          {authzUid && (
+            <p className="mt-[6px] text-[12px] text-[rgba(255,255,255,0.60)]">
+              UID: <span className="text-[rgba(255,255,255,0.85)]">{authzUid}</span>
+            </p>
+          )}
+          {expiresLabel && (
+            <p className="mt-[6px] text-[12px] text-[rgba(255,255,255,0.60)]">
+              Token Ablauf:{" "}
+              <span className="text-[rgba(255,255,255,0.85)]">{expiresLabel}</span>
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={onLogout}
+            className="mt-[12px] rounded-full border border-[rgba(255,255,255,0.12)] bg-[#16181c] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.85)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
+          >
+            Abmelden
           </button>
         </div>
       );

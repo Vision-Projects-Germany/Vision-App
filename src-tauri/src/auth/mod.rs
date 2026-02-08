@@ -33,7 +33,7 @@ pub enum AuthError {
     StateMismatch,
     #[error("pending login expired")]
     PendingExpired,
-    #[error("no pending login state")]
+    #[error("no pending login state; start the login from inside the app")]
     NoPendingState,
     #[error("authorization denied: {0}")]
     AuthorizationDenied(String),
@@ -262,6 +262,54 @@ pub fn oauth_get_auth_state(app: AppHandle) -> Result<AuthStatus, String> {
     }
 }
 
+#[tauri::command]
+pub async fn oauth_get_access_token(
+    app: AppHandle,
+    state: State<'_, AuthState>,
+) -> Result<String, String> {
+    // Fast path: valid token still fresh enough.
+    let tokens = load_tokens(&app).map_err(|err| err.to_string())?;
+    let Some(tokens) = tokens else {
+        return Err("not authenticated".to_string());
+    };
+
+    let now = now_epoch();
+    if tokens.expires_at - now > REFRESH_WINDOW_SECS {
+        return Ok(tokens.access_token);
+    }
+
+    // Need refresh; requires provider config.
+    let provider = {
+        let in_memory = state.provider.lock().map_err(|_| "lock failed")?.clone();
+        if let Some(provider) = in_memory {
+            provider
+        } else {
+            let stored = load_provider(&app)
+                .map_err(|err| err.to_string())?
+                .ok_or(AuthError::ProviderConfigMissing)
+                .map_err(|err| err.to_string())?;
+            let mut provider_state = state.provider.lock().map_err(|_| "lock failed")?;
+            *provider_state = Some(stored.clone());
+            stored
+        }
+    };
+
+    let refresh_token = tokens
+        .refresh_token
+        .clone()
+        .ok_or(AuthError::RefreshTokenMissing)
+        .map_err(|err| err.to_string())?;
+
+    let refreshed = refresh_tokens(&provider, &refresh_token)
+        .await
+        .map_err(|err| err.to_string())?;
+
+    save_tokens(&app, &refreshed).map_err(|err| err.to_string())?;
+    emit_auth_changed(&app, &refreshed);
+
+    Ok(refreshed.access_token)
+}
+
 pub async fn handle_callback_url(
     app: &AppHandle,
     state: &State<'_, AuthState>,
@@ -286,24 +334,13 @@ pub async fn handle_callback_url(
         return Err(AuthError::AuthorizationDenied(description));
     }
 
-    let code = match code {
-        Some(value) => value,
-        None => {
-            clear_pending(state, app)?;
-            return Err(AuthError::MissingCode);
-        }
-    };
-    let returned_state = match returned_state {
-        Some(value) => value,
-        None => {
-            clear_pending(state, app)?;
-            return Err(AuthError::MissingState);
-        }
-    };
+    let code = code.ok_or(AuthError::MissingCode)?;
+    let returned_state = returned_state.ok_or(AuthError::MissingState)?;
 
-    let pending = consume_pending(state, app)?;
+    let pending = load_pending(state, app)?;
 
     if now_epoch() - pending.created_at_epoch > PENDING_TTL.as_secs() as i64 {
+        clear_pending(state, app)?;
         return Err(AuthError::PendingExpired);
     }
 
@@ -315,6 +352,7 @@ pub async fn handle_callback_url(
     let token_set = exchange_code_for_token(&pending.provider, &code, &pending.code_verifier).await?;
     save_tokens(app, &token_set)?;
     persist_provider(app, &pending.provider)?;
+    clear_pending(state, app)?;
     emit_auth_changed(app, &token_set);
 
     drop(guard);
@@ -591,27 +629,20 @@ fn clear_pending_store(app: &AppHandle) -> Result<(), AuthError> {
     Ok(())
 }
 
-fn consume_pending(state: &State<'_, AuthState>, app: &AppHandle) -> Result<PendingAuthRecord, AuthError> {
-    let in_memory = state
-        .pending
-        .lock()
-        .map_err(|_| AuthError::Storage("pending lock failed".into()))?
-        .take();
-
-    let pending = if let Some(pending) = in_memory {
-        let elapsed = pending.created_at.elapsed().as_secs() as i64;
-        PendingAuthRecord {
-            state: pending.state,
-            code_verifier: pending.code_verifier,
-            provider: pending.provider,
-            created_at_epoch: now_epoch().saturating_sub(elapsed),
+fn load_pending(state: &State<'_, AuthState>, app: &AppHandle) -> Result<PendingAuthRecord, AuthError> {
+    if let Ok(guard) = state.pending.lock() {
+        if let Some(pending) = guard.as_ref() {
+            let elapsed = pending.created_at.elapsed().as_secs() as i64;
+            return Ok(PendingAuthRecord {
+                state: pending.state.clone(),
+                code_verifier: pending.code_verifier.clone(),
+                provider: pending.provider.clone(),
+                created_at_epoch: now_epoch().saturating_sub(elapsed),
+            });
         }
-    } else {
-        load_pending_store(app)?.ok_or(AuthError::NoPendingState)?
-    };
+    }
 
-    clear_pending_store(app)?;
-    Ok(pending)
+    load_pending_store(app)?.ok_or(AuthError::NoPendingState)
 }
 
 fn clear_pending(state: &State<'_, AuthState>, app: &AppHandle) -> Result<(), AuthError> {

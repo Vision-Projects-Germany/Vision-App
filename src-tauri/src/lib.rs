@@ -188,6 +188,7 @@ pub fn run() {
             auth::oauth_refresh_if_needed,
             auth::oauth_logout,
             auth::oauth_get_auth_state,
+            auth::oauth_get_access_token,
             deeplink::deeplink_get_current_route
         ])
         .setup(|app| {
