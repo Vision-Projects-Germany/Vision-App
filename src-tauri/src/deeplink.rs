@@ -85,6 +85,40 @@ pub fn setup_deeplinks(app: &AppHandle) {
     app.deep_link().handle_cli_arguments(std::env::args());
 }
 
+/// When running as a single-instance app on Windows/Linux, deep links are delivered to the already
+/// running process via the single-instance callback args. We need to parse and handle them here,
+/// otherwise OAuth callbacks won't be processed if the app was already open.
+pub fn handle_single_instance_args(app: &AppHandle, args: Vec<String>) {
+    let app_handle = app.clone();
+
+    tauri::async_runtime::spawn(async move {
+        for raw in args {
+            let candidate = raw.trim_matches('"').trim().to_string();
+            if !candidate.starts_with("vision:") {
+                continue;
+            }
+
+            let url = match Url::parse(&candidate) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+
+            if is_oauth_callback(&url) {
+                let state = app_handle.state::<auth::AuthState>();
+                if let Err(err) = auth::handle_callback_url(&app_handle, &state, url).await {
+                    let _ = app_handle.emit("auth:error", err.to_string());
+                }
+                focus_main_window(&app_handle);
+            } else if let Some(route) = extract_route(&url) {
+                let state = app_handle.state::<DeepLinkState>();
+                state.set_route(Some(route.clone()));
+                let _ = app_handle.emit("app:navigate", route);
+                focus_main_window(&app_handle);
+            }
+        }
+    });
+}
+
 fn is_oauth_callback(url: &Url) -> bool {
     url.scheme() == SCHEME && url.host_str() == Some(CALLBACK_HOST) && url.path() == CALLBACK_PATH
 }

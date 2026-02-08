@@ -5,7 +5,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faChevronRight } from "@fortawesome/free-solid-svg-icons";
-import { onAuthStateChanged, signInWithEmailAndPassword, signOut, type User } from "firebase/auth";
+import { onAuthStateChanged, signOut, type User } from "firebase/auth";
 import { arrayRemove, arrayUnion, doc, getDoc, updateDoc } from "firebase/firestore";
 import { AppShell } from "./components/AppShell";
 import { MainCard } from "./components/MainCard";
@@ -971,13 +971,11 @@ export default function App() {
   const [authzFetchError, setAuthzFetchError] = useState<string | null>(null);
   const [redirectSeconds, setRedirectSeconds] = useState<number | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
-  const [loginLoading, setLoginLoading] = useState(false);
   const [oauthLoginLoading, setOauthLoginLoading] = useState(false);
   const [oauthAuthReady, setOauthAuthReady] = useState(false);
   const [oauthIsAuthenticated, setOauthIsAuthenticated] = useState(false);
   const [oauthExpiresAt, setOauthExpiresAt] = useState<number | null>(null);
   const [authzUid, setAuthzUid] = useState<string | null>(null);
-  const [showLoginForm, setShowLoginForm] = useState(false);
   const [editorModal, setEditorModal] = useState<
     "project" | "news" | "event" | "member" | "media" | null
   >(null);
@@ -2106,7 +2104,6 @@ export default function App() {
       setLoginError(null);
       setOauthLoginLoading(false);
       if (isAuthenticated) {
-        setShowLoginForm(false);
         showToast("OAuth Login abgeschlossen.", "success");
       }
     })
@@ -2604,19 +2601,6 @@ export default function App() {
     return () => controller.abort();
   }, [user, oauthIsAuthenticated, permissionFlags.canAccessCalendar]);
 
-  const handleLogin = async (email: string, password: string) => {
-    setLoginLoading(true);
-    setLoginError(null);
-    try {
-      await signInWithEmailAndPassword(auth, email, password);
-      setShowLoginForm(false);
-    } catch {
-      setLoginError("Login fehlgeschlagen.");
-    } finally {
-      setLoginLoading(false);
-    }
-  };
-
   const handleOAuthLogin = async () => {
     setOauthLoginLoading(true);
     setLoginError(null);
@@ -2967,7 +2951,7 @@ export default function App() {
 
   const handleJoinProject = async (projectId: string) => {
     if (!user) {
-      setShowLoginForm(true);
+      showToast("Bitte zuerst anmelden.", "error");
       return;
     }
 
@@ -2997,7 +2981,36 @@ export default function App() {
   };
 
 
-  const isBootLoading = !authReady || !newsReady || !projectsReady || !bootDelayDone;
+  const isAuthGateLoading = !authReady || !oauthAuthReady || !bootDelayDone;
+
+  if (isAuthGateLoading) {
+    return (
+      <AppShell>
+        <div className="flex h-full w-full items-center justify-center">
+          <div className="loader" />
+        </div>
+      </AppShell>
+    );
+  }
+
+  const isAuthenticated = Boolean(user) || oauthIsAuthenticated;
+  if (!isAuthenticated) {
+    const authBase =
+      (import.meta.env.VITE_AUTH_BASE_URL as string | undefined)?.trim() ||
+      "https://new.vision-projects.eu";
+    return (
+      <AppShell>
+        <LoginView
+          onOAuthLogin={handleOAuthLogin}
+          onOpenWebsite={() => void openUrl(authBase)}
+          oauthLoading={oauthLoginLoading}
+          error={loginError}
+        />
+      </AppShell>
+    );
+  }
+
+  const isBootLoading = !newsReady || !projectsReady;
 
   if (isBootLoading) {
     return (
@@ -3073,14 +3086,10 @@ export default function App() {
                 oauthIsAuthenticated,
                 oauthAuthReady,
                 oauthExpiresAt,
-                authzUid,
+                    authzUid,
                     username,
                     userProjectIds,
-                    showLoginForm,
-                    setShowLoginForm,
-                    handleLogin,
                     handleOAuthLogin,
-                    loginLoading,
                     oauthLoginLoading,
                     loginError,
                     setSelectedProject,
@@ -4310,11 +4319,7 @@ function renderContent(
   authzUid: string | null,
   username: string | null,
   userProjectIds: string[],
-  showLoginForm: boolean,
-  setShowLoginForm: (value: boolean) => void,
-  onLogin: (email: string, password: string) => Promise<void>,
   onOAuthLogin: () => Promise<void>,
-  loginLoading: boolean,
   oauthLoginLoading: boolean,
   loginError: string | null,
   onSelectProject: (project: ProjectItem | null) => void,
@@ -5748,34 +5753,16 @@ function renderContent(
 
   if (page === "profile") {
     if (!user && !oauthIsAuthenticated) {
-      if (showLoginForm) {
-        return (
-          <LoginView
-            onLogin={onLogin}
-            onOAuthLogin={onOAuthLogin}
-            loading={loginLoading}
-            oauthLoading={oauthLoginLoading}
-            error={loginError}
-          />
-        );
-      }
-
       return (
-        <div className="rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#13151A] px-[16px] py-[14px]">
-          <p className="text-[14px] font-semibold text-[rgba(255,255,255,0.92)]">
-            Profil
-          </p>
-          <p className="mt-[6px] text-[12px] text-[rgba(255,255,255,0.60)]">
-            Du bist noch nicht angemeldet.
-          </p>
-          <button
-            type="button"
-            onClick={() => setShowLoginForm(true)}
-            className="mt-[12px] rounded-[10px] bg-[#2BFE71] px-[14px] py-[8px] text-[12px] font-semibold text-[#0D0E12]"
-          >
-            Anmelden
-          </button>
-        </div>
+        <LoginView
+          onOAuthLogin={onOAuthLogin}
+          onOpenWebsite={() => void openUrl(
+            ((import.meta.env.VITE_AUTH_BASE_URL as string | undefined)?.trim() ||
+              "https://new.vision-projects.eu")
+          )}
+          oauthLoading={oauthLoginLoading}
+          error={loginError}
+        />
       );
     }
 
