@@ -5,7 +5,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faChevronRight } from "@fortawesome/free-solid-svg-icons";
-import { onAuthStateChanged, signOut, type User } from "firebase/auth";
+import { onAuthStateChanged, signInWithEmailAndPassword, signOut, type User } from "firebase/auth";
 import { arrayRemove, arrayUnion, doc, getDoc, updateDoc } from "firebase/firestore";
 import { AppShell } from "./components/AppShell";
 import { MainCard } from "./components/MainCard";
@@ -88,6 +88,7 @@ interface MemberProfile {
   minecraftName?: string | null;
   avatarMediaId?: string | null;
   avatarUrl?: string | null;
+  projects?: string[];
 }
 
 interface ModrinthGalleryItem {
@@ -122,28 +123,83 @@ interface HttpResponse {
   body: string;
 }
 
-interface OAuthProviderConfig {
-  client_id: string;
-  client_secret?: string | null;
-  authorization_endpoint: string;
-  token_endpoint: string;
-  redirect_uri: string;
-  scopes: string[];
-  extra_auth_params?: Record<string, string> | null;
-  extra_token_params?: Record<string, string> | null;
-}
+type TicketStatus = "open" | "pending" | "closed";
+type TicketPriority = "low" | "medium" | "high";
+type TicketItem = {
+  id: string;
+  title: string;
+  requester: string;
+  status: TicketStatus;
+  priority: TicketPriority;
+  createdAt: string; // ISO
+  lastUpdateAt: string; // ISO
+  preview: string;
+};
 
-interface OAuthPrepareLoginResponse {
-  state: string;
-  code_verifier: string;
-  code_challenge: string;
-  authorization_url: string;
-}
+// Placeholder data until a ticket API exists.
+const TICKET_PLACEHOLDER_ITEMS: TicketItem[] = [
+  {
+    id: "TCK-1042",
+    title: "Launcher crasht beim Start",
+    requester: "vision",
+    status: "open",
+    priority: "high",
+    createdAt: "2026-02-03T12:10:00.000Z",
+    lastUpdateAt: "2026-02-08T18:42:00.000Z",
+    preview: "Beim Oeffnen kommt ein Blackscreen und danach schliesst sich die App."
+  },
+  {
+    id: "TCK-1037",
+    title: "Media Upload dauert sehr lange",
+    requester: "Blizz606",
+    status: "pending",
+    priority: "medium",
+    createdAt: "2026-02-01T09:24:00.000Z",
+    lastUpdateAt: "2026-02-06T20:05:00.000Z",
+    preview: "Beim Drag&Drop haengt es manchmal, vor allem bei grossen PNGs."
+  },
+  {
+    id: "TCK-1029",
+    title: "Profilbild wird nicht angezeigt",
+    requester: "guest123",
+    status: "closed",
+    priority: "low",
+    createdAt: "2026-01-28T14:11:00.000Z",
+    lastUpdateAt: "2026-01-30T08:40:00.000Z",
+    preview: "AvatarMediaId ist gesetzt, aber im UI bleibt es leer."
+  }
+];
 
-interface OAuthAuthStatus {
-  is_authenticated: boolean;
-  expires_at?: number | null;
-}
+const getTicketStatusBadge = (status: TicketStatus) => {
+  switch (status) {
+    case "open":
+      return { label: "Open", className: "bg-[#2BFE71] text-[#0D0E12]" };
+    case "pending":
+      return { label: "Pending", className: "bg-[#FFD166] text-[#0D0E12]" };
+    case "closed":
+      return {
+        label: "Closed",
+        className: "bg-[rgba(255,255,255,0.16)] text-[rgba(255,255,255,0.82)]"
+      };
+  }
+};
+
+const getTicketPriorityBadge = (priority: TicketPriority) => {
+  switch (priority) {
+    case "low":
+      return { label: "Low", className: "bg-[rgba(43,217,255,0.18)] text-[#2BD9FF]" };
+    case "medium":
+      return { label: "Medium", className: "bg-[rgba(255,209,102,0.16)] text-[#FFD166]" };
+    case "high":
+      return { label: "High", className: "bg-[rgba(255,107,107,0.18)] text-[#FF6B6B]" };
+  }
+};
+
+const formatTicketShortDate = (iso: string) => {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString("en-US", { month: "short", day: "2-digit", year: "numeric" });
+};
 
 const fallbackProjectDescription =
   "Projektbeschreibung folgt. Mehr Details kommen spaeter, inklusive Features, Updates und Plattformen.";
@@ -287,6 +343,8 @@ type PermissionFlags = {
   canAccessRoles: boolean;
   canBanUsers: boolean;
   canWarnUsers: boolean;
+  canViewTickets: boolean;
+  canViewApplications: boolean;
   isModerator: boolean;
 };
 
@@ -320,7 +378,9 @@ const buildPermissionFlags = (
       canAccessRoles: true,
       canBanUsers: true,
       canWarnUsers: true,
-      isModerator: false
+      canViewTickets: true,
+      canViewApplications: true,
+      isModerator: true
     };
   }
   const canAccessProjects =
@@ -344,6 +404,8 @@ const buildPermissionFlags = (
   const canAccessAdmin = hasAny(ADMIN_PERMISSIONS);
   const canBanUsers = has("users.ban");
   const canWarnUsers = has("users.warn");
+  const canViewTickets = has("mod.viewTickets");
+  const canViewApplications = has("mod.viewApplications");
 
   return {
     canAccessProjects,
@@ -363,6 +425,8 @@ const buildPermissionFlags = (
     canAccessRoles,
     canBanUsers,
     canWarnUsers,
+    canViewTickets,
+    canViewApplications,
     isModerator: hasModeratorRole
   };
 };
@@ -393,6 +457,10 @@ const isPageAllowed = (pageId: string, flags: PermissionFlags) => {
       return flags.canAccessMembers || flags.isModerator;
     case "roles":
       return flags.canAccessRoles;
+    case "tickets":
+      return flags.canViewTickets;
+    case "applications":
+      return flags.canViewApplications;
     default:
       return true;
   }
@@ -493,10 +561,18 @@ async function requestJson<T>(
 
 function getContributorIds() {
   const raw = (import.meta.env.VITE_PROJECT_CONTRIBUTORS_ID as string | undefined) ?? "";
-  return raw
+  const parsed = raw
     .split(",")
     .map((entry) => entry.trim())
     .filter(Boolean);
+
+  // Fallback to Vision Projects organization members (Modrinth user IDs) if env is not set.
+  // This keeps Explore working in production builds where .env values might be missing.
+  if (!parsed.length) {
+    return ["1VC27ZvS", "G5M35WYk", "WuT9u35Z"];
+  }
+
+  return parsed;
 }
 
 function isPage(route: string) {
@@ -514,7 +590,9 @@ function isPage(route: string) {
     "calendar",
     "admin",
     "roles",
-    "members"
+    "members",
+    "tickets",
+    "applications"
   ].includes(route);
 }
 
@@ -704,30 +782,32 @@ function isTruthyFlag(value: unknown) {
   return false;
 }
 
-function getOAuthProviderConfig(): OAuthProviderConfig {
-  const authBase =
-    (import.meta.env.VITE_AUTH_BASE_URL as string | undefined)?.trim() ||
-    "https://api.blizz-developments-official.de";
-  const clientId =
-    (import.meta.env.VITE_OAUTH_CLIENT_ID as string | undefined)?.trim() || "vision-desktop";
-  const redirectUri =
-    (import.meta.env.VITE_OAUTH_REDIRECT_URI as string | undefined)?.trim() ||
-    "vision://auth/callback";
-  const scopesRaw =
-    (import.meta.env.VITE_OAUTH_SCOPES as string | undefined)?.trim() ||
-    "openid profile email offline_access";
-  const scopes = scopesRaw
-    .split(/[ ,]+/)
-    .map((value) => value.trim())
-    .filter(Boolean);
-
-  return {
-    client_id: clientId,
-    authorization_endpoint: `${authBase.replace(/\/+$/, "")}/oauth/authorize`,
-    token_endpoint: `${authBase.replace(/\/+$/, "")}/oauth/token`,
-    redirect_uri: redirectUri,
-    scopes
-  };
+function formatToastError(error: unknown) {
+  if (!error) {
+    return "Unbekannter Fehler.";
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  if (error instanceof Error) {
+    const anyErr = error as any;
+    const code = typeof anyErr.code === "string" ? anyErr.code : null;
+    const name = typeof anyErr.name === "string" ? anyErr.name : null;
+    const message = (error.message || "").trim();
+    const parts = [message];
+    if (code && !message.includes(code)) {
+      parts.push(code);
+    }
+    if (name && name !== "Error" && !message.includes(name)) {
+      parts.push(name);
+    }
+    return parts.filter(Boolean).join(" | ") || "Fehler.";
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
 }
 
 function parseMcVersion(value: string) {
@@ -958,24 +1038,25 @@ export default function App() {
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [calendarError, setCalendarError] = useState(false);
   const [activePage, setActivePage] = useState("home");
-  const [authReady, setAuthReady] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [username, setUsername] = useState<string | null>(null);
   const [userProjectIds, setUserProjectIds] = useState<string[]>([]);
   const [userProfileData, setUserProfileData] = useState<Record<string, unknown> | null>(
     null
   );
+  const [firebaseProfileLoading, setFirebaseProfileLoading] = useState(false);
+  const [firebaseProfileError, setFirebaseProfileError] = useState<string | null>(null);
   const [authzPermissions, setAuthzPermissions] = useState<string[]>([]);
   const [authzRoles, setAuthzRoles] = useState<string[]>([]);
   const [authzFetchLoading, setAuthzFetchLoading] = useState(false);
   const [authzFetchError, setAuthzFetchError] = useState<string | null>(null);
   const [redirectSeconds, setRedirectSeconds] = useState<number | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
-  const [oauthLoginLoading, setOauthLoginLoading] = useState(false);
-  const [oauthAuthReady, setOauthAuthReady] = useState(false);
-  const [oauthIsAuthenticated, setOauthIsAuthenticated] = useState(false);
-  const [oauthExpiresAt, setOauthExpiresAt] = useState<number | null>(null);
-  const [authzUid, setAuthzUid] = useState<string | null>(null);
+  const [loginDialogOpen, setLoginDialogOpen] = useState(false);
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginSubmitting, setLoginSubmitting] = useState(false);
+  const [loginDialogError, setLoginDialogError] = useState<string | null>(null);
   const [editorModal, setEditorModal] = useState<
     "project" | "news" | "event" | "member" | "media" | null
   >(null);
@@ -1088,14 +1169,43 @@ export default function App() {
   const [toastProgress, setToastProgress] = useState(0);
   const toastTimerRef = useRef<number | null>(null);
   const toastIntervalRef = useRef<number | null>(null);
+  const [ticketQuery, setTicketQuery] = useState("");
+  const [ticketStatusFilter, setTicketStatusFilter] = useState<
+    "all" | TicketStatus
+  >("all");
+  const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [mcVersions, setMcVersions] = useState<string[]>([]);
   const [mcVersionsLoading, setMcVersionsLoading] = useState(false);
   const [mcVersionsError, setMcVersionsError] = useState(false);
   const [showClippy, setShowClippy] = useState(false);
+  const [warmupActive, setWarmupActive] = useState(false);
+  const warmupUidRef = useRef<string | null>(null);
+  const warmupCancelRef = useRef<(() => void) | null>(null);
   const permissionFlags = useMemo(
     () => buildPermissionFlags(authzPermissions, authzRoles),
     [authzPermissions, authzRoles]
   );
+  const filteredTickets = useMemo(() => {
+    const q = ticketQuery.trim().toLowerCase();
+    return TICKET_PLACEHOLDER_ITEMS
+      .filter((t) =>
+        ticketStatusFilter === "all" ? true : t.status === ticketStatusFilter
+      )
+      .filter((t) => {
+        if (!q) return true;
+        return (
+          t.id.toLowerCase().includes(q) ||
+          t.title.toLowerCase().includes(q) ||
+          t.requester.toLowerCase().includes(q) ||
+          t.preview.toLowerCase().includes(q)
+        );
+      })
+      .sort((a, b) => (a.lastUpdateAt < b.lastUpdateAt ? 1 : -1));
+  }, [ticketQuery, ticketStatusFilter]);
+  const selectedTicket = useMemo(() => {
+    if (!selectedTicketId) return null;
+    return TICKET_PLACEHOLDER_ITEMS.find((t) => t.id === selectedTicketId) ?? null;
+  }, [selectedTicketId]);
   const visiblePages = useMemo(() => {
     const isModRole = authzRoles.includes("moderator") || authzRoles.includes("admin");
     const pages = ["home", "explore", "settings", "profile"];
@@ -1274,7 +1384,7 @@ export default function App() {
   }, []);
 
   const handleMediaUpload = async () => {
-    if (!user && !oauthIsAuthenticated) {
+    if (!user) {
       setMediaUploadError("Bitte zuerst anmelden.");
       return;
     }
@@ -1317,7 +1427,7 @@ export default function App() {
   };
 
   const handleCreateNews = async () => {
-    if (!user && !oauthIsAuthenticated) {
+    if (!user) {
       setNewsSaveError("Du musst eingeloggt sein.");
       return;
     }
@@ -1451,7 +1561,7 @@ export default function App() {
   };
 
   const confirmDeleteNews = async () => {
-    if (!newsDeleteCandidate || (!user && !oauthIsAuthenticated)) {
+    if (!newsDeleteCandidate || !user) {
       return;
     }
     const deleteId = newsDeleteCandidate.deleteId ?? newsDeleteCandidate.slug ?? newsDeleteCandidate.id;
@@ -1539,7 +1649,7 @@ export default function App() {
   };
 
   const handleDeleteMedia = async (section: string, id: string) => {
-    if (!user && !oauthIsAuthenticated) {
+    if (!user) {
       setMediaError((prev) => ({ ...prev, [section]: "Bitte zuerst anmelden." }));
       return;
     }
@@ -1582,7 +1692,7 @@ export default function App() {
   const [authzCopied, setAuthzCopied] = useState(false);
 
   const handleAuthzTest = async () => {
-    if (!user && !oauthIsAuthenticated) {
+    if (!user) {
       setAuthzTestError("Bitte zuerst anmelden.");
       return;
     }
@@ -1673,7 +1783,7 @@ export default function App() {
   };
 
   const submitBan = async (member: MemberProfile, reason: string) => {
-    if (!user && !oauthIsAuthenticated) {
+    if (!user) {
       setBanError("Bitte zuerst anmelden.");
       return;
     }
@@ -1704,7 +1814,7 @@ export default function App() {
   };
 
   const submitWarn = async (member: MemberProfile, message: string) => {
-    if (!user && !oauthIsAuthenticated) {
+    if (!user) {
       setWarnError("Bitte zuerst anmelden.");
       return;
     }
@@ -2063,8 +2173,6 @@ export default function App() {
 
   useEffect(() => {
     let unlistenNavigate: (() => void) | null = null;
-    let unlistenAuthError: (() => void) | null = null;
-    let unlistenAuthChanged: (() => void) | null = null;
 
     invoke<string | null>("deeplink_get_current_route")
       .then((route) => {
@@ -2085,85 +2193,143 @@ export default function App() {
       })
       .catch(() => undefined);
 
-    listen("auth:error", (event) => {
-      const message = String(event.payload ?? "").trim();
-      setOauthLoginLoading(false);
-      showToast(message || "Login fehlgeschlagen.", "error");
-    })
-      .then((stop) => {
-        unlistenAuthError = stop;
-      })
-      .catch(() => undefined);
-
-    listen("auth:changed", (event) => {
-      const payload = (event.payload ?? {}) as Partial<OAuthAuthStatus>;
-      const isAuthenticated = payload.is_authenticated === true;
-      setOauthAuthReady(true);
-      setOauthIsAuthenticated(isAuthenticated);
-      setOauthExpiresAt(typeof payload.expires_at === "number" ? payload.expires_at : null);
-      setLoginError(null);
-      setOauthLoginLoading(false);
-      if (isAuthenticated) {
-        showToast("OAuth Login abgeschlossen.", "success");
-      }
-    })
-      .then((stop) => {
-        unlistenAuthChanged = stop;
-      })
-      .catch(() => undefined);
-
     return () => {
       if (unlistenNavigate) {
         unlistenNavigate();
       }
-      if (unlistenAuthError) {
-        unlistenAuthError();
-      }
-      if (unlistenAuthChanged) {
-        unlistenAuthChanged();
-      }
     };
-  }, [showToast]);
+  }, []);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
-      setAuthReady(true);
     });
 
     return () => unsubscribe();
   }, []);
 
+  const preloadImages = async (urls: string[], timeoutMs = 9000) => {
+    const unique = Array.from(
+      new Set(
+        urls
+          .map((url) => String(url ?? "").trim())
+          .filter((url) => url.startsWith("http"))
+      )
+    );
+
+    if (!unique.length) {
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      await Promise.all(
+        unique.map(
+          (url) =>
+            new Promise<void>((resolve) => {
+              if (controller.signal.aborted) {
+                resolve();
+                return;
+              }
+              const img = new Image();
+              img.onload = () => resolve();
+              img.onerror = () => resolve();
+              controller.signal.addEventListener("abort", () => resolve(), { once: true });
+              img.src = url;
+            })
+        )
+      );
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  };
+
+  // After a successful login, show a short warmup screen and preload the main images.
   useEffect(() => {
-    let active = true;
+    if (!user?.uid) {
+      warmupUidRef.current = null;
+      setWarmupActive(false);
+      return;
+    }
+
+    // Only warm up once per user session.
+    if (warmupUidRef.current === user.uid) {
+      return;
+    }
+
+    warmupUidRef.current = user.uid;
+    setWarmupActive(true);
+
+    let cancelled = false;
+    warmupCancelRef.current = () => {
+      cancelled = true;
+    };
+
     (async () => {
-      if (!(await isRunningInTauri())) {
-        if (active) {
-          setOauthAuthReady(true);
+      // Wait until the initial lists are loaded (home/explore).
+      const startedAt = Date.now();
+      while (!cancelled && (!newsReady || !projectsReady)) {
+        if (Date.now() - startedAt > 12_000) {
+          break;
         }
+        await new Promise((r) => window.setTimeout(r, 120));
+      }
+
+      if (cancelled) {
         return;
       }
-      try {
-        const status = await invoke<OAuthAuthStatus>("oauth_get_auth_state");
-        if (!active) {
-          return;
-        }
-        setOauthIsAuthenticated(Boolean(status?.is_authenticated));
-        setOauthExpiresAt(typeof status?.expires_at === "number" ? status.expires_at : null);
-      } catch {
-        if (active) {
-          setOauthIsAuthenticated(false);
-          setOauthExpiresAt(null);
-        }
-      } finally {
-        if (active) {
-          setOauthAuthReady(true);
-        }
+
+      const urls: string[] = [];
+      for (const item of projectItems) {
+        if (item.cover?.url) urls.push(item.cover.url);
+        if (item.banner?.url) urls.push(item.banner.url);
+        if (item.logo?.url) urls.push(item.logo.url);
+        if (item.logoIcon?.url) urls.push(item.logoIcon.url);
       }
-    })();
+      for (const item of newsItems) {
+        if (item.cover?.url) urls.push(item.cover.url);
+      }
+
+      await preloadImages(urls, 9000);
+      if (!cancelled) {
+        setWarmupActive(false);
+      }
+    })().catch(() => {
+      if (!cancelled) {
+        setWarmupActive(false);
+      }
+    });
+
     return () => {
-      active = false;
+      if (warmupCancelRef.current) {
+        warmupCancelRef.current();
+      }
+      warmupCancelRef.current = null;
     };
+  }, [user?.uid, newsReady, projectsReady, projectItems, newsItems]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase();
+      if (tag === "input" || tag === "textarea" || (target as any)?.isContentEditable) {
+        return;
+      }
+
+      const altGraph =
+        typeof (event as any).getModifierState === "function"
+          ? (event as any).getModifierState("AltGraph")
+          : false;
+      if ((event.altKey || altGraph) && event.key === "#") {
+        event.preventDefault();
+        setShowClippy((prev) => !prev);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
   useEffect(() => {
@@ -2261,8 +2427,7 @@ export default function App() {
   }, [selectedProject?.id]);
 
   useEffect(() => {
-    if (!user && !oauthIsAuthenticated) {
-      setAuthzUid(null);
+    if (!user) {
       setAuthzPermissions([]);
       setAuthzRoles([]);
       setAuthzFetchError(null);
@@ -2279,10 +2444,9 @@ export default function App() {
           roles: string[];
           expiresAt: number;
         };
-        if (cached.expiresAt > Date.now() && (user ? cached.uid === user.uid : true)) {
+        if (cached.expiresAt > Date.now() && cached.uid === user.uid) {
           setAuthzPermissions(Array.isArray(cached.permissions) ? cached.permissions : []);
           setAuthzRoles(Array.isArray(cached.roles) ? cached.roles : []);
-          setAuthzUid(typeof cached.uid === "string" ? cached.uid : null);
           setAuthzFetchError(null);
           setAuthzFetchLoading(false);
         }
@@ -2303,7 +2467,6 @@ export default function App() {
       }>("https://api.blizz-developments-official.de/me/authz", {
         headers: { Authorization: `Bearer ${token}` }
       });
-      setAuthzUid(typeof response?.uid === "string" ? response.uid : null);
       const permissions = Array.isArray(response?.permissions)
         ? response.permissions
         : [];
@@ -2319,7 +2482,7 @@ export default function App() {
       localStorage.setItem(
         AUTHZ_CACHE_KEY,
         JSON.stringify({
-          uid: typeof response?.uid === "string" ? response.uid : user?.uid ?? "",
+          uid: user.uid,
           permissions,
           roles,
           expiresAt
@@ -2331,7 +2494,6 @@ export default function App() {
           return;
         }
         setAuthzFetchError(error instanceof Error ? error.message : "Authz Fehler.");
-        setAuthzUid(null);
         setAuthzPermissions([]);
         setAuthzRoles([]);
       })
@@ -2344,7 +2506,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [user, oauthIsAuthenticated]);
+  }, [user]);
 
   const fetchMediaPage = async (section: string, page: number, replace = false) => {
     const config = MEDIA_SECTIONS.find((entry) => entry.key === section);
@@ -2463,7 +2625,7 @@ export default function App() {
     if (!permissionFlags.canAccessMembers && !permissionFlags.isModerator) {
       return;
     }
-    if (!user && !oauthIsAuthenticated) {
+    if (!user) {
       setMembers([]);
       setMembersLoading(false);
       setMembersError("Bitte zuerst anmelden.");
@@ -2488,6 +2650,8 @@ export default function App() {
             : typeof record.avatar_media_id === "string"
               ? record.avatar_media_id
               : null;
+        const projectsValue =
+          Array.isArray((record as any).projects) ? ((record as any).projects as string[]) : [];
         return {
           uid: typeof record.uid === "string" ? record.uid : "",
           username: typeof record.username === "string" ? record.username : null,
@@ -2498,7 +2662,8 @@ export default function App() {
           minecraftName:
             typeof record.minecraftName === "string" ? record.minecraftName : null,
           avatarMediaId,
-          avatarUrl: getAvatarThumbUrl(avatarMediaId)
+          avatarUrl: getAvatarThumbUrl(avatarMediaId),
+          projects: projectsValue
         } as MemberProfile;
       });
       const filtered = mapped.filter((item) => item.uid);
@@ -2519,8 +2684,7 @@ export default function App() {
     activePage,
     permissionFlags.canAccessMembers,
     permissionFlags.isModerator,
-    user,
-    oauthIsAuthenticated
+    user
   ]);
 
   useEffect(() => {
@@ -2558,7 +2722,7 @@ export default function App() {
     const controller = new AbortController();
     const canLoadCalendar = permissionFlags.canAccessCalendar;
 
-    if ((!user && !oauthIsAuthenticated) || !canLoadCalendar) {
+    if (!user || !canLoadCalendar) {
       setCalendarEvents([]);
       setCalendarError(false);
       return () => controller.abort();
@@ -2599,29 +2763,30 @@ export default function App() {
     loadCalendar();
 
     return () => controller.abort();
-  }, [user, oauthIsAuthenticated, permissionFlags.canAccessCalendar]);
+  }, [user, permissionFlags.canAccessCalendar]);
 
-  const handleOAuthLogin = async () => {
-    setOauthLoginLoading(true);
-    setLoginError(null);
+  const handleEmailPasswordLogin = async () => {
+    const email = loginEmail.trim();
+    const password = loginPassword;
+
+    if (!email || !password) {
+      setLoginDialogError("Bitte E-Mail und Passwort eingeben.");
+      return;
+    }
+
+    setLoginSubmitting(true);
+    setLoginDialogError(null);
     try {
-      if (!(await isRunningInTauri())) {
-        throw new Error("OAuth Login ist nur in der Desktop-App verfuegbar.");
-      }
-
-      const provider = getOAuthProviderConfig();
-      const prepared = await invoke<OAuthPrepareLoginResponse>("oauth_prepare_login", {
-        provider
-      });
-
-      await openUrl(prepared.authorization_url);
-      showToast("Browser fuer OAuth Login geoeffnet.", "success");
+      await signInWithEmailAndPassword(auth, email, password);
+      setLoginDialogOpen(false);
+      setLoginPassword("");
+      showToast("Erfolgreich eingeloggt.", "success");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "OAuth Login fehlgeschlagen.";
-      setLoginError(message);
-      showToast("OAuth Login fehlgeschlagen.", "error");
+      const message = formatToastError(error);
+      setLoginDialogError(message || "Login fehlgeschlagen.");
+      showToast("Login fehlgeschlagen.", "error");
     } finally {
-      setOauthLoginLoading(false);
+      setLoginSubmitting(false);
     }
   };
 
@@ -2629,26 +2794,47 @@ export default function App() {
     if (user) {
       return user.getIdToken();
     }
-    if (await isRunningInTauri()) {
-      return invoke<string>("oauth_get_access_token");
-    }
     throw new Error("Du musst eingeloggt sein.");
+  };
+
+  const handleReadFirebaseProfile = async () => {
+    if (!user) {
+      showToast("Nur mit Firebase-Login verfuegbar.", "error");
+      return;
+    }
+
+    setFirebaseProfileLoading(true);
+    setFirebaseProfileError(null);
+
+    try {
+      const snapshot = await getDoc(doc(db, "users", user.uid));
+      const data = snapshot.exists()
+        ? (snapshot.data() as Record<string, unknown>)
+        : null;
+
+      setUserProfileData(data);
+
+      const usernameValue = snapshot.exists() ? snapshot.get("username") : null;
+      setUsername(typeof usernameValue === "string" ? usernameValue : null);
+
+      const projectsValue = snapshot.exists() ? snapshot.get("projects") : null;
+      setUserProjectIds(Array.isArray(projectsValue) ? projectsValue : []);
+
+      showToast("Firebase Profil aktualisiert.", "success");
+    } catch (error) {
+      console.error("Failed to load Firebase profile", error);
+      setFirebaseProfileError("Profil konnte nicht geladen werden.");
+      showToast("Firebase Profil konnte nicht geladen werden.", "error");
+    } finally {
+      setFirebaseProfileLoading(false);
+    }
   };
 
   const handleLogout = async () => {
     try {
-      if (await isRunningInTauri()) {
-        try {
-          await invoke("oauth_logout");
-        } catch {
-          // ignore
-        }
-      }
-      setOauthIsAuthenticated(false);
-      setOauthExpiresAt(null);
-      setAuthzUid(null);
       setAuthzPermissions([]);
       setAuthzRoles([]);
+      localStorage.removeItem(AUTHZ_CACHE_KEY);
 
       try {
         await signOut(auth);
@@ -2661,7 +2847,7 @@ export default function App() {
   };
 
   const handleCreateProject = async () => {
-    if (!user && !oauthIsAuthenticated) {
+    if (!user) {
       setProjectSaveError("Du musst eingeloggt sein.");
       return;
     }
@@ -2816,7 +3002,7 @@ export default function App() {
   };
 
   const handleUpdateProject = async () => {
-    if ((!user && !oauthIsAuthenticated) || !editingProjectId) {
+    if (!user || !editingProjectId) {
       setProjectSaveError("Du musst eingeloggt sein.");
       return;
     }
@@ -2914,7 +3100,7 @@ export default function App() {
   };
 
   const handleDeleteProject = async (projectId: string) => {
-    if (!user && !oauthIsAuthenticated) {
+    if (!user) {
       setProjectDeleteError("Du musst eingeloggt sein.");
       return;
     }
@@ -2981,7 +3167,7 @@ export default function App() {
   };
 
 
-  const isAuthGateLoading = !authReady || !oauthAuthReady || !bootDelayDone;
+  const isAuthGateLoading = !bootDelayDone;
 
   if (isAuthGateLoading) {
     return (
@@ -2993,19 +3179,34 @@ export default function App() {
     );
   }
 
-  const isAuthenticated = Boolean(user) || oauthIsAuthenticated;
+  const isAuthenticated = Boolean(user);
   if (!isAuthenticated) {
-    const authBase =
-      (import.meta.env.VITE_AUTH_BASE_URL as string | undefined)?.trim() ||
-      "https://new.vision-projects.eu";
     return (
       <AppShell withSidebar={false}>
-        <LoginView
-          onOAuthLogin={handleOAuthLogin}
-          onOpenWebsite={() => void openUrl(authBase)}
-          oauthLoading={oauthLoginLoading}
-          error={loginError}
-        />
+        <div className="relative flex h-full w-full items-center justify-center overflow-hidden bg-[#0a0b10]">
+          <div className="pointer-events-none absolute inset-0">
+            <div className="absolute -left-[200px] -top-[200px] h-[520px] w-[520px] rounded-full bg-[rgba(80,250,123,0.14)] blur-[120px]" />
+            <div className="absolute -right-[240px] -top-[240px] h-[560px] w-[560px] rounded-full bg-[rgba(110,214,255,0.12)] blur-[140px]" />
+          </div>
+          <div className="relative z-10 w-[440px]">
+            <LoginView
+              expanded={loginDialogOpen}
+              onToggleExpanded={() => {
+                setLoginError(null);
+                setLoginDialogError(null);
+                setLoginDialogOpen((prev) => !prev);
+              }}
+              loading={loginSubmitting}
+              error={loginDialogError ?? loginError}
+              email={loginEmail}
+              password={loginPassword}
+              onChangeEmail={setLoginEmail}
+              onChangePassword={setLoginPassword}
+              onSubmit={() => void handleEmailPasswordLogin()}
+              onRegister={() => void openUrl("https://vision-projects.eu/accounting/register")}
+            />
+          </div>
+        </div>
       </AppShell>
     );
   }
@@ -3013,6 +3214,29 @@ export default function App() {
   const isBootLoading = !newsReady || !projectsReady;
 
   if (isBootLoading) {
+    if (warmupActive) {
+      return (
+        <AppShell withSidebar={false}>
+          <div className="relative flex h-full w-full items-center justify-center overflow-hidden bg-[#0a0b10]">
+            <div className="pointer-events-none absolute inset-0">
+              <div className="absolute -left-[180px] -top-[220px] h-[520px] w-[520px] rounded-full bg-[rgba(80,250,123,0.14)] blur-[120px]" />
+              <div className="absolute -right-[260px] -top-[240px] h-[560px] w-[560px] rounded-full bg-[rgba(110,214,255,0.12)] blur-[140px]" />
+            </div>
+            <div className="relative z-10 flex flex-col items-center justify-center gap-4">
+              <div className="loader" />
+              <div className="text-center">
+                <p className="text-[14px] font-semibold text-[rgba(255,255,255,0.85)]">
+                  Getting everything ready...
+                </p>
+                <p className="mt-1 text-[12px] text-[rgba(255,255,255,0.55)]">
+                  Inhalte werden vorgeladen.
+                </p>
+              </div>
+            </div>
+          </div>
+        </AppShell>
+      );
+    }
     return (
       <AppShell>
         <div className="flex h-full w-full items-center justify-center">
@@ -3069,32 +3293,36 @@ export default function App() {
                     permissionFlags,
                     authzFetchLoading,
                     authzFetchError,
-                userProfileData,
-                redirectSeconds,
-                members,
-                membersLoading,
-                membersError,
-                openBanDialog,
-                openWarnDialog,
-                handleAuthzTest,
-                authzTestLoading,
-                authzTestError,
-                authzResult,
-                handleAuthzCopy,
-                authzCopied,
-                user,
-                oauthIsAuthenticated,
-                oauthAuthReady,
-                oauthExpiresAt,
-                    authzUid,
+                    userProfileData,
+                    redirectSeconds,
+                    members,
+                    membersLoading,
+                    membersError,
+                    openBanDialog,
+                    openWarnDialog,
+                    handleAuthzTest,
+                    authzTestLoading,
+                    authzTestError,
+                    authzResult,
+                    handleAuthzCopy,
+                    authzCopied,
+                    user,
                     username,
                     userProjectIds,
-                    handleOAuthLogin,
-                    oauthLoginLoading,
-                    loginError,
                     setSelectedProject,
                     setEditorModal,
-                    handleLogout
+                    handleLogout,
+                    handleReadFirebaseProfile,
+                    firebaseProfileLoading,
+                    firebaseProfileError,
+                    ticketQuery,
+                    setTicketQuery,
+                    ticketStatusFilter,
+                    setTicketStatusFilter,
+                    selectedTicketId,
+                    setSelectedTicketId,
+                    filteredTickets,
+                    selectedTicket
                   )}
                 </div>
               </div>
@@ -3299,12 +3527,14 @@ export default function App() {
         )}
         {toastMessage && (
           <div
-            className={`fixed bottom-6 left-1/2 z-[80] -translate-x-1/2 overflow-hidden rounded-[12px] border px-4 py-3 text-[12px] font-semibold shadow-[0_20px_40px_rgba(0,0,0,0.45)] transition-all duration-300 ${toastVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-2"} ${toastVariant === "success"
+            className={`fixed bottom-6 left-1/2 z-[80] w-[min(680px,calc(100vw-32px))] -translate-x-1/2 overflow-hidden rounded-none border-2 px-4 py-3 text-[12px] font-semibold shadow-[0_20px_40px_rgba(0,0,0,0.45)] transition-all duration-300 ${toastVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-2"} ${toastVariant === "success"
               ? "border-[rgba(46,204,113,0.45)] bg-[rgba(21,40,28,0.92)] text-[#7CFFB0]"
               : "border-[rgba(255,91,91,0.45)] bg-[rgba(48,16,16,0.92)] text-[#FF9C9C]"
               }`}
           >
-            <span>{toastMessage}</span>
+            <span className="block whitespace-pre-wrap leading-[16px] text-center">
+              {toastMessage}
+            </span>
             <span
               className={`pointer-events-none absolute bottom-0 left-0 h-[3px] transition-[width] ${toastVariant === "success"
                 ? "bg-[#2BFE71]"
@@ -4313,18 +4543,22 @@ function renderContent(
   handleAuthzCopy: () => void,
   authzCopied: boolean,
   user: User | null,
-  oauthIsAuthenticated: boolean,
-  oauthAuthReady: boolean,
-  oauthExpiresAt: number | null,
-  authzUid: string | null,
   username: string | null,
   userProjectIds: string[],
-  onOAuthLogin: () => Promise<void>,
-  oauthLoginLoading: boolean,
-  loginError: string | null,
   onSelectProject: (project: ProjectItem | null) => void,
   setEditorModal: (value: "project" | "news" | "event" | "member" | "media" | null) => void,
-  onLogout: () => Promise<void>
+  onLogout: () => Promise<void>,
+  onReadFirebaseProfile: () => Promise<void>,
+  firebaseProfileLoading: boolean,
+  firebaseProfileError: string | null,
+  ticketQuery: string,
+  setTicketQuery: (value: string) => void,
+  ticketStatusFilter: "all" | TicketStatus,
+  setTicketStatusFilter: (value: "all" | TicketStatus) => void,
+  selectedTicketId: string | null,
+  setSelectedTicketId: (value: string | null) => void,
+  filteredTickets: TicketItem[],
+  selectedTicket: TicketItem | null
 ) {
   const modrinthCards = modrinthProjects.map(toModrinthCard);
   const groupedModrinth = groupModrinthCards(modrinthCards);
@@ -4332,6 +4566,7 @@ function renderContent(
     projects.filter((item) => userProjectIds.includes(item.id))
   );
   const sortedProjects = sortProjectsByActivity(projects);
+  const projectTitleById = new Map(projects.map((item) => [item.id, item.title ?? item.id]));
   void newsError;
   const canAccessPage = (pageId: string) => isPageAllowed(pageId, permissionFlags);
   const isPublicPage = ["home", "explore", "settings", "settings-debug", "profile"].includes(
@@ -5524,6 +5759,17 @@ function renderContent(
     const canShowMembers =
       permissionFlags.canAccessMembers || permissionFlags.isModerator;
     const canShowRoles = permissionFlags.canAccessRoles;
+    const canShowTickets = permissionFlags.canViewTickets;
+    const canShowApplications = permissionFlags.canViewApplications;
+
+    // Debug helper: if something shows up unexpectedly, this reveals which authz data enabled it.
+    // (Safe: logs only booleans + role names, not tokens.)
+    if (canShowTickets || canShowApplications) {
+      console.info("[admin] module visibility", {
+        canShowTickets,
+        canShowApplications
+      });
+    }
     return (
       <div className="space-y-6">
         <div className="grid gap-8 lg:grid-cols-3">
@@ -5576,12 +5822,313 @@ function renderContent(
               </div>
             </button>
           )}
+
+          {/* Tickets Button - Blue */}
+          {canShowTickets && (
+            <button
+              type="button"
+              onClick={() => onNavigate("tickets")}
+              className="group relative flex flex-col items-center justify-center rounded-[24px] p-[3px] transition-all"
+            >
+              <span
+                aria-hidden="true"
+                className="rainbow-draw pointer-events-none absolute inset-0 rounded-[24px] blur-[2px]"
+              />
+              <div className="relative z-10 flex h-full w-full flex-col items-center justify-center rounded-[21px] bg-[#24262C] p-12">
+                <div className="flex h-32 w-32 items-center justify-center rounded-full bg-[rgba(43,217,255,0.18)] text-[#2BD9FF] transition-all">
+                  <i className="fa-solid fa-ticket text-[56px]" aria-hidden="true" />
+                </div>
+                <h3 className="mt-8 text-[24px] font-bold text-[rgba(255,255,255,0.92)]">
+                  Tickets
+                </h3>
+                <p className="mt-3 text-center text-[15px] text-[rgba(255,255,255,0.65)]">
+                  Support-Anfragen bearbeiten
+                </p>
+              </div>
+            </button>
+          )}
+
+          {/* Applications Button - Green */}
+          {canShowApplications && (
+            <button
+              type="button"
+              onClick={() => onNavigate("applications")}
+              className="group relative flex flex-col items-center justify-center rounded-[24px] p-[3px] transition-all"
+            >
+              <span
+                aria-hidden="true"
+                className="rainbow-draw pointer-events-none absolute inset-0 rounded-[24px] blur-[2px]"
+              />
+              <div className="relative z-10 flex h-full w-full flex-col items-center justify-center rounded-[21px] bg-[#24262C] p-12">
+                <div className="flex h-32 w-32 items-center justify-center rounded-full bg-[rgba(43,254,113,0.16)] text-[#2BFE71] transition-all">
+                  <i className="fa-solid fa-file-signature text-[56px]" aria-hidden="true" />
+                </div>
+                <h3 className="mt-8 text-[24px] font-bold text-[rgba(255,255,255,0.92)]">
+                  Bewerbungen
+                </h3>
+                <p className="mt-3 text-center text-[15px] text-[rgba(255,255,255,0.65)]">
+                  Team-Bewerbungen pruefen
+                </p>
+              </div>
+            </button>
+          )}
         </div>
-        {!canShowMembers && !canShowRoles && (
+        {!canShowMembers && !canShowRoles && !canShowTickets && !canShowApplications && (
           <p className="text-[13px] text-[rgba(255,255,255,0.60)]">
             Keine Module freigeschaltet.
           </p>
         )}
+      </div>
+    );
+  }
+
+  if (page === "tickets") {
+    if (!permissionFlags.canViewTickets) {
+      return (
+        <p className="text-[13px] text-[rgba(255,255,255,0.60)]">
+          Keine Berechtigung.
+        </p>
+      );
+    }
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => onNavigate("admin")}
+            className="flex items-center gap-2 rounded-[12px] border border-[rgba(255,255,255,0.12)] bg-[#16181c] px-4 py-3 text-[14px] font-semibold text-[rgba(255,255,255,0.70)] transition hover:border-[#2BFE71] hover:bg-[rgba(43,254,113,0.1)] hover:text-[#2BFE71]"
+            aria-label="Zurueck"
+          >
+            <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
+            Zurueck
+          </button>
+        </div>
+
+        <div className="rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] p-5">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <h1 className="text-[18px] font-semibold text-[rgba(255,255,255,0.92)]">
+                Tickets
+              </h1>
+              <p className="mt-1 text-[13px] text-[rgba(255,255,255,0.60)]">
+                Einfache Listenansicht (Platzhalter), bis die Ticket-API da ist.
+              </p>
+            </div>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="flex items-center gap-2 rounded-[12px] border border-[rgba(255,255,255,0.12)] bg-[#14161A] px-3 py-2">
+                <i className="fa-solid fa-magnifying-glass text-[12px] text-[rgba(255,255,255,0.55)]" aria-hidden="true" />
+                <input
+                  value={ticketQuery}
+                  onChange={(e) => setTicketQuery(e.target.value)}
+                  placeholder="Suchen..."
+                  className="w-[240px] bg-transparent text-[13px] text-[rgba(255,255,255,0.85)] outline-none placeholder:text-[rgba(255,255,255,0.35)]"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[12px] font-semibold text-[rgba(255,255,255,0.55)]">
+                  Status
+                </span>
+                <select
+                  value={ticketStatusFilter}
+                  onChange={(e) =>
+                    setTicketStatusFilter(e.target.value as "all" | TicketStatus)
+                  }
+                  className="rounded-[12px] border border-[rgba(255,255,255,0.12)] bg-[#14161A] px-3 py-2 text-[13px] text-[rgba(255,255,255,0.85)] outline-none"
+                >
+                  <option value="all">Alle</option>
+                  <option value="open">Open</option>
+                  <option value="pending">Pending</option>
+                  <option value="closed">Closed</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-5 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+            <div className="overflow-hidden rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[#101218]">
+              <div className="flex items-center justify-between border-b border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-4 py-3">
+                <p className="text-[12px] font-semibold text-[rgba(255,255,255,0.65)]">
+                  {filteredTickets.length} Ticket(s)
+                </p>
+                <p className="text-[12px] text-[rgba(255,255,255,0.45)]">
+                  Sortiert nach letztem Update
+                </p>
+              </div>
+              <div className="divide-y divide-[rgba(255,255,255,0.06)]">
+                {filteredTickets.map((ticket) => {
+                  const isActive = ticket.id === selectedTicketId;
+                  const status = getTicketStatusBadge(ticket.status);
+                  const prio = getTicketPriorityBadge(ticket.priority);
+                  return (
+                    <button
+                      key={ticket.id}
+                      type="button"
+                      onClick={() => setSelectedTicketId(ticket.id)}
+                      className={[
+                        "flex w-full items-start gap-4 px-4 py-4 text-left transition",
+                        isActive
+                          ? "bg-[rgba(43,254,113,0.08)]"
+                          : "hover:bg-[rgba(255,255,255,0.04)]"
+                      ].join(" ")}
+                    >
+                      <div className="mt-1 flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-[12px] bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.75)]">
+                        <i className="fa-solid fa-ticket" aria-hidden="true" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-[12px] font-semibold text-[rgba(255,255,255,0.55)]">
+                            {ticket.id}
+                          </span>
+                          <span
+                            className={[
+                              "rounded-[10px] px-2 py-1 text-[11px] font-semibold",
+                              status.className
+                            ].join(" ")}
+                          >
+                            {status.label}
+                          </span>
+                          <span
+                            className={[
+                              "rounded-[10px] px-2 py-1 text-[11px] font-semibold",
+                              prio.className
+                            ].join(" ")}
+                          >
+                            {prio.label}
+                          </span>
+                        </div>
+                        <div className="mt-2 truncate text-[14px] font-semibold text-[rgba(255,255,255,0.92)]">
+                          {ticket.title}
+                        </div>
+                        <div className="mt-1 line-clamp-2 text-[12px] text-[rgba(255,255,255,0.55)]">
+                          {ticket.preview}
+                        </div>
+                        <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] text-[rgba(255,255,255,0.45)]">
+                          <span>
+                            <i className="fa-solid fa-user mr-1" aria-hidden="true" />
+                            {ticket.requester}
+                          </span>
+                          <span>
+                            <i className="fa-solid fa-clock mr-1" aria-hidden="true" />
+                            {formatTicketShortDate(ticket.lastUpdateAt)}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="mt-2 text-[rgba(255,255,255,0.35)]">
+                        <FontAwesomeIcon icon={faChevronRight} />
+                      </div>
+                    </button>
+                  );
+                })}
+                {!filteredTickets.length && (
+                  <div className="px-4 py-10 text-center text-[13px] text-[rgba(255,255,255,0.55)]">
+                    Keine Tickets gefunden.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[#101218] p-4">
+              {selectedTicket ? (
+                <>
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <p className="text-[12px] font-semibold text-[rgba(255,255,255,0.55)]">
+                        {selectedTicket.id}
+                      </p>
+                      <h2 className="mt-2 truncate text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
+                        {selectedTicket.title}
+                      </h2>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedTicketId(null)}
+                      className="rounded-[12px] border border-[rgba(255,255,255,0.12)] bg-[#14161A] px-3 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.65)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
+                    >
+                      Schliessen
+                    </button>
+                  </div>
+                  <div className="mt-4 grid gap-2 text-[12px] text-[rgba(255,255,255,0.65)]">
+                    <div className="flex items-center justify-between rounded-[12px] bg-[#0F1116] px-3 py-2">
+                      <span>Requester</span>
+                      <span className="font-semibold text-[rgba(255,255,255,0.85)]">
+                        {selectedTicket.requester}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between rounded-[12px] bg-[#0F1116] px-3 py-2">
+                      <span>Created</span>
+                      <span className="font-semibold text-[rgba(255,255,255,0.85)]">
+                        {formatTicketShortDate(selectedTicket.createdAt)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between rounded-[12px] bg-[#0F1116] px-3 py-2">
+                      <span>Last update</span>
+                      <span className="font-semibold text-[rgba(255,255,255,0.85)]">
+                        {formatTicketShortDate(selectedTicket.lastUpdateAt)}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="mt-4 rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] p-3">
+                    <p className="text-[12px] font-semibold text-[rgba(255,255,255,0.70)]">
+                      Nachricht
+                    </p>
+                    <p className="mt-2 text-[12px] leading-relaxed text-[rgba(255,255,255,0.62)]">
+                      {selectedTicket.preview}
+                    </p>
+                  </div>
+                  <p className="mt-4 text-[11px] text-[rgba(255,255,255,0.45)]">
+                    Naechster Schritt: sobald eine Ticket-API existiert, ersetzen wir
+                    `tickets` durch einen Fetch + Pagination.
+                  </p>
+                </>
+              ) : (
+                <div className="flex h-full min-h-[220px] flex-col items-center justify-center text-center">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-[14px] bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.75)]">
+                    <i className="fa-solid fa-ticket" aria-hidden="true" />
+                  </div>
+                  <p className="mt-3 text-[13px] font-semibold text-[rgba(255,255,255,0.85)]">
+                    Ticket auswaehlen
+                  </p>
+                  <p className="mt-1 text-[12px] text-[rgba(255,255,255,0.55)]">
+                    Klicke links ein Ticket fuer Details.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (page === "applications") {
+    if (!permissionFlags.canViewApplications) {
+      return (
+        <p className="text-[13px] text-[rgba(255,255,255,0.60)]">
+          Keine Berechtigung.
+        </p>
+      );
+    }
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => onNavigate("admin")}
+            className="flex items-center gap-2 rounded-[12px] border border-[rgba(255,255,255,0.12)] bg-[#16181c] px-4 py-3 text-[14px] font-semibold text-[rgba(255,255,255,0.70)] transition hover:border-[#2BFE71] hover:bg-[rgba(43,254,113,0.1)] hover:text-[#2BFE71]"
+            aria-label="Zurueck"
+          >
+            <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
+            Zurueck
+          </button>
+        </div>
+        <div className="rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] p-4">
+          <h1 className="text-[18px] font-semibold text-[rgba(255,255,255,0.92)]">
+            Bewerbungen
+          </h1>
+          <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.65)]">
+            Bewerbungs-System kommt noch (UI ist vorbereitet).
+          </p>
+        </div>
       </div>
     );
   }
@@ -5681,6 +6228,27 @@ function renderContent(
                   {member.minecraftName ? `MC: ${member.minecraftName}` : "—"}
                   {typeof member.level === "number" ? ` · Lvl ${member.level}` : ""}
                   {member.experience ? ` · ${member.experience}` : ""}
+                  {Array.isArray(member.projects) && member.projects.length > 0 && (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {member.projects.slice(0, 3).map((projectId) => {
+                        const label = projectTitleById.get(projectId) ?? projectId.slice(0, 8);
+                        return (
+                          <span
+                            key={projectId}
+                            className="inline-flex items-center border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.03)] px-2 py-0.5 text-[10px] text-[rgba(255,255,255,0.72)]"
+                            title={projectId}
+                          >
+                            {label}
+                          </span>
+                        );
+                      })}
+                      {member.projects.length > 3 && (
+                        <span className="text-[10px] text-[rgba(255,255,255,0.45)]">
+                          +{member.projects.length - 3}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
                 {showActions && (
                   <div className="flex items-center gap-2">
@@ -5752,55 +6320,11 @@ function renderContent(
   }
 
   if (page === "profile") {
-    if (!user && !oauthIsAuthenticated) {
+    if (!user) {
       return (
-        <LoginView
-          onOAuthLogin={onOAuthLogin}
-          onOpenWebsite={() => void openUrl(
-            ((import.meta.env.VITE_AUTH_BASE_URL as string | undefined)?.trim() ||
-              "https://new.vision-projects.eu")
-          )}
-          oauthLoading={oauthLoginLoading}
-          error={loginError}
-        />
-      );
-    }
-
-    if (!user && oauthIsAuthenticated) {
-      const expiresLabel =
-        typeof oauthExpiresAt === "number"
-          ? new Date(oauthExpiresAt * 1000).toLocaleString()
-          : null;
-      return (
-        <div className="rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#13151A] px-[16px] py-[14px]">
-          <p className="text-[14px] font-semibold text-[rgba(255,255,255,0.92)]">
-            Profil
-          </p>
-          <p className="mt-[6px] text-[12px] text-[rgba(255,255,255,0.60)]">
-            Status:{" "}
-            <span className="text-[#2BFE71] font-semibold">
-              {oauthAuthReady ? "OAuth angemeldet" : "OAuth wird geprueft..."}
-            </span>
-          </p>
-          {authzUid && (
-            <p className="mt-[6px] text-[12px] text-[rgba(255,255,255,0.60)]">
-              UID: <span className="text-[rgba(255,255,255,0.85)]">{authzUid}</span>
-            </p>
-          )}
-          {expiresLabel && (
-            <p className="mt-[6px] text-[12px] text-[rgba(255,255,255,0.60)]">
-              Token Ablauf:{" "}
-              <span className="text-[rgba(255,255,255,0.85)]">{expiresLabel}</span>
-            </p>
-          )}
-          <button
-            type="button"
-            onClick={onLogout}
-            className="mt-[12px] rounded-full border border-[rgba(255,255,255,0.12)] bg-[#16181c] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.85)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
-          >
-            Abmelden
-          </button>
-        </div>
+        <p className="text-[13px] text-[rgba(255,255,255,0.60)]">
+          Bitte zuerst anmelden.
+        </p>
       );
     }
 
@@ -5812,6 +6336,31 @@ function renderContent(
         <p className="mt-[8px] text-[13px] text-[rgba(255,255,255,0.60)]">
           Username: {username ?? "Unbekannt"}
         </p>
+
+        <div className="mt-4 rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-[12px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]">
+              Firebase Profil
+            </p>
+            <button
+              type="button"
+              onClick={() => void onReadFirebaseProfile()}
+              disabled={firebaseProfileLoading}
+              className="cta-secondary px-4 py-2 text-[12px]"
+            >
+              {firebaseProfileLoading ? "Lade..." : "Profil auslesen"}
+            </button>
+          </div>
+          {firebaseProfileError && (
+            <p className="mt-3 text-[12px] text-[rgba(255,125,125,0.92)]">
+              {firebaseProfileError}
+            </p>
+          )}
+          <pre className="scrollbox mt-3 max-h-[240px] overflow-auto whitespace-pre-wrap text-[12px] text-[rgba(255,255,255,0.75)]">
+            {userProfileData ? JSON.stringify(userProfileData, null, 2) : "Keine Daten."}
+          </pre>
+        </div>
+
         <button
           type="button"
           onClick={onLogout}

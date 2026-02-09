@@ -124,7 +124,13 @@
   font-family: var(--font-main);
   font-size: 1rem;
   font-weight: 600;
-  transition: all 0.3s var(--transition-smooth);
+  transition:
+    background-color 0.25s var(--transition-smooth),
+    border-color 0.25s var(--transition-smooth),
+    box-shadow 0.25s var(--transition-smooth),
+    color 0.25s var(--transition-smooth),
+    opacity 0.2s var(--transition-smooth),
+    transform 0.12s ease;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -141,7 +147,6 @@
   color: #000;
   border: 2px solid var(--accent-dark);
   box-shadow: 0 4px 0 var(--accent-dark), 0 4px 12px rgba(43, 254, 113, 0.3);
-  transition: all 0.1s ease;
 }
 
 .cta-primary:hover {
@@ -167,7 +172,6 @@
   color: var(--text-main);
   border: 2px solid rgba(255, 255, 255, 0.2);
   box-shadow: 0 4px 0 rgba(0, 0, 0, 0.5), 0 4px 12px rgba(0, 0, 0, 0.2);
-  transition: all 0.1s ease;
 }
 
 .cta-secondary:hover {
