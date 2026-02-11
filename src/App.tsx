@@ -676,14 +676,7 @@ function formatNewsDate(value?: string | null) {
   });
 }
 
-function refreshPageSoon(delayMs = 800) {
-  if (typeof window === "undefined") {
-    return;
-  }
-  window.setTimeout(() => {
-    window.location.reload();
-  }, delayMs);
-}
+
 
 function mapNewsItems(items: unknown[]) {
   return items
@@ -1248,15 +1241,15 @@ export default function App() {
     selectedProject?.activityStatus === "Ended";
   const canJoinSelectedProject = Boolean(
     user &&
-      selectedProject &&
-      !userProjectIds.includes(selectedProject.id) &&
-      !isSelectedProjectEnded
+    selectedProject &&
+    !userProjectIds.includes(selectedProject.id) &&
+    !isSelectedProjectEnded
   );
   const canLeaveSelectedProject = Boolean(
     user &&
-      selectedProject &&
-      userProjectIds.includes(selectedProject.id) &&
-      !isSelectedProjectEnded
+    selectedProject &&
+    userProjectIds.includes(selectedProject.id) &&
+    !isSelectedProjectEnded
   );
 
   const handleMediaDrop = (event: DragEvent<HTMLLabelElement>) => {
@@ -1416,7 +1409,7 @@ export default function App() {
       }, 1600);
       fetchMediaPage(mediaUploadType, 1, true);
       showToast("Media erfolgreich hochgeladen.", "success");
-      refreshPageSoon(900);
+
     } catch (error) {
       setMediaUploadError(
         error instanceof Error ? error.message : "Upload fehlgeschlagen."
@@ -1522,7 +1515,7 @@ export default function App() {
       setShowExistingNewsBanners(false);
       setEditorModal(null);
       showToast("News erstellt.", "success");
-      refreshPageSoon(900);
+      reloadNewsItems(true);
     } catch (error) {
       const message = error instanceof Error ? error.message : "News konnte nicht erstellt werden.";
       console.warn("[news] create failed", message, error);
@@ -2020,7 +2013,7 @@ export default function App() {
     const controller = new AbortController();
     const CACHE_KEY = "vision.projects.cache.v3";
     // Drop older caches with wrong Modrinth flag handling
-    localStorage.removeItem("vision.projects.cache");
+    // localStorage.removeItem("vision.projects.cache");
 
     const loadProjects = async () => {
       const cachedRaw = localStorage.getItem(CACHE_KEY);
@@ -2051,7 +2044,9 @@ export default function App() {
 
         const items = (data.items as ProjectItem[]).map(normalizeProjectMedia);
         if (!controller.signal.aborted) {
-          setProjectItems(items);
+          if (!cachedItems) {
+            setProjectItems(items);
+          }
           setProjectError(false);
         }
         const enrichedItems = await Promise.all(
@@ -2059,9 +2054,9 @@ export default function App() {
             const { modrinthId } = normalizeModrinthFields(item);
             const srcModrinth = isTruthyFlag(
               item.srcModrinth ??
-                item.src_modrinth ??
-                (item as any).src_modrinth ??
-                false
+              item.src_modrinth ??
+              (item as any).src_modrinth ??
+              false
             );
             if (!modrinthId || !srcModrinth) {
               return item;
@@ -3074,15 +3069,15 @@ export default function App() {
         prev.map((project) =>
           project.id === editingProjectId
             ? normalizeProjectMedia({
-                ...project,
-                title: projectTitle,
-                slug: projectSlug,
-                description: projectDescription,
-                loader: projectLoader || project.loader || null,
-                version: projectVersion || project.version || null,
-                activityStatus: projectActivityStatus,
-                srcModrinth: hasModrinth
-              })
+              ...project,
+              title: projectTitle,
+              slug: projectSlug,
+              description: projectDescription,
+              loader: projectLoader || project.loader || null,
+              version: projectVersion || project.version || null,
+              activityStatus: projectActivityStatus,
+              srcModrinth: hasModrinth
+            })
             : project
         )
       );
@@ -3331,7 +3326,7 @@ export default function App() {
           </div>
           <div className="px-4 space-y-6 overflow-auto">
             {newsItems.map((item) => (
-              <div key={item.title} className="w-full">
+              <div key={item.id} className="w-full">
                 <div className="w-full overflow-hidden rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#0D0E12]">
                   {item.cover?.url ? (
                     <div
@@ -3742,8 +3737,8 @@ export default function App() {
                           ? "bg-[#2BFE71] text-[#0D0E12]"
                           : "text-[rgba(255,255,255,0.70)] hover:text-white"
                           } ${Boolean(editingProjectId) && projectSource === "modrinth"
-                          ? "opacity-40 cursor-not-allowed"
-                          : ""}`}
+                            ? "opacity-40 cursor-not-allowed"
+                            : ""}`}
                       >
                         Manuell
                       </button>
@@ -3755,8 +3750,8 @@ export default function App() {
                           ? "bg-[#2BFE71] text-[#0D0E12]"
                           : "text-[rgba(255,255,255,0.70)] hover:text-white"
                           } ${Boolean(editingProjectId) && projectSource === "manual"
-                          ? "opacity-40 cursor-not-allowed"
-                          : ""}`}
+                            ? "opacity-40 cursor-not-allowed"
+                            : ""}`}
                       >
                         Modrinth
                       </button>
@@ -4647,7 +4642,7 @@ function renderContent(
           {myProjects.map((item) => (
             <button
               type="button"
-              key={item.title}
+              key={item.id}
               onClick={() => onSelectProject(item)}
               className="group relative flex h-[320px] w-[260px] flex-col rounded-[18px] p-[3px] text-left"
             >
@@ -4732,7 +4727,7 @@ function renderContent(
             {sortedProjects.map((item) => (
               <button
                 type="button"
-                key={item.title}
+                key={item.id}
                 onClick={() => onSelectProject(item)}
                 className="group relative flex h-[320px] w-[260px] flex-col rounded-[18px] p-[3px] text-left"
               >
@@ -4742,34 +4737,34 @@ function renderContent(
                 />
                 <div className="relative z-10 flex h-full w-full overflow-hidden rounded-[15px] bg-[#24262C]">
                   <div className="flex w-full flex-col">
-                  {item.cover?.url ? (
-                    <div className="relative h-[180px] w-full overflow-hidden">
-                      <img
-                        src={item.cover.url}
-                        alt={`${item.title} hero`}
-                        className="h-full w-full bg-[#0D0E12] object-cover transition duration-200 group-hover:brightness-90"
-                      />
-                      {(() => {
-                        const badge = getActivityStatusBadge(item.activityStatus ?? null);
-                        if (!badge) {
-                          return null;
-                        }
-                        return (
-                          <div className="absolute right-5 top-3">
-                            <span
-                              className={`inline-flex rounded-[10px] px-3 py-1 text-[11px] font-semibold ${badge.className}`}
-                            >
-                              {badge.label}
-                            </span>
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  ) : (
-                    <div className="h-[180px] w-full bg-[#0D0E12]" />
-                  )}
-                  <div className="px-[16px] pb-[18px] pt-[14px]">
-                    <div className="flex items-center gap-[12px]">
+                    {item.cover?.url ? (
+                      <div className="relative h-[180px] w-full overflow-hidden">
+                        <img
+                          src={item.cover.url}
+                          alt={`${item.title} hero`}
+                          className="h-full w-full bg-[#0D0E12] object-cover transition duration-200 group-hover:brightness-90"
+                        />
+                        {(() => {
+                          const badge = getActivityStatusBadge(item.activityStatus ?? null);
+                          if (!badge) {
+                            return null;
+                          }
+                          return (
+                            <div className="absolute right-5 top-3">
+                              <span
+                                className={`inline-flex rounded-[10px] px-3 py-1 text-[11px] font-semibold ${badge.className}`}
+                              >
+                                {badge.label}
+                              </span>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    ) : (
+                      <div className="h-[180px] w-full bg-[#0D0E12]" />
+                    )}
+                    <div className="px-[16px] pb-[18px] pt-[14px]">
+                      <div className="flex items-center gap-[12px]">
                         {item.logoIcon?.url ? (
                           <div className="h-[48px] w-[48px] overflow-hidden rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[#1B1D22]">
                             <img
@@ -4781,13 +4776,13 @@ function renderContent(
                         ) : (
                           <div className="h-[48px] w-[48px] rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[#1B1D22]" />
                         )}
-                      <p className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)] line-clamp-1">
-                        {item.title}
+                        <p className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)] line-clamp-1">
+                          {item.title}
+                        </p>
+                      </div>
+                      <p className="mt-[12px] text-[12px] leading-[18px] text-[rgba(255,255,255,0.70)] line-clamp-3">
+                        {getProjectDescriptionText(item) ?? fallbackProjectDescription}
                       </p>
-                    </div>
-                    <p className="mt-[12px] text-[12px] leading-[18px] text-[rgba(255,255,255,0.70)] line-clamp-3">
-                      {getProjectDescriptionText(item) ?? fallbackProjectDescription}
-                    </p>
                     </div>
                   </div>
                 </div>
@@ -5161,102 +5156,102 @@ function renderContent(
         <div className="grid gap-8 lg:grid-cols-3">
           {/* Projekte Button - Grün */}
           {canShowProjects && (
-          <button
-            type="button"
-            onClick={() => onNavigate("projects")}
-            className="group relative flex flex-col items-center justify-center rounded-[24px] p-[3px] transition-all"
-          >
-            <span
-              aria-hidden="true"
-              className="rainbow-draw pointer-events-none absolute inset-0 rounded-[24px] blur-[2px]"
-            />
-            <div className="relative z-10 flex h-full w-full flex-col items-center justify-center rounded-[21px] bg-[#24262C] p-12">
-              <div className="flex h-32 w-32 items-center justify-center rounded-full bg-[rgba(43,254,113,0.2)] text-[#2BFE71] transition-all">
-                <i className="fa-solid fa-folder-plus text-[56px]" aria-hidden="true" />
+            <button
+              type="button"
+              onClick={() => onNavigate("projects")}
+              className="group relative flex flex-col items-center justify-center rounded-[24px] p-[3px] transition-all"
+            >
+              <span
+                aria-hidden="true"
+                className="rainbow-draw pointer-events-none absolute inset-0 rounded-[24px] blur-[2px]"
+              />
+              <div className="relative z-10 flex h-full w-full flex-col items-center justify-center rounded-[21px] bg-[#24262C] p-12">
+                <div className="flex h-32 w-32 items-center justify-center rounded-full bg-[rgba(43,254,113,0.2)] text-[#2BFE71] transition-all">
+                  <i className="fa-solid fa-folder-plus text-[56px]" aria-hidden="true" />
+                </div>
+                <h3 className="mt-8 text-[24px] font-bold text-[rgba(255,255,255,0.92)]">
+                  Projekte
+                </h3>
+                <p className="mt-3 text-center text-[15px] text-[rgba(255,255,255,0.65)]">
+                  Erstelle und verwalte deine Projekte
+                </p>
               </div>
-              <h3 className="mt-8 text-[24px] font-bold text-[rgba(255,255,255,0.92)]">
-                Projekte
-              </h3>
-              <p className="mt-3 text-center text-[15px] text-[rgba(255,255,255,0.65)]">
-                Erstelle und verwalte deine Projekte
-              </p>
-            </div>
-          </button>
+            </button>
           )}
 
           {/* News Button - Blau */}
           {canShowNews && (
-          <button
-            type="button"
-            onClick={() => onNavigate("news")}
-            className="group relative flex flex-col items-center justify-center rounded-[24px] p-[3px] transition-all"
-          >
-            <span
-              aria-hidden="true"
-              className="rainbow-draw pointer-events-none absolute inset-0 rounded-[24px] blur-[2px]"
-            />
-            <div className="relative z-10 flex h-full w-full flex-col items-center justify-center rounded-[21px] bg-[#24262C] p-12">
-              <div className="flex h-32 w-32 items-center justify-center rounded-full bg-[rgba(43,217,255,0.2)] text-[#2BD9FF] transition-all">
-                <i className="fa-solid fa-newspaper text-[56px]" aria-hidden="true" />
+            <button
+              type="button"
+              onClick={() => onNavigate("news")}
+              className="group relative flex flex-col items-center justify-center rounded-[24px] p-[3px] transition-all"
+            >
+              <span
+                aria-hidden="true"
+                className="rainbow-draw pointer-events-none absolute inset-0 rounded-[24px] blur-[2px]"
+              />
+              <div className="relative z-10 flex h-full w-full flex-col items-center justify-center rounded-[21px] bg-[#24262C] p-12">
+                <div className="flex h-32 w-32 items-center justify-center rounded-full bg-[rgba(43,217,255,0.2)] text-[#2BD9FF] transition-all">
+                  <i className="fa-solid fa-newspaper text-[56px]" aria-hidden="true" />
+                </div>
+                <h3 className="mt-8 text-[24px] font-bold text-[rgba(255,255,255,0.92)]">
+                  News
+                </h3>
+                <p className="mt-3 text-center text-[15px] text-[rgba(255,255,255,0.65)]">
+                  Erstelle neue Nachrichten und Updates
+                </p>
               </div>
-              <h3 className="mt-8 text-[24px] font-bold text-[rgba(255,255,255,0.92)]">
-                News
-              </h3>
-              <p className="mt-3 text-center text-[15px] text-[rgba(255,255,255,0.65)]">
-                Erstelle neue Nachrichten und Updates
-              </p>
-            </div>
-          </button>
+            </button>
           )}
 
           {/* Kalender Events Button - Lila */}
           {canShowEvents && (
-          <button
-            type="button"
-            onClick={() => setEditorModal("event")}
-            className="group relative flex flex-col items-center justify-center rounded-[24px] p-[3px] transition-all"
-          >
-            <span
-              aria-hidden="true"
-              className="rainbow-draw pointer-events-none absolute inset-0 rounded-[24px] blur-[2px]"
-            />
-            <div className="relative z-10 flex h-full w-full flex-col items-center justify-center rounded-[21px] bg-[#24262C] p-12">
-              <div className="flex h-32 w-32 items-center justify-center rounded-full bg-[rgba(138,91,255,0.2)] text-[#8A5BFF] transition-all">
-                <i className="fa-solid fa-calendar-plus text-[56px]" aria-hidden="true" />
+            <button
+              type="button"
+              onClick={() => setEditorModal("event")}
+              className="group relative flex flex-col items-center justify-center rounded-[24px] p-[3px] transition-all"
+            >
+              <span
+                aria-hidden="true"
+                className="rainbow-draw pointer-events-none absolute inset-0 rounded-[24px] blur-[2px]"
+              />
+              <div className="relative z-10 flex h-full w-full flex-col items-center justify-center rounded-[21px] bg-[#24262C] p-12">
+                <div className="flex h-32 w-32 items-center justify-center rounded-full bg-[rgba(138,91,255,0.2)] text-[#8A5BFF] transition-all">
+                  <i className="fa-solid fa-calendar-plus text-[56px]" aria-hidden="true" />
+                </div>
+                <h3 className="mt-8 text-[24px] font-bold text-[rgba(255,255,255,0.92)]">
+                  Kalender Events
+                </h3>
+                <p className="mt-3 text-center text-[15px] text-[rgba(255,255,255,0.65)]">
+                  Plane und erstelle neue Kalender-Events
+                </p>
               </div>
-              <h3 className="mt-8 text-[24px] font-bold text-[rgba(255,255,255,0.92)]">
-                Kalender Events
-              </h3>
-              <p className="mt-3 text-center text-[15px] text-[rgba(255,255,255,0.65)]">
-                Plane und erstelle neue Kalender-Events
-              </p>
-            </div>
-          </button>
+            </button>
           )}
 
           {/* Media Button - Cyan */}
           {canShowMedia && (
-          <button
-            type="button"
-            onClick={() => onNavigate("media")}
-            className="group relative flex flex-col items-center justify-center rounded-[24px] p-[3px] transition-all"
-          >
-            <span
-              aria-hidden="true"
-              className="rainbow-draw pointer-events-none absolute inset-0 rounded-[24px] blur-[2px]"
-            />
-            <div className="relative z-10 flex h-full w-full flex-col items-center justify-center rounded-[21px] bg-[#24262C] p-12">
-              <div className="flex h-32 w-32 items-center justify-center rounded-full bg-[rgba(45,212,255,0.2)] text-[#2DD4FF] transition-all">
-                <i className="fa-solid fa-photo-film text-[56px]" aria-hidden="true" />
+            <button
+              type="button"
+              onClick={() => onNavigate("media")}
+              className="group relative flex flex-col items-center justify-center rounded-[24px] p-[3px] transition-all"
+            >
+              <span
+                aria-hidden="true"
+                className="rainbow-draw pointer-events-none absolute inset-0 rounded-[24px] blur-[2px]"
+              />
+              <div className="relative z-10 flex h-full w-full flex-col items-center justify-center rounded-[21px] bg-[#24262C] p-12">
+                <div className="flex h-32 w-32 items-center justify-center rounded-full bg-[rgba(45,212,255,0.2)] text-[#2DD4FF] transition-all">
+                  <i className="fa-solid fa-photo-film text-[56px]" aria-hidden="true" />
+                </div>
+                <h3 className="mt-8 text-[24px] font-bold text-[rgba(255,255,255,0.92)]">
+                  Media
+                </h3>
+                <p className="mt-3 text-center text-[15px] text-[rgba(255,255,255,0.65)]">
+                  Lade Banner und Logos hoch
+                </p>
               </div>
-              <h3 className="mt-8 text-[24px] font-bold text-[rgba(255,255,255,0.92)]">
-                Media
-              </h3>
-              <p className="mt-3 text-center text-[15px] text-[rgba(255,255,255,0.65)]">
-                Lade Banner und Logos hoch
-              </p>
-            </div>
-          </button>
+            </button>
           )}
         </div>
         {!canShowProjects && !canShowNews && !canShowEvents && !canShowMedia && (
@@ -5936,92 +5931,92 @@ function renderContent(
         </div>
 
         <div className="overflow-hidden rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[#101218]">
-            <div className="divide-y divide-[rgba(255,255,255,0.06)]">
-              {tickets.map((ticket) => {
-                const requester = ticket.requester.trim();
-                const requesterMatch = members.find((member) => {
-                  const username = (member.username ?? "").trim();
-                  if (!username) return false;
-                  return username.toLowerCase() === requester.toLowerCase();
-                });
-                const requesterAvatarUrl =
-                  typeof requesterMatch?.avatarUrl === "string"
-                    ? requesterMatch.avatarUrl
-                    : null;
-                return (
-                  <details key={ticket.id} className="px-4">
-                    <summary className="flex cursor-pointer select-none list-none items-center justify-between gap-4 py-4 [&::-webkit-details-marker]:hidden">
-                      <div className="min-w-0">
-                        <p className="truncate text-[14px] font-semibold text-[rgba(255,255,255,0.92)]">
-                          {ticket.title}
-                        </p>
-                        <div className="mt-1 flex items-center gap-2 text-[12px] text-[rgba(255,255,255,0.50)]">
-                          {requesterAvatarUrl ? (
-                            <img
-                              src={requesterAvatarUrl}
-                              alt=""
-                              className="h-5 w-5 rounded-full object-cover"
-                              loading="lazy"
-                              draggable={false}
-                            />
-                          ) : (
-                            <div className="h-5 w-5 rounded-full bg-[rgba(255,255,255,0.10)]" />
-                          )}
-                          <span className="truncate">{ticket.requester}</span>
-                        </div>
+          <div className="divide-y divide-[rgba(255,255,255,0.06)]">
+            {tickets.map((ticket) => {
+              const requester = ticket.requester.trim();
+              const requesterMatch = members.find((member) => {
+                const username = (member.username ?? "").trim();
+                if (!username) return false;
+                return username.toLowerCase() === requester.toLowerCase();
+              });
+              const requesterAvatarUrl =
+                typeof requesterMatch?.avatarUrl === "string"
+                  ? requesterMatch.avatarUrl
+                  : null;
+              return (
+                <details key={ticket.id} className="px-4">
+                  <summary className="flex cursor-pointer select-none list-none items-center justify-between gap-4 py-4 [&::-webkit-details-marker]:hidden">
+                    <div className="min-w-0">
+                      <p className="truncate text-[14px] font-semibold text-[rgba(255,255,255,0.92)]">
+                        {ticket.title}
+                      </p>
+                      <div className="mt-1 flex items-center gap-2 text-[12px] text-[rgba(255,255,255,0.50)]">
+                        {requesterAvatarUrl ? (
+                          <img
+                            src={requesterAvatarUrl}
+                            alt=""
+                            className="h-5 w-5 rounded-full object-cover"
+                            loading="lazy"
+                            draggable={false}
+                          />
+                        ) : (
+                          <div className="h-5 w-5 rounded-full bg-[rgba(255,255,255,0.10)]" />
+                        )}
+                        <span className="truncate">{ticket.requester}</span>
                       </div>
-                      <span
-                        className={[
-                          "flex-shrink-0 rounded-[10px] px-3 py-1 text-[11px] font-semibold",
-                          statusClass[ticket.status]
-                        ].join(" ")}
-                      >
-                        {statusLabel[ticket.status]}
-                      </span>
-                    </summary>
+                    </div>
+                    <span
+                      className={[
+                        "flex-shrink-0 rounded-[10px] px-3 py-1 text-[11px] font-semibold",
+                        statusClass[ticket.status]
+                      ].join(" ")}
+                    >
+                      {statusLabel[ticket.status]}
+                    </span>
+                  </summary>
 
-                    <div className="pb-4">
-                      <div className="rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] p-3">
-                        <p className="text-[12px] leading-relaxed text-[rgba(255,255,255,0.62)]">
-                          {ticket.preview}
-                        </p>
-                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                          <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.55)]">
-                            <span className="font-semibold text-[rgba(255,255,255,0.75)]">
-                              Ticket ID
-                            </span>
-                            <span className="ml-2">{ticket.id}</span>
-                          </div>
-                          <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.55)]">
-                            <span className="font-semibold text-[rgba(255,255,255,0.75)]">
-                              Priority
-                            </span>
-                            <span className="ml-2">{ticket.priority}</span>
-                          </div>
-                          <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.55)]">
-                            <span className="font-semibold text-[rgba(255,255,255,0.75)]">
-                              Created
-                            </span>
-                            <span className="ml-2">{formatTicketShortDate(ticket.createdAt)}</span>
-                          </div>
-                          <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.55)]">
-                            <span className="font-semibold text-[rgba(255,255,255,0.75)]">
-                              Updated
-                            </span>
-                            <span className="ml-2">{formatTicketShortDate(ticket.lastUpdateAt)}</span>
-                          </div>
+                  <div className="pb-4">
+                    <div className="rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] p-3">
+                      <p className="text-[12px] leading-relaxed text-[rgba(255,255,255,0.62)]">
+                        {ticket.preview}
+                      </p>
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                        <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.55)]">
+                          <span className="font-semibold text-[rgba(255,255,255,0.75)]">
+                            Ticket ID
+                          </span>
+                          <span className="ml-2">{ticket.id}</span>
+                        </div>
+                        <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.55)]">
+                          <span className="font-semibold text-[rgba(255,255,255,0.75)]">
+                            Priority
+                          </span>
+                          <span className="ml-2">{ticket.priority}</span>
+                        </div>
+                        <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.55)]">
+                          <span className="font-semibold text-[rgba(255,255,255,0.75)]">
+                            Created
+                          </span>
+                          <span className="ml-2">{formatTicketShortDate(ticket.createdAt)}</span>
+                        </div>
+                        <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.55)]">
+                          <span className="font-semibold text-[rgba(255,255,255,0.75)]">
+                            Updated
+                          </span>
+                          <span className="ml-2">{formatTicketShortDate(ticket.lastUpdateAt)}</span>
                         </div>
                       </div>
                     </div>
-                  </details>
-                );
-              })}
-              {!tickets.length && (
-                <div className="px-4 py-10 text-center text-[13px] text-[rgba(255,255,255,0.55)]">
-                  Keine Tickets gefunden.
-                </div>
-              )}
-            </div>
+                  </div>
+                </details>
+              );
+            })}
+            {!tickets.length && (
+              <div className="px-4 py-10 text-center text-[13px] text-[rgba(255,255,255,0.55)]">
+                Keine Tickets gefunden.
+              </div>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -6168,7 +6163,7 @@ function renderContent(
                 if (diffDays < 7) return `vor ${diffDays} Tagen`;
                 return date;
               })();
-              
+
               return (
                 <div
                   key={item.id}
