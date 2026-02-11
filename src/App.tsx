@@ -146,6 +146,12 @@ type ApplicationItem = {
   status: ApplicationStatus;
 };
 
+type PendingApplicationAction = {
+  id: string;
+  username: string;
+  status: ApplicationStatus;
+};
+
 // Placeholder data until a ticket API exists.
 const TICKET_PLACEHOLDER_ITEMS: TicketItem[] = [
   {
@@ -156,7 +162,7 @@ const TICKET_PLACEHOLDER_ITEMS: TicketItem[] = [
     priority: "high",
     createdAt: "2026-02-03T12:10:00.000Z",
     lastUpdateAt: "2026-02-08T18:42:00.000Z",
-    preview: "Beim Oeffnen kommt ein Blackscreen und danach schliesst sich die App."
+    preview: "Beim Öffnen kommt ein Blackscreen und danach schließt sich die App."
   },
   {
     id: "TCK-1037",
@@ -166,7 +172,7 @@ const TICKET_PLACEHOLDER_ITEMS: TicketItem[] = [
     priority: "medium",
     createdAt: "2026-02-01T09:24:00.000Z",
     lastUpdateAt: "2026-02-06T20:05:00.000Z",
-    preview: "Beim Drag&Drop haengt es manchmal, vor allem bei grossen PNGs."
+    preview: "Beim Drag&Drop hängt es manchmal, vor allem bei großen PNGs."
   },
   {
     id: "TCK-1029",
@@ -217,8 +223,15 @@ const formatTicketShortDate = (iso: string) => {
   });
 };
 
+const applicationStatusActionLabel: Record<ApplicationStatus, string> = {
+  new: "Neu",
+  reviewing: "In Prüfung",
+  accepted: "Angenommen",
+  rejected: "Abgelehnt"
+};
+
 const fallbackProjectDescription =
-  "Projektbeschreibung folgt. Mehr Details kommen spaeter, inklusive Features, Updates und Plattformen.";
+  "Projektbeschreibung folgt. Mehr Details kommen später, inklusive Features, Updates und Plattformen.";
 
 const modrinthTypeOrder = [
   "modpack",
@@ -1187,6 +1200,8 @@ export default function App() {
   const [applicationItems, setApplicationItems] = useState<ApplicationItem[]>(
     APPLICATION_PLACEHOLDER_ITEMS
   );
+  const [pendingApplicationAction, setPendingApplicationAction] =
+    useState<PendingApplicationAction | null>(null);
   const [showClippy, setShowClippy] = useState(false);
   const [warmupActive, setWarmupActive] = useState(false);
   const warmupUidRef = useRef<string | null>(null);
@@ -1199,6 +1214,24 @@ export default function App() {
     setApplicationItems((prev) =>
       prev.map((item) => (item.id === id ? { ...item, status } : item))
     );
+  };
+  const requestApplicationStatusChange = (
+    id: string,
+    username: string,
+    status: ApplicationStatus
+  ) => {
+    if (status === "reviewing") {
+      setApplicationStatus(id, status);
+      return;
+    }
+    setPendingApplicationAction({ id, username, status });
+  };
+  const confirmApplicationStatusChange = () => {
+    if (!pendingApplicationAction) {
+      return;
+    }
+    setApplicationStatus(pendingApplicationAction.id, pendingApplicationAction.status);
+    setPendingApplicationAction(null);
   };
   const visiblePages = useMemo(() => {
     const isModRole = authzRoles.includes("moderator") || authzRoles.includes("admin");
@@ -1383,7 +1416,7 @@ export default function App() {
       return;
     }
     if (!mediaUploadFile) {
-      setMediaUploadError("Bitte eine Datei auswaehlen.");
+      setMediaUploadError("Bitte eine Datei auswählen.");
       return;
     }
     setMediaUploadLoading(true);
@@ -1620,13 +1653,13 @@ export default function App() {
       );
       setNewsDeleteCandidate(null);
       reloadNewsItems(true).catch(() => undefined);
-      showToast("News geloescht.", "success");
+      showToast("News gelöscht.", "success");
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "News konnte nicht geloescht werden.";
+        error instanceof Error ? error.message : "News konnte nicht gelöscht werden.";
       console.warn("[news] delete failed", message, error);
       setNewsDeleteError(message);
-      showToast("News konnte nicht geloescht werden.", "error");
+      showToast("News konnte nicht gelöscht werden.", "error");
     } finally {
       setNewsDeleting(false);
     }
@@ -1665,7 +1698,7 @@ export default function App() {
       setMediaError((prev) => ({
         ...prev,
         [section]:
-          error instanceof Error ? error.message : "Loeschen fehlgeschlagen."
+          error instanceof Error ? error.message : "Löschen fehlgeschlagen."
       }));
     }
   };
@@ -2795,7 +2828,7 @@ export default function App() {
 
   const handleReadFirebaseProfile = async () => {
     if (!user) {
-      showToast("Nur mit Firebase-Login verfuegbar.", "error");
+      showToast("Nur mit Firebase-Login verfügbar.", "error");
       return;
     }
 
@@ -2848,7 +2881,7 @@ export default function App() {
       return;
     }
     if (projectSource !== "modrinth" && (!projectLoader || !projectVersion)) {
-      setProjectSaveError("Bitte Loader und Version auswaehlen.");
+      setProjectSaveError("Bitte Loader und Version auswählen.");
       showToast("Loader und Version fehlen.", "error");
       return;
     }
@@ -3113,7 +3146,7 @@ export default function App() {
       setProjectItems((prev) => prev.filter((project) => project.id !== projectId));
     } catch (error) {
       setProjectDeleteError(
-        error instanceof Error ? error.message : "Projekt konnte nicht geloescht werden."
+        error instanceof Error ? error.message : "Projekt konnte nicht gelöscht werden."
       );
     }
   };
@@ -3312,7 +3345,7 @@ export default function App() {
                     firebaseProfileLoading,
                     firebaseProfileError,
                     applicationItems,
-                    setApplicationStatus
+                    requestApplicationStatusChange
                   )}
                 </div>
               </div>
@@ -3393,9 +3426,53 @@ export default function App() {
             </div>
           </div>
         </div>
+        {pendingApplicationAction && (
+          <div className="fixed inset-0 z-[78] flex items-center justify-center bg-black/70 px-4">
+            <div className="w-full max-w-[460px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 flex h-9 w-9 items-center justify-center rounded-[10px] bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.82)]">
+                  <i className="fa-solid fa-triangle-exclamation text-[14px]" aria-hidden="true" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
+                    Status wirklich ändern?
+                  </h3>
+                  <p className="mt-2 text-[13px] leading-[20px] text-[rgba(255,255,255,0.65)]">
+                    Bewerbung von{" "}
+                    <span className="font-semibold text-[rgba(255,255,255,0.9)]">
+                      {pendingApplicationAction.username}
+                    </span>{" "}
+                    auf{" "}
+                    <span className="font-semibold text-[rgba(255,255,255,0.9)]">
+                      {applicationStatusActionLabel[pendingApplicationAction.status]}
+                    </span>{" "}
+                    setzen?
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-5 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setPendingApplicationAction(null)}
+                  className="rounded-[10px] border border-[rgba(255,255,255,0.14)] bg-[#171A21] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.78)] transition hover:border-[rgba(255,255,255,0.28)]"
+                >
+                  Abbrechen
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmApplicationStatusChange}
+                  className="rounded-[10px] border border-[#1E9A55] bg-[#2BFE71] px-4 py-2 text-[12px] font-semibold text-[#0D0E12] shadow-[0_4px_0_#1E9A55] transition active:translate-y-[2px] active:shadow-[0_2px_0_#1E9A55]"
+                >
+                  Bestätigen
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {banCandidate && (
-          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 px-4">
-            <div className="w-full max-w-[420px] rounded-[18px] border border-[rgba(255,255,255,0.12)] bg-[#14161B] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
+          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 px-4">
+            <div className="w-full max-w-[460px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
               <div className="flex items-center justify-between">
                 <h2 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
                   Nutzer bannen
@@ -3406,7 +3483,7 @@ export default function App() {
                     setBanCandidate(null);
                     resetBanHold();
                   }}
-                  className="flex h-8 w-8 items-center justify-center rounded-full text-[rgba(255,255,255,0.7)] transition hover:bg-[rgba(255,255,255,0.08)]"
+                  className="flex h-8 w-8 items-center justify-center rounded-[8px] border border-[rgba(255,255,255,0.14)] bg-[#171A21] text-[rgba(255,255,255,0.78)] transition hover:border-[rgba(255,255,255,0.28)]"
                   aria-label="Dialog schliessen"
                 >
                   <i className="fa-solid fa-xmark" aria-hidden="true" />
@@ -3427,7 +3504,7 @@ export default function App() {
                   value={banReason}
                   onChange={(event) => setBanReason(event.target.value)}
                   className="w-full rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[#0F1116] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.8)] outline-none focus:border-[#FF5B5B]"
-                  placeholder="Grund fuer den Bann"
+                  placeholder="Grund für den Bann"
                 />
               </div>
               {banError && (
@@ -3460,7 +3537,7 @@ export default function App() {
                     setBanCandidate(null);
                     resetBanHold();
                   }}
-                  className="w-full rounded-[12px] border border-[rgba(255,255,255,0.12)] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.7)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
+                  className="w-full rounded-[10px] border border-[rgba(255,255,255,0.14)] bg-[#171A21] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.78)] transition hover:border-[rgba(255,255,255,0.28)]"
                 >
                   Abbrechen
                 </button>
@@ -3469,8 +3546,8 @@ export default function App() {
           </div>
         )}
         {warnCandidate && (
-          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 px-4">
-            <div className="w-full max-w-[420px] rounded-[18px] border border-[rgba(255,255,255,0.12)] bg-[#14161B] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
+          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 px-4">
+            <div className="w-full max-w-[460px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
               <div className="flex items-center justify-between">
                 <h2 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
                   Nutzer warnen
@@ -3481,7 +3558,7 @@ export default function App() {
                     setWarnCandidate(null);
                     resetWarnHold();
                   }}
-                  className="flex h-8 w-8 items-center justify-center rounded-full text-[rgba(255,255,255,0.7)] transition hover:bg-[rgba(255,255,255,0.08)]"
+                  className="flex h-8 w-8 items-center justify-center rounded-[8px] border border-[rgba(255,255,255,0.14)] bg-[#171A21] text-[rgba(255,255,255,0.78)] transition hover:border-[rgba(255,255,255,0.28)]"
                   aria-label="Dialog schliessen"
                 >
                   <i className="fa-solid fa-xmark" aria-hidden="true" />
@@ -3535,7 +3612,7 @@ export default function App() {
                     setWarnCandidate(null);
                     resetWarnHold();
                   }}
-                  className="w-full rounded-[12px] border border-[rgba(255,255,255,0.12)] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.7)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
+                  className="w-full rounded-[10px] border border-[rgba(255,255,255,0.14)] bg-[#171A21] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.78)] transition hover:border-[rgba(255,255,255,0.28)]"
                 >
                   Abbrechen
                 </button>
@@ -4414,25 +4491,25 @@ export default function App() {
         )}
         {projectDeleteCandidate && (
           <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/70 px-4">
-            <div className="w-full max-w-md rounded-[18px] border border-[rgba(255,255,255,0.12)] bg-[#0F1116] p-6 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
+            <div className="w-full max-w-[460px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
               <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
-                Projekt loeschen?
+                Projekt löschen?
               </h3>
               <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.65)]">
-                {projectDeleteCandidate.title} wird dauerhaft geloescht.
+                {projectDeleteCandidate.title} wird dauerhaft gelöscht.
               </p>
               <div className="mt-5 flex items-center justify-end gap-3">
                 <button
                   type="button"
                   onClick={() => setProjectDeleteCandidate(null)}
-                  className="rounded-[10px] border border-[rgba(255,255,255,0.12)] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.75)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
+                  className="rounded-[10px] border border-[rgba(255,255,255,0.14)] bg-[#171A21] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.78)] transition hover:border-[rgba(255,255,255,0.28)]"
                 >
                   Abbrechen
                 </button>
                 <button
                   type="button"
                   onClick={confirmDeleteProject}
-                  className="rounded-[10px] bg-[#FF5B5B] px-4 py-2 text-[12px] font-semibold text-[#0D0E12] transition hover:brightness-95"
+                  className="rounded-[10px] border border-[#C74646] bg-[#FF5B5B] px-4 py-2 text-[12px] font-semibold text-[#0D0E12] shadow-[0_4px_0_#C74646] transition active:translate-y-[2px] active:shadow-[0_2px_0_#C74646]"
                 >
                   Loeschen
                 </button>
@@ -4442,12 +4519,12 @@ export default function App() {
         )}
         {newsDeleteCandidate && (
           <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/70 px-4">
-            <div className="w-full max-w-md rounded-[18px] border border-[rgba(255,255,255,0.12)] bg-[#0F1116] p-6 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
+            <div className="w-full max-w-[460px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
               <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
-                News loeschen?
+                News löschen?
               </h3>
               <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.65)]">
-                {newsDeleteCandidate.title} wird dauerhaft geloescht.
+                {newsDeleteCandidate.title} wird dauerhaft gelöscht.
               </p>
               {newsDeleteError && (
                 <div className="mt-3 rounded-[10px] border border-[rgba(255,100,100,0.25)] bg-[rgba(255,100,100,0.08)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.8)]">
@@ -4458,7 +4535,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setNewsDeleteCandidate(null)}
-                  className="rounded-[10px] border border-[rgba(255,255,255,0.12)] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.75)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
+                  className="rounded-[10px] border border-[rgba(255,255,255,0.14)] bg-[#171A21] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.78)] transition hover:border-[rgba(255,255,255,0.28)]"
                   disabled={newsDeleting}
                 >
                   Abbrechen
@@ -4466,10 +4543,10 @@ export default function App() {
                 <button
                   type="button"
                   onClick={confirmDeleteNews}
-                  className="rounded-[10px] bg-[#FF5B5B] px-4 py-2 text-[12px] font-semibold text-[#0D0E12] transition hover:brightness-95 disabled:opacity-60"
+                  className="rounded-[10px] border border-[#C74646] bg-[#FF5B5B] px-4 py-2 text-[12px] font-semibold text-[#0D0E12] shadow-[0_4px_0_#C74646] transition active:translate-y-[2px] active:shadow-[0_2px_0_#C74646] disabled:opacity-60"
                   disabled={newsDeleting}
                 >
-                  {newsDeleting ? "Loeschen..." : "Loeschen"}
+                  {newsDeleting ? "Löschen..." : "Löschen"}
                 </button>
               </div>
             </div>
@@ -4570,7 +4647,11 @@ function renderContent(
   firebaseProfileLoading: boolean,
   firebaseProfileError: string | null,
   applicationItems: ApplicationItem[],
-  onSetApplicationStatus: (id: string, status: ApplicationStatus) => void
+  onRequestApplicationStatusChange: (
+    id: string,
+    username: string,
+    status: ApplicationStatus
+  ) => void
 ) {
   const modrinthCards = modrinthProjects.map(toModrinthCard);
   const groupedModrinth = groupModrinthCards(modrinthCards);
@@ -4604,7 +4685,7 @@ function renderContent(
             Keine Berechtigung
           </h2>
           <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.60)]">
-            Diese Seite ist fuer dein Profil nicht freigeschaltet.
+            Diese Seite ist für dein Profil nicht freigeschaltet.
           </p>
           <p className="mt-4 text-[12px] text-[rgba(255,255,255,0.55)]">
             Weiterleitung zu Home in{" "}
@@ -5062,7 +5143,7 @@ function renderContent(
           Einstellungen
         </h1>
         <p className="mt-[8px] text-[13px] text-[rgba(255,255,255,0.60)]">
-          Einstellungen kommen spaeter.
+          Einstellungen kommen später.
         </p>
         <button
           type="button"
@@ -5131,7 +5212,7 @@ function renderContent(
             onClick={() => onNavigate("settings")}
             className="rounded-[10px] border border-[rgba(255,255,255,0.12)] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.75)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
           >
-            Zurueck
+            Zurück
           </button>
         </div>
         <div className="rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] p-4">
@@ -5278,10 +5359,10 @@ function renderContent(
             type="button"
             onClick={() => onNavigate("editor")}
             className="flex items-center gap-2 rounded-[12px] border border-[rgba(255,255,255,0.12)] bg-[#16181c] px-4 py-3 text-[14px] font-semibold text-[rgba(255,255,255,0.70)] transition hover:border-[#2BFE71] hover:bg-[rgba(43,254,113,0.1)] hover:text-[#2BFE71]"
-            aria-label="Zurueck"
+            aria-label="Zurück"
           >
             <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
-            Zurueck
+            Zurück
           </button>
           <button
             type="button"
@@ -5342,7 +5423,7 @@ function renderContent(
                             type="button"
                             onClick={() => requestDeleteNews(item)}
                             className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-[rgba(255,91,91,0.18)] text-[#FF8A8A] shadow-[0_0_0_1px_rgba(255,91,91,0.25)] transition hover:bg-[rgba(255,91,91,0.28)] hover:text-[#FF5B5B]"
-                            aria-label="News loeschen"
+                            aria-label="News löschen"
                           >
                             <i className="fa-solid fa-trash" aria-hidden="true" />
                           </button>
@@ -5374,10 +5455,10 @@ function renderContent(
             type="button"
             onClick={() => onNavigate("editor")}
             className="flex items-center gap-2 rounded-[12px] border border-[rgba(255,255,255,0.12)] bg-[#16181c] px-4 py-3 text-[14px] font-semibold text-[rgba(255,255,255,0.70)] transition hover:border-[#2BFE71] hover:bg-[rgba(43,254,113,0.1)] hover:text-[#2BFE71]"
-            aria-label="Zurueck"
+            aria-label="Zurück"
           >
             <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
-            Zurueck
+            Zurück
           </button>
           {canUploadMedia && (
             <button
@@ -5422,7 +5503,7 @@ function renderContent(
         {canDeleteMedia && selectedMediaIds.length > 0 && (
           <div className="flex items-center justify-between rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#111319] px-4 py-3 animate-[slideDown_0.3s_ease-out]">
             <p className="text-[12px] font-semibold text-[rgba(255,255,255,0.8)] transition-all duration-300">
-              {selectedMediaIds.length} ausgewaehlt
+              {selectedMediaIds.length} ausgewählt
             </p>
             <button
               type="button"
@@ -5430,7 +5511,7 @@ function renderContent(
               className="flex items-center gap-2 rounded-[8px] border border-[rgba(255,255,255,0.14)] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.75)] transition-all duration-300 hover:border-[#FF5B5B] hover:text-[#FF5B5B] hover:bg-[rgba(255,91,91,0.1)] hover:scale-105"
             >
               <i className="fa-solid fa-trash-can" aria-hidden="true" />
-              Loeschen
+              Löschen
             </button>
           </div>
         )}
@@ -5538,7 +5619,7 @@ function renderContent(
                                     ? "border-[#2BFE71] bg-[#2BFE71] text-[#0D0E12] shadow-[0_0_15px_rgba(43,254,113,0.5)]"
                                     : "border-[rgba(255,255,255,0.35)] bg-black/40 backdrop-blur-sm text-white hover:border-[#2BFE71] hover:bg-[rgba(43,254,113,0.2)]"
                                     }`}
-                                  aria-label="Auswaehlen"
+                                  aria-label="Auswählen"
                                 >
                                   <i className="fa-solid fa-check" aria-hidden="true" />
                                 </button>
@@ -5546,7 +5627,7 @@ function renderContent(
                                   type="button"
                                   onClick={() => handleDeleteMedia(section.key, item.id!)}
                                   className="flex h-8 w-8 items-center justify-center rounded-[8px] border border-[rgba(255,255,255,0.35)] bg-black/40 backdrop-blur-sm text-[12px] text-white transition-all duration-300 transform hover:scale-110 hover:border-[#FF5B5B] hover:text-[#FF5B5B] hover:bg-[rgba(255,91,91,0.2)]"
-                                  aria-label="Loeschen"
+                                  aria-label="Löschen"
                                 >
                                   <i className="fa-solid fa-trash-can" aria-hidden="true" />
                                 </button>
@@ -5577,7 +5658,7 @@ function renderContent(
                     {loading && (
                       <i className="fa-solid fa-spinner fa-spin text-[#2BFE71]" aria-hidden="true" />
                     )}
-                    {loading ? "Lade..." : hasMore ? "Weitere verfuegbar" : (
+                    {loading ? "Lade..." : hasMore ? "Weitere verfügbar" : (
                       <span className="flex items-center gap-2">
                         <i className="fa-solid fa-check text-[#2BFE71]" aria-hidden="true" />
                         Alles geladen
@@ -5682,7 +5763,7 @@ function renderContent(
               <button
                 type="button"
                 className="flex h-8 w-8 items-center justify-center rounded-full border border-[rgba(255,255,255,0.08)] text-[rgba(255,255,255,0.75)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
-                aria-label="Naechster Monat"
+                aria-label="Nächster Monat"
               >
                 <i className="fa-solid fa-chevron-right text-[12px]" aria-hidden="true" />
               </button>
@@ -5923,10 +6004,10 @@ function renderContent(
             type="button"
             onClick={() => onNavigate("admin")}
             className="flex items-center gap-2 rounded-[12px] border border-[rgba(255,255,255,0.12)] bg-[#16181c] px-4 py-3 text-[14px] font-semibold text-[rgba(255,255,255,0.70)] transition hover:border-[#2BFE71] hover:bg-[rgba(43,254,113,0.1)] hover:text-[#2BFE71]"
-            aria-label="Zurueck"
+            aria-label="Zurück"
           >
             <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
-            Zurueck
+            Zurück
           </button>
         </div>
 
@@ -6075,7 +6156,7 @@ function renderContent(
     };
 
     return (
-      <div className="space-y-6">
+      <div className="space-y-8">
         {/* Header */}
         <div className="flex items-center justify-between">
           <button
@@ -6087,61 +6168,75 @@ function renderContent(
             <i className="fa-solid fa-arrow-left text-[14px] transition-transform group-hover:-translate-x-1" aria-hidden="true" />
             Zurück
           </button>
+          <div className="flex items-center gap-2 rounded-[10px] border border-[rgba(255,255,255,0.08)] bg-[#101218] px-3 py-1.5">
+            <span className="flex h-2 w-2 rounded-full bg-[#2BFE71] animate-pulse" />
+            <span className="text-[12px] font-medium text-[rgba(255,255,255,0.65)]">Live Updates</span>
+          </div>
         </div>
 
         {/* Statistics Cards */}
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-          <div className="rounded-[12px] border border-[rgba(255,255,255,0.10)] bg-[#14161A] p-4 shadow-[0_12px_24px_rgba(0,0,0,0.22)]">
-            <div className="flex items-center justify-between">
-              <p className="text-[11px] font-medium uppercase tracking-wider text-[rgba(255,255,255,0.45)]">Gesamt</p>
-              <i className="fa-solid fa-layer-group text-[12px] text-[rgba(255,255,255,0.38)]" aria-hidden="true" />
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
+          <div className="rounded-[16px] border border-[rgba(255,255,255,0.08)] bg-[#14161A] p-5 transition hover:border-[rgba(255,255,255,0.15)]">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-[rgba(255,255,255,0.4)]">Gesamt</p>
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[rgba(255,255,255,0.05)] text-[rgba(255,255,255,0.4)]">
+                <i className="fa-solid fa-layer-group text-[12px]" aria-hidden="true" />
+              </div>
             </div>
-            <p className="mt-2 text-[24px] font-semibold text-[rgba(255,255,255,0.90)]">{stats.total}</p>
+            <p className="text-[28px] font-bold text-white tracking-tight">{stats.total}</p>
           </div>
 
-          <div className="rounded-[12px] border border-[rgba(43,254,113,0.24)] bg-[linear-gradient(135deg,rgba(43,254,113,0.10),rgba(20,22,26,0.95))] p-4 shadow-[0_12px_24px_rgba(0,0,0,0.22)]">
-            <div className="flex items-center justify-between">
-              <p className="text-[11px] font-medium uppercase tracking-wider text-[rgba(255,255,255,0.45)]">Neu</p>
-              <i className="fa-solid fa-sparkles text-[12px] text-[#2BFE71]" aria-hidden="true" />
+          <div className="rounded-[16px] border border-[rgba(43,254,113,0.15)] bg-[linear-gradient(135deg,rgba(43,254,113,0.05),rgba(20,22,26,0.5))] p-5 transition hover:border-[#2BFE71] hover:shadow-[0_0_20px_rgba(43,254,113,0.15)]">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-[#2BFE71]">Neu</p>
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[rgba(43,254,113,0.1)] text-[#2BFE71]">
+                <i className="fa-solid fa-sparkles text-[12px]" aria-hidden="true" />
+              </div>
             </div>
-            <p className="mt-2 text-[24px] font-semibold text-[#2BFE71]">{stats.new}</p>
+            <p className="text-[28px] font-bold text-white tracking-tight">{stats.new}</p>
           </div>
 
-          <div className="rounded-[12px] border border-[rgba(255,209,102,0.24)] bg-[linear-gradient(135deg,rgba(255,209,102,0.10),rgba(20,22,26,0.95))] p-4 shadow-[0_12px_24px_rgba(0,0,0,0.22)]">
-            <div className="flex items-center justify-between">
-              <p className="text-[11px] font-medium uppercase tracking-wider text-[rgba(255,255,255,0.45)]">Prüfung</p>
-              <i className="fa-solid fa-magnifying-glass text-[12px] text-[#FFD166]" aria-hidden="true" />
+          <div className="rounded-[16px] border border-[rgba(255,209,102,0.15)] bg-[linear-gradient(135deg,rgba(255,209,102,0.05),rgba(20,22,26,0.5))] p-5 transition hover:border-[#FFD166] hover:shadow-[0_0_20px_rgba(255,209,102,0.15)]">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-[#FFD166]">Prüfung</p>
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[rgba(255,209,102,0.1)] text-[#FFD166]">
+                <i className="fa-solid fa-magnifying-glass text-[12px]" aria-hidden="true" />
+              </div>
             </div>
-            <p className="mt-2 text-[24px] font-semibold text-[#FFD166]">{stats.reviewing}</p>
+            <p className="text-[28px] font-bold text-white tracking-tight">{stats.reviewing}</p>
           </div>
 
-          <div className="rounded-[12px] border border-[rgba(43,217,255,0.24)] bg-[linear-gradient(135deg,rgba(43,217,255,0.10),rgba(20,22,26,0.95))] p-4 shadow-[0_12px_24px_rgba(0,0,0,0.22)]">
-            <div className="flex items-center justify-between">
-              <p className="text-[11px] font-medium uppercase tracking-wider text-[rgba(255,255,255,0.45)]">Angenommen</p>
-              <i className="fa-solid fa-check text-[12px] text-[#2BD9FF]" aria-hidden="true" />
+          <div className="rounded-[16px] border border-[rgba(43,217,255,0.15)] bg-[linear-gradient(135deg,rgba(43,217,255,0.05),rgba(20,22,26,0.5))] p-5 transition hover:border-[#2BD9FF] hover:shadow-[0_0_20px_rgba(43,217,255,0.15)]">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-[#2BD9FF]">Genehmigt</p>
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[rgba(43,217,255,0.1)] text-[#2BD9FF]">
+                <i className="fa-solid fa-check text-[12px]" aria-hidden="true" />
+              </div>
             </div>
-            <p className="mt-2 text-[24px] font-semibold text-[#2BD9FF]">{stats.accepted}</p>
+            <p className="text-[28px] font-bold text-white tracking-tight">{stats.accepted}</p>
           </div>
 
-          <div className="rounded-[12px] border border-[rgba(255,107,107,0.24)] bg-[linear-gradient(135deg,rgba(255,107,107,0.10),rgba(20,22,26,0.95))] p-4 shadow-[0_12px_24px_rgba(0,0,0,0.22)]">
-            <div className="flex items-center justify-between">
-              <p className="text-[11px] font-medium uppercase tracking-wider text-[rgba(255,255,255,0.45)]">Abgelehnt</p>
-              <i className="fa-solid fa-xmark text-[12px] text-[#FF6B6B]" aria-hidden="true" />
+          <div className="rounded-[16px] border border-[rgba(255,107,107,0.15)] bg-[linear-gradient(135deg,rgba(255,107,107,0.05),rgba(20,22,26,0.5))] p-5 transition hover:border-[#FF6B6B] hover:shadow-[0_0_20px_rgba(255,107,107,0.15)]">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-[#FF6B6B]">Abgelehnt</p>
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[rgba(255,107,107,0.1)] text-[#FF6B6B]">
+                <i className="fa-solid fa-xmark text-[12px]" aria-hidden="true" />
+              </div>
             </div>
-            <p className="mt-2 text-[24px] font-semibold text-[#FF6B6B]">{stats.rejected}</p>
+            <p className="text-[28px] font-bold text-white tracking-tight">{stats.rejected}</p>
           </div>
         </div>
 
         {/* Applications List */}
-        <div className="space-y-3">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {applicationItems.length === 0 ? (
-            <div className="rounded-[16px] border border-[rgba(255,255,255,0.08)] bg-[#101218] p-12 text-center">
-              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[rgba(255,255,255,0.05)]">
-                <i className="fa-solid fa-inbox text-[28px] text-[rgba(255,255,255,0.3)]" aria-hidden="true" />
+            <div className="col-span-full rounded-[24px] border border-[rgba(255,255,255,0.08)] bg-[#101218] p-16 text-center">
+              <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.05)]">
+                <i className="fa-solid fa-inbox text-[32px] text-[rgba(255,255,255,0.2)]" aria-hidden="true" />
               </div>
-              <p className="text-[14px] font-semibold text-[rgba(255,255,255,0.92)]">Keine Bewerbungen vorhanden</p>
-              <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.55)]">
-                Sobald neue Bewerbungen eingehen, werden sie hier angezeigt.
+              <h3 className="text-[18px] font-bold text-[rgba(255,255,255,0.92)]">Keine Bewerbungen</h3>
+              <p className="mt-2 text-[14px] text-[rgba(255,255,255,0.5)]">
+                Aktuell liegen keine neuen Bewerbungen vor.
               </p>
             </div>
           ) : (
@@ -6153,43 +6248,57 @@ function renderContent(
                 month: "2-digit",
                 year: "numeric"
               });
-              const timeAgo = (() => {
-                const now = new Date();
-                const created = new Date(item.createdAt);
-                const diffMs = now.getTime() - created.getTime();
-                const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-                if (diffDays === 0) return "Heute";
-                if (diffDays === 1) return "Gestern";
-                if (diffDays < 7) return `vor ${diffDays} Tagen`;
-                return date;
-              })();
+
+              // Find linked member for avatar
+              const linkedMember = members.find(m =>
+                (m.username || "").toLowerCase() === item.username.toLowerCase()
+              );
+              const avatarUrl = linkedMember?.avatarUrl;
 
               return (
                 <div
                   key={item.id}
-                  className="rounded-[14px] border border-[rgba(255,255,255,0.10)] bg-[#14161A] p-4 shadow-[0_14px_28px_rgba(0,0,0,0.24)] transition hover:border-[rgba(255,255,255,0.18)]"
+                  className="group relative flex flex-col rounded-[20px] p-[3px] transition-transform duration-300 hover:-translate-y-1"
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-[10px] border border-[rgba(255,255,255,0.10)] bg-[rgba(255,255,255,0.05)] text-[rgba(255,255,255,0.70)]">
-                          <i className={`fa-solid ${roleIcon} text-[13px]`} aria-hidden="true" />
+                  <span
+                    aria-hidden="true"
+                    className="rainbow-draw pointer-events-none absolute inset-0 rounded-[20px] blur-[2px] opacity-0 transition-opacity duration-500 group-hover:opacity-100"
+                  />
+                  <div className="relative z-10 flex h-full w-full flex-col rounded-[17px] bg-[#14161A] border border-[rgba(255,255,255,0.08)] p-5 shadow-lg">
+                    {/* Header */}
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="relative">
+                          {avatarUrl ? (
+                            <img
+                              src={avatarUrl}
+                              alt={item.username}
+                              className="h-10 w-10 rounded-[12px] object-cover border border-[rgba(255,255,255,0.1)]"
+                            />
+                          ) : (
+                            <div className="flex h-10 w-10 items-center justify-center rounded-[12px] bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.5)]">
+                              <i className={`fa-solid ${roleIcon} text-[14px]`} aria-hidden="true" />
+                            </div>
+                          )}
+                          {item.status === "new" && (
+                            <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#2BFE71] opacity-75"></span>
+                              <span className="relative inline-flex h-3 w-3 rounded-full bg-[#2BFE71]"></span>
+                            </span>
+                          )}
                         </div>
-                        <p className="truncate text-[14px] font-semibold text-[rgba(255,255,255,0.92)]">
-                          {item.username}
-                        </p>
-                        {item.status === "new" && (
-                          <span className="flex h-2 w-2 rounded-full bg-[#2BFE71]" />
-                        )}
+                        <div className="min-w-0">
+                          <h4 className="truncate text-[15px] font-bold text-white leading-tight">
+                            {item.username}
+                          </h4>
+                          <p className="text-[12px] text-[rgba(255,255,255,0.5)] truncate">
+                            {item.role}
+                          </p>
+                        </div>
                       </div>
-                      <p className="mt-1 text-[12px] text-[rgba(255,255,255,0.55)]">
-                        {item.role} • {item.id}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
                       <span
                         className={[
-                          "inline-flex items-center gap-1.5 rounded-[9px] border px-2.5 py-1 text-[11px] font-semibold",
+                          "flex-shrink-0 inline-flex items-center gap-1.5 rounded-[8px] border px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide",
                           status.badgeClass
                         ].join(" ")}
                       >
@@ -6197,51 +6306,79 @@ function renderContent(
                         {status.label}
                       </span>
                     </div>
-                  </div>
 
-                  <p className="mt-3 text-[12px] leading-[18px] text-[rgba(255,255,255,0.65)]">
-                    {item.experience}
-                  </p>
+                    {/* Content */}
+                    <div className="mt-4 flex-grow">
+                      <p className="text-[11px] font-bold uppercase tracking-widest text-[rgba(255,255,255,0.3)] mb-1">
+                        Erfahrung
+                      </p>
+                      <p className="text-[13px] leading-relaxed text-[rgba(255,255,255,0.75)] line-clamp-3">
+                        {item.experience}
+                      </p>
+                    </div>
 
-                  <div className="mt-3 flex items-center justify-between gap-3">
-                    <span className="text-[11px] text-[rgba(255,255,255,0.45)]">{timeAgo}</span>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => onSetApplicationStatus(item.id, "accepted")}
-                        className={[
-                          "rounded-[8px] border px-3 py-1.5 text-[11px] font-semibold transition",
-                          item.status === "accepted"
-                            ? "border-[#2BD9FF] bg-[rgba(43,217,255,0.15)] text-[#2BD9FF]"
-                            : "border-[rgba(255,255,255,0.12)] bg-[#16181C] text-[rgba(255,255,255,0.70)] hover:border-[#2BD9FF] hover:text-[#2BD9FF]"
-                        ].join(" ")}
-                      >
-                        Annehmen
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onSetApplicationStatus(item.id, "rejected")}
-                        className={[
-                          "rounded-[8px] border px-3 py-1.5 text-[11px] font-semibold transition",
-                          item.status === "rejected"
-                            ? "border-[#FF6B6B] bg-[rgba(255,91,91,0.15)] text-[#FF6B6B]"
-                            : "border-[rgba(255,255,255,0.12)] bg-[#16181C] text-[rgba(255,255,255,0.70)] hover:border-[#FF6B6B] hover:text-[#FF6B6B]"
-                        ].join(" ")}
-                      >
-                        Ablehnen
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onSetApplicationStatus(item.id, "reviewing")}
-                        className={[
-                          "rounded-[8px] border px-3 py-1.5 text-[11px] font-semibold transition",
-                          item.status === "reviewing"
-                            ? "border-[#FFD166] bg-[rgba(255,209,102,0.15)] text-[#FFD166]"
-                            : "border-[rgba(255,255,255,0.12)] bg-[#16181C] text-[rgba(255,255,255,0.70)] hover:border-[#FFD166] hover:text-[#FFD166]"
-                        ].join(" ")}
-                      >
-                        Prüfen
-                      </button>
+                    {/* Footer / Actions */}
+                    <div className="mt-5 pt-4 border-t border-[rgba(255,255,255,0.06)] flex items-center justify-between gap-3">
+                      <span className="text-[11px] font-medium text-[rgba(255,255,255,0.4)]">
+                        {date}
+                      </span>
+
+                      <div className="flex gap-1">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onRequestApplicationStatusChange(
+                              item.id,
+                              item.username,
+                              "accepted"
+                            );
+                          }}
+                          className={`h-8 w-8 rounded-[8px] flex items-center justify-center transition-all ${item.status === 'accepted'
+                            ? 'bg-[#2BD9FF] text-[#0D0E12] shadow-[0_0_10px_rgba(43,217,255,0.4)]'
+                            : 'bg-[rgba(255,255,255,0.05)] text-[rgba(255,255,255,0.5)] hover:bg-[rgba(43,217,255,0.2)] hover:text-[#2BD9FF]'
+                            }`}
+                          title="Annehmen"
+                        >
+                          <i className="fa-solid fa-check text-[12px]" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onRequestApplicationStatusChange(
+                              item.id,
+                              item.username,
+                              "rejected"
+                            );
+                          }}
+                          className={`h-8 w-8 rounded-[8px] flex items-center justify-center transition-all ${item.status === 'rejected'
+                            ? 'bg-[#FF6B6B] text-[#0D0E12] shadow-[0_0_10px_rgba(255,107,107,0.4)]'
+                            : 'bg-[rgba(255,255,255,0.05)] text-[rgba(255,255,255,0.5)] hover:bg-[rgba(255,107,107,0.2)] hover:text-[#FF6B6B]'
+                            }`}
+                          title="Ablehnen"
+                        >
+                          <i className="fa-solid fa-xmark text-[12px]" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onRequestApplicationStatusChange(
+                              item.id,
+                              item.username,
+                              "reviewing"
+                            );
+                          }}
+                          className={`h-8 w-8 rounded-[8px] flex items-center justify-center transition-all ${item.status === 'reviewing'
+                            ? 'bg-[#FFD166] text-[#0D0E12] shadow-[0_0_10px_rgba(255,209,102,0.4)]'
+                            : 'bg-[rgba(255,255,255,0.05)] text-[rgba(255,255,255,0.5)] hover:bg-[rgba(255,209,102,0.2)] hover:text-[#FFD166]'
+                            }`}
+                          title="Prüfen"
+                        >
+                          <i className="fa-solid fa-magnifying-glass text-[12px]" />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -6271,10 +6408,10 @@ function renderContent(
             type="button"
             onClick={() => onNavigate("admin")}
             className="flex items-center gap-2 rounded-[12px] border border-[rgba(255,255,255,0.12)] bg-[#16181c] px-4 py-3 text-[14px] font-semibold text-[rgba(255,255,255,0.70)] transition hover:border-[#2BFE71] hover:bg-[rgba(43,254,113,0.1)] hover:text-[#2BFE71]"
-            aria-label="Zurueck"
+            aria-label="Zurück"
           >
             <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
-            Zurueck
+            Zurück
           </button>
           <p className="text-[13px] text-[rgba(255,255,255,0.55)]">
             {membersLoading ? "Lade..." : `${members.length} Mitglieder`}
@@ -6424,10 +6561,10 @@ function renderContent(
             type="button"
             onClick={() => onNavigate("admin")}
             className="flex items-center gap-2 rounded-[12px] border border-[rgba(255,255,255,0.12)] bg-[#16181c] px-4 py-3 text-[14px] font-semibold text-[rgba(255,255,255,0.70)] transition hover:border-[#2BFE71] hover:bg-[rgba(43,254,113,0.1)] hover:text-[#2BFE71]"
-            aria-label="Zurueck"
+            aria-label="Zurück"
           >
             <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
-            Zurueck
+            Zurück
           </button>
         </div>
         <div className="rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] p-4">
