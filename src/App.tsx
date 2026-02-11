@@ -136,6 +136,16 @@ type TicketItem = {
   preview: string;
 };
 
+type ApplicationStatus = "new" | "reviewing" | "accepted" | "rejected";
+type ApplicationItem = {
+  id: string;
+  username: string;
+  role: string;
+  experience: string;
+  createdAt: string;
+  status: ApplicationStatus;
+};
+
 // Placeholder data until a ticket API exists.
 const TICKET_PLACEHOLDER_ITEMS: TicketItem[] = [
   {
@@ -170,35 +180,41 @@ const TICKET_PLACEHOLDER_ITEMS: TicketItem[] = [
   }
 ];
 
-const getTicketStatusBadge = (status: TicketStatus) => {
-  switch (status) {
-    case "open":
-      return { label: "Open", className: "bg-[#2BFE71] text-[#0D0E12]" };
-    case "pending":
-      return { label: "Pending", className: "bg-[#FFD166] text-[#0D0E12]" };
-    case "closed":
-      return {
-        label: "Closed",
-        className: "bg-[rgba(255,255,255,0.16)] text-[rgba(255,255,255,0.82)]"
-      };
+const APPLICATION_PLACEHOLDER_ITEMS: ApplicationItem[] = [
+  {
+    id: "APP-241",
+    username: "PixelCrafter",
+    role: "Builder",
+    experience: "3 Jahre Serverbau, WorldEdit, Terraforming",
+    createdAt: "2026-02-10T16:30:00.000Z",
+    status: "new"
+  },
+  {
+    id: "APP-237",
+    username: "ModWolf",
+    role: "Moderator",
+    experience: "Community Support und Ticket-Erfahrung",
+    createdAt: "2026-02-08T11:15:00.000Z",
+    status: "reviewing"
+  },
+  {
+    id: "APP-229",
+    username: "NovaDesign",
+    role: "Designer",
+    experience: "UI/UX, Branding, Social Assets",
+    createdAt: "2026-02-04T20:02:00.000Z",
+    status: "accepted"
   }
-};
-
-const getTicketPriorityBadge = (priority: TicketPriority) => {
-  switch (priority) {
-    case "low":
-      return { label: "Low", className: "bg-[rgba(43,217,255,0.18)] text-[#2BD9FF]" };
-    case "medium":
-      return { label: "Medium", className: "bg-[rgba(255,209,102,0.16)] text-[#FFD166]" };
-    case "high":
-      return { label: "High", className: "bg-[rgba(255,107,107,0.18)] text-[#FF6B6B]" };
-  }
-};
+];
 
 const formatTicketShortDate = (iso: string) => {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleString("en-US", { month: "short", day: "2-digit", year: "numeric" });
+  return d.toLocaleString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "2-digit"
+  });
 };
 
 const fallbackProjectDescription =
@@ -223,6 +239,9 @@ const modrinthTypeLabels: Record<string, string> = {
 };
 
 const MIN_MC_VERSION = "1.20";
+const TEAM_APPLICATION_URL =
+  (import.meta.env.VITE_TEAM_APPLICATION_URL as string | undefined) ??
+  "https://vision-projects.eu/apply";
 
 const activityStatusLabels: Record<
   NonNullable<ProjectItem["activityStatus"]>,
@@ -1169,14 +1188,12 @@ export default function App() {
   const [toastProgress, setToastProgress] = useState(0);
   const toastTimerRef = useRef<number | null>(null);
   const toastIntervalRef = useRef<number | null>(null);
-  const [ticketQuery, setTicketQuery] = useState("");
-  const [ticketStatusFilter, setTicketStatusFilter] = useState<
-    "all" | TicketStatus
-  >("all");
-  const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [mcVersions, setMcVersions] = useState<string[]>([]);
   const [mcVersionsLoading, setMcVersionsLoading] = useState(false);
   const [mcVersionsError, setMcVersionsError] = useState(false);
+  const [applicationItems, setApplicationItems] = useState<ApplicationItem[]>(
+    APPLICATION_PLACEHOLDER_ITEMS
+  );
   const [showClippy, setShowClippy] = useState(false);
   const [warmupActive, setWarmupActive] = useState(false);
   const warmupUidRef = useRef<string | null>(null);
@@ -1185,27 +1202,11 @@ export default function App() {
     () => buildPermissionFlags(authzPermissions, authzRoles),
     [authzPermissions, authzRoles]
   );
-  const filteredTickets = useMemo(() => {
-    const q = ticketQuery.trim().toLowerCase();
-    return TICKET_PLACEHOLDER_ITEMS
-      .filter((t) =>
-        ticketStatusFilter === "all" ? true : t.status === ticketStatusFilter
-      )
-      .filter((t) => {
-        if (!q) return true;
-        return (
-          t.id.toLowerCase().includes(q) ||
-          t.title.toLowerCase().includes(q) ||
-          t.requester.toLowerCase().includes(q) ||
-          t.preview.toLowerCase().includes(q)
-        );
-      })
-      .sort((a, b) => (a.lastUpdateAt < b.lastUpdateAt ? 1 : -1));
-  }, [ticketQuery, ticketStatusFilter]);
-  const selectedTicket = useMemo(() => {
-    if (!selectedTicketId) return null;
-    return TICKET_PLACEHOLDER_ITEMS.find((t) => t.id === selectedTicketId) ?? null;
-  }, [selectedTicketId]);
+  const setApplicationStatus = (id: string, status: ApplicationStatus) => {
+    setApplicationItems((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, status } : item))
+    );
+  };
   const visiblePages = useMemo(() => {
     const isModRole = authzRoles.includes("moderator") || authzRoles.includes("admin");
     const pages = ["home", "explore", "settings", "profile"];
@@ -3315,14 +3316,8 @@ export default function App() {
                     handleReadFirebaseProfile,
                     firebaseProfileLoading,
                     firebaseProfileError,
-                    ticketQuery,
-                    setTicketQuery,
-                    ticketStatusFilter,
-                    setTicketStatusFilter,
-                    selectedTicketId,
-                    setSelectedTicketId,
-                    filteredTickets,
-                    selectedTicket
+                    applicationItems,
+                    setApplicationStatus
                   )}
                 </div>
               </div>
@@ -3373,7 +3368,35 @@ export default function App() {
             )}
           </div>
           <div className="flex-1" />
-          <div className="w-full h-[200px] bg-white rounded-t-lg" />
+          <div className="px-4 pb-4">
+            <div className="rounded-[14px] border border-[rgba(255,255,255,0.10)] bg-[#0F1116] p-4 shadow-[0_18px_40px_rgba(0,0,0,0.45)]">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-[12px] bg-[rgba(43,254,113,0.12)] text-[#2BFE71]">
+                  <i className="fa-solid fa-user-plus text-[16px]" aria-hidden="true" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[13px] font-semibold text-[rgba(255,255,255,0.92)]">
+                    Jetzt Teammitglied werden
+                  </p>
+                  <p className="mt-1 text-[12px] leading-[16px] text-[rgba(255,255,255,0.55)]">
+                    Bewirb dich in weniger als 2 Minuten. Wir melden uns zeitnah.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const url = TEAM_APPLICATION_URL;
+                  openUrl(url).catch(() => {
+                    window.open(url, "_blank", "noopener,noreferrer");
+                  });
+                }}
+                className="mt-4 w-full rounded-none border-2 border-[#1E9A55] bg-[#2BFE71] px-4 py-3 text-[13px] font-semibold text-[#0D0E12] shadow-[0_4px_0_#1E9A55,0_10px_22px_rgba(43,254,113,0.25)] transition active:translate-y-[4px] active:shadow-[0_0px_0_#1E9A55,0_6px_14px_rgba(43,254,113,0.18)]"
+              >
+                Jetzt bewerben
+              </button>
+            </div>
+          </div>
         </div>
         {banCandidate && (
           <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 px-4">
@@ -4551,14 +4574,8 @@ function renderContent(
   onReadFirebaseProfile: () => Promise<void>,
   firebaseProfileLoading: boolean,
   firebaseProfileError: string | null,
-  ticketQuery: string,
-  setTicketQuery: (value: string) => void,
-  ticketStatusFilter: "all" | TicketStatus,
-  setTicketStatusFilter: (value: "all" | TicketStatus) => void,
-  selectedTicketId: string | null,
-  setSelectedTicketId: (value: string | null) => void,
-  filteredTickets: TicketItem[],
-  selectedTicket: TicketItem | null
+  applicationItems: ApplicationItem[],
+  onSetApplicationStatus: (id: string, status: ApplicationStatus) => void
 ) {
   const modrinthCards = modrinthProjects.map(toModrinthCard);
   const groupedModrinth = groupModrinthCards(modrinthCards);
@@ -5890,6 +5907,20 @@ function renderContent(
         </p>
       );
     }
+
+    const tickets = [...TICKET_PLACEHOLDER_ITEMS].sort((a, b) =>
+      a.lastUpdateAt < b.lastUpdateAt ? 1 : -1
+    );
+    const statusLabel: Record<TicketStatus, "Open" | "In progress" | "Solved"> = {
+      open: "Open",
+      pending: "In progress",
+      closed: "Solved"
+    };
+    const statusClass: Record<TicketStatus, string> = {
+      open: "bg-[#2BFE71] text-[#0D0E12]",
+      pending: "bg-[#FFD166] text-[#0D0E12]",
+      closed: "bg-[rgba(255,255,255,0.16)] text-[rgba(255,255,255,0.82)]"
+    };
     return (
       <div className="space-y-6">
         <div className="flex items-center justify-between">
@@ -5904,197 +5935,93 @@ function renderContent(
           </button>
         </div>
 
-        <div className="rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] p-5">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <h1 className="text-[18px] font-semibold text-[rgba(255,255,255,0.92)]">
-                Tickets
-              </h1>
-              <p className="mt-1 text-[13px] text-[rgba(255,255,255,0.60)]">
-                Einfache Listenansicht (Platzhalter), bis die Ticket-API da ist.
-              </p>
-            </div>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              <div className="flex items-center gap-2 rounded-[12px] border border-[rgba(255,255,255,0.12)] bg-[#14161A] px-3 py-2">
-                <i className="fa-solid fa-magnifying-glass text-[12px] text-[rgba(255,255,255,0.55)]" aria-hidden="true" />
-                <input
-                  value={ticketQuery}
-                  onChange={(e) => setTicketQuery(e.target.value)}
-                  placeholder="Suchen..."
-                  className="w-[240px] bg-transparent text-[13px] text-[rgba(255,255,255,0.85)] outline-none placeholder:text-[rgba(255,255,255,0.35)]"
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[12px] font-semibold text-[rgba(255,255,255,0.55)]">
-                  Status
-                </span>
-                <select
-                  value={ticketStatusFilter}
-                  onChange={(e) =>
-                    setTicketStatusFilter(e.target.value as "all" | TicketStatus)
-                  }
-                  className="rounded-[12px] border border-[rgba(255,255,255,0.12)] bg-[#14161A] px-3 py-2 text-[13px] text-[rgba(255,255,255,0.85)] outline-none"
-                >
-                  <option value="all">Alle</option>
-                  <option value="open">Open</option>
-                  <option value="pending">Pending</option>
-                  <option value="closed">Closed</option>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-5 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-            <div className="overflow-hidden rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[#101218]">
-              <div className="flex items-center justify-between border-b border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-4 py-3">
-                <p className="text-[12px] font-semibold text-[rgba(255,255,255,0.65)]">
-                  {filteredTickets.length} Ticket(s)
-                </p>
-                <p className="text-[12px] text-[rgba(255,255,255,0.45)]">
-                  Sortiert nach letztem Update
-                </p>
-              </div>
-              <div className="divide-y divide-[rgba(255,255,255,0.06)]">
-                {filteredTickets.map((ticket) => {
-                  const isActive = ticket.id === selectedTicketId;
-                  const status = getTicketStatusBadge(ticket.status);
-                  const prio = getTicketPriorityBadge(ticket.priority);
-                  return (
-                    <button
-                      key={ticket.id}
-                      type="button"
-                      onClick={() => setSelectedTicketId(ticket.id)}
-                      className={[
-                        "flex w-full items-start gap-4 px-4 py-4 text-left transition",
-                        isActive
-                          ? "bg-[rgba(43,254,113,0.08)]"
-                          : "hover:bg-[rgba(255,255,255,0.04)]"
-                      ].join(" ")}
-                    >
-                      <div className="mt-1 flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-[12px] bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.75)]">
-                        <i className="fa-solid fa-ticket" aria-hidden="true" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-[12px] font-semibold text-[rgba(255,255,255,0.55)]">
-                            {ticket.id}
-                          </span>
-                          <span
-                            className={[
-                              "rounded-[10px] px-2 py-1 text-[11px] font-semibold",
-                              status.className
-                            ].join(" ")}
-                          >
-                            {status.label}
-                          </span>
-                          <span
-                            className={[
-                              "rounded-[10px] px-2 py-1 text-[11px] font-semibold",
-                              prio.className
-                            ].join(" ")}
-                          >
-                            {prio.label}
-                          </span>
-                        </div>
-                        <div className="mt-2 truncate text-[14px] font-semibold text-[rgba(255,255,255,0.92)]">
+        <div className="overflow-hidden rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[#101218]">
+            <div className="divide-y divide-[rgba(255,255,255,0.06)]">
+              {tickets.map((ticket) => {
+                const requester = ticket.requester.trim();
+                const requesterMatch = members.find((member) => {
+                  const username = (member.username ?? "").trim();
+                  if (!username) return false;
+                  return username.toLowerCase() === requester.toLowerCase();
+                });
+                const requesterAvatarUrl =
+                  typeof requesterMatch?.avatarUrl === "string"
+                    ? requesterMatch.avatarUrl
+                    : null;
+                return (
+                  <details key={ticket.id} className="px-4">
+                    <summary className="flex cursor-pointer select-none list-none items-center justify-between gap-4 py-4 [&::-webkit-details-marker]:hidden">
+                      <div className="min-w-0">
+                        <p className="truncate text-[14px] font-semibold text-[rgba(255,255,255,0.92)]">
                           {ticket.title}
-                        </div>
-                        <div className="mt-1 line-clamp-2 text-[12px] text-[rgba(255,255,255,0.55)]">
-                          {ticket.preview}
-                        </div>
-                        <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] text-[rgba(255,255,255,0.45)]">
-                          <span>
-                            <i className="fa-solid fa-user mr-1" aria-hidden="true" />
-                            {ticket.requester}
-                          </span>
-                          <span>
-                            <i className="fa-solid fa-clock mr-1" aria-hidden="true" />
-                            {formatTicketShortDate(ticket.lastUpdateAt)}
-                          </span>
+                        </p>
+                        <div className="mt-1 flex items-center gap-2 text-[12px] text-[rgba(255,255,255,0.50)]">
+                          {requesterAvatarUrl ? (
+                            <img
+                              src={requesterAvatarUrl}
+                              alt=""
+                              className="h-5 w-5 rounded-full object-cover"
+                              loading="lazy"
+                              draggable={false}
+                            />
+                          ) : (
+                            <div className="h-5 w-5 rounded-full bg-[rgba(255,255,255,0.10)]" />
+                          )}
+                          <span className="truncate">{ticket.requester}</span>
                         </div>
                       </div>
-                      <div className="mt-2 text-[rgba(255,255,255,0.35)]">
-                        <FontAwesomeIcon icon={faChevronRight} />
-                      </div>
-                    </button>
-                  );
-                })}
-                {!filteredTickets.length && (
-                  <div className="px-4 py-10 text-center text-[13px] text-[rgba(255,255,255,0.55)]">
-                    Keine Tickets gefunden.
-                  </div>
-                )}
-              </div>
-            </div>
+                      <span
+                        className={[
+                          "flex-shrink-0 rounded-[10px] px-3 py-1 text-[11px] font-semibold",
+                          statusClass[ticket.status]
+                        ].join(" ")}
+                      >
+                        {statusLabel[ticket.status]}
+                      </span>
+                    </summary>
 
-            <div className="rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[#101218] p-4">
-              {selectedTicket ? (
-                <>
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0">
-                      <p className="text-[12px] font-semibold text-[rgba(255,255,255,0.55)]">
-                        {selectedTicket.id}
-                      </p>
-                      <h2 className="mt-2 truncate text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
-                        {selectedTicket.title}
-                      </h2>
+                    <div className="pb-4">
+                      <div className="rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] p-3">
+                        <p className="text-[12px] leading-relaxed text-[rgba(255,255,255,0.62)]">
+                          {ticket.preview}
+                        </p>
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                          <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.55)]">
+                            <span className="font-semibold text-[rgba(255,255,255,0.75)]">
+                              Ticket ID
+                            </span>
+                            <span className="ml-2">{ticket.id}</span>
+                          </div>
+                          <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.55)]">
+                            <span className="font-semibold text-[rgba(255,255,255,0.75)]">
+                              Priority
+                            </span>
+                            <span className="ml-2">{ticket.priority}</span>
+                          </div>
+                          <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.55)]">
+                            <span className="font-semibold text-[rgba(255,255,255,0.75)]">
+                              Created
+                            </span>
+                            <span className="ml-2">{formatTicketShortDate(ticket.createdAt)}</span>
+                          </div>
+                          <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.55)]">
+                            <span className="font-semibold text-[rgba(255,255,255,0.75)]">
+                              Updated
+                            </span>
+                            <span className="ml-2">{formatTicketShortDate(ticket.lastUpdateAt)}</span>
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedTicketId(null)}
-                      className="rounded-[12px] border border-[rgba(255,255,255,0.12)] bg-[#14161A] px-3 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.65)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
-                    >
-                      Schliessen
-                    </button>
-                  </div>
-                  <div className="mt-4 grid gap-2 text-[12px] text-[rgba(255,255,255,0.65)]">
-                    <div className="flex items-center justify-between rounded-[12px] bg-[#0F1116] px-3 py-2">
-                      <span>Requester</span>
-                      <span className="font-semibold text-[rgba(255,255,255,0.85)]">
-                        {selectedTicket.requester}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between rounded-[12px] bg-[#0F1116] px-3 py-2">
-                      <span>Created</span>
-                      <span className="font-semibold text-[rgba(255,255,255,0.85)]">
-                        {formatTicketShortDate(selectedTicket.createdAt)}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between rounded-[12px] bg-[#0F1116] px-3 py-2">
-                      <span>Last update</span>
-                      <span className="font-semibold text-[rgba(255,255,255,0.85)]">
-                        {formatTicketShortDate(selectedTicket.lastUpdateAt)}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="mt-4 rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] p-3">
-                    <p className="text-[12px] font-semibold text-[rgba(255,255,255,0.70)]">
-                      Nachricht
-                    </p>
-                    <p className="mt-2 text-[12px] leading-relaxed text-[rgba(255,255,255,0.62)]">
-                      {selectedTicket.preview}
-                    </p>
-                  </div>
-                  <p className="mt-4 text-[11px] text-[rgba(255,255,255,0.45)]">
-                    Naechster Schritt: sobald eine Ticket-API existiert, ersetzen wir
-                    `tickets` durch einen Fetch + Pagination.
-                  </p>
-                </>
-              ) : (
-                <div className="flex h-full min-h-[220px] flex-col items-center justify-center text-center">
-                  <div className="flex h-14 w-14 items-center justify-center rounded-[14px] bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.75)]">
-                    <i className="fa-solid fa-ticket" aria-hidden="true" />
-                  </div>
-                  <p className="mt-3 text-[13px] font-semibold text-[rgba(255,255,255,0.85)]">
-                    Ticket auswaehlen
-                  </p>
-                  <p className="mt-1 text-[12px] text-[rgba(255,255,255,0.55)]">
-                    Klicke links ein Ticket fuer Details.
-                  </p>
+                  </details>
+                );
+              })}
+              {!tickets.length && (
+                <div className="px-4 py-10 text-center text-[13px] text-[rgba(255,255,255,0.55)]">
+                  Keine Tickets gefunden.
                 </div>
               )}
             </div>
-          </div>
         </div>
       </div>
     );
@@ -6108,26 +6035,224 @@ function renderContent(
         </p>
       );
     }
+
+    const statusMap: Record<ApplicationStatus, { label: string; className: string; icon: string; badgeClass: string }> = {
+      new: {
+        label: "Neu",
+        className: "bg-[#2BFE71] text-[#0D0E12]",
+        icon: "fa-sparkles",
+        badgeClass: "border-[#2BFE71] bg-[rgba(43,254,113,0.15)] text-[#2BFE71]"
+      },
+      reviewing: {
+        label: "In Prüfung",
+        className: "bg-[#FFD166] text-[#0D0E12]",
+        icon: "fa-magnifying-glass",
+        badgeClass: "border-[#FFD166] bg-[rgba(255,209,102,0.15)] text-[#FFD166]"
+      },
+      accepted: {
+        label: "Angenommen",
+        className: "bg-[rgba(43,217,255,0.18)] text-[#2BD9FF]",
+        icon: "fa-circle-check",
+        badgeClass: "border-[#2BD9FF] bg-[rgba(43,217,255,0.15)] text-[#2BD9FF]"
+      },
+      rejected: {
+        label: "Abgelehnt",
+        className: "bg-[rgba(255,91,91,0.20)] text-[#FF6B6B]",
+        icon: "fa-circle-xmark",
+        badgeClass: "border-[#FF6B6B] bg-[rgba(255,91,91,0.15)] text-[#FF6B6B]"
+      }
+    };
+
+    const roleIcons: Record<string, string> = {
+      "Builder": "fa-hammer",
+      "Moderator": "fa-shield-halved",
+      "Designer": "fa-palette",
+      "Developer": "fa-code",
+      "Admin": "fa-crown"
+    };
+
+    const stats = {
+      total: applicationItems.length,
+      new: applicationItems.filter(i => i.status === "new").length,
+      reviewing: applicationItems.filter(i => i.status === "reviewing").length,
+      accepted: applicationItems.filter(i => i.status === "accepted").length,
+      rejected: applicationItems.filter(i => i.status === "rejected").length
+    };
+
     return (
       <div className="space-y-6">
+        {/* Header */}
         <div className="flex items-center justify-between">
           <button
             type="button"
             onClick={() => onNavigate("admin")}
-            className="flex items-center gap-2 rounded-[12px] border border-[rgba(255,255,255,0.12)] bg-[#16181c] px-4 py-3 text-[14px] font-semibold text-[rgba(255,255,255,0.70)] transition hover:border-[#2BFE71] hover:bg-[rgba(43,254,113,0.1)] hover:text-[#2BFE71]"
-            aria-label="Zurueck"
+            className="group flex items-center gap-2 rounded-[12px] border border-[rgba(255,255,255,0.12)] bg-[#16181c] px-4 py-3 text-[14px] font-semibold text-[rgba(255,255,255,0.70)] transition-all hover:border-[#2BFE71] hover:bg-[rgba(43,254,113,0.1)] hover:text-[#2BFE71] hover:scale-105 active:scale-95"
+            aria-label="Zurück"
           >
-            <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
-            Zurueck
+            <i className="fa-solid fa-arrow-left text-[14px] transition-transform group-hover:-translate-x-1" aria-hidden="true" />
+            Zurück
           </button>
         </div>
-        <div className="rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] p-4">
-          <h1 className="text-[18px] font-semibold text-[rgba(255,255,255,0.92)]">
-            Bewerbungen
-          </h1>
-          <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.65)]">
-            Bewerbungs-System kommt noch (UI ist vorbereitet).
-          </p>
+
+        {/* Statistics Cards */}
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+          <div className="rounded-[12px] border border-[rgba(255,255,255,0.10)] bg-[#14161A] p-4 shadow-[0_12px_24px_rgba(0,0,0,0.22)]">
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] font-medium uppercase tracking-wider text-[rgba(255,255,255,0.45)]">Gesamt</p>
+              <i className="fa-solid fa-layer-group text-[12px] text-[rgba(255,255,255,0.38)]" aria-hidden="true" />
+            </div>
+            <p className="mt-2 text-[24px] font-semibold text-[rgba(255,255,255,0.90)]">{stats.total}</p>
+          </div>
+
+          <div className="rounded-[12px] border border-[rgba(43,254,113,0.24)] bg-[linear-gradient(135deg,rgba(43,254,113,0.10),rgba(20,22,26,0.95))] p-4 shadow-[0_12px_24px_rgba(0,0,0,0.22)]">
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] font-medium uppercase tracking-wider text-[rgba(255,255,255,0.45)]">Neu</p>
+              <i className="fa-solid fa-sparkles text-[12px] text-[#2BFE71]" aria-hidden="true" />
+            </div>
+            <p className="mt-2 text-[24px] font-semibold text-[#2BFE71]">{stats.new}</p>
+          </div>
+
+          <div className="rounded-[12px] border border-[rgba(255,209,102,0.24)] bg-[linear-gradient(135deg,rgba(255,209,102,0.10),rgba(20,22,26,0.95))] p-4 shadow-[0_12px_24px_rgba(0,0,0,0.22)]">
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] font-medium uppercase tracking-wider text-[rgba(255,255,255,0.45)]">Prüfung</p>
+              <i className="fa-solid fa-magnifying-glass text-[12px] text-[#FFD166]" aria-hidden="true" />
+            </div>
+            <p className="mt-2 text-[24px] font-semibold text-[#FFD166]">{stats.reviewing}</p>
+          </div>
+
+          <div className="rounded-[12px] border border-[rgba(43,217,255,0.24)] bg-[linear-gradient(135deg,rgba(43,217,255,0.10),rgba(20,22,26,0.95))] p-4 shadow-[0_12px_24px_rgba(0,0,0,0.22)]">
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] font-medium uppercase tracking-wider text-[rgba(255,255,255,0.45)]">Angenommen</p>
+              <i className="fa-solid fa-check text-[12px] text-[#2BD9FF]" aria-hidden="true" />
+            </div>
+            <p className="mt-2 text-[24px] font-semibold text-[#2BD9FF]">{stats.accepted}</p>
+          </div>
+
+          <div className="rounded-[12px] border border-[rgba(255,107,107,0.24)] bg-[linear-gradient(135deg,rgba(255,107,107,0.10),rgba(20,22,26,0.95))] p-4 shadow-[0_12px_24px_rgba(0,0,0,0.22)]">
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] font-medium uppercase tracking-wider text-[rgba(255,255,255,0.45)]">Abgelehnt</p>
+              <i className="fa-solid fa-xmark text-[12px] text-[#FF6B6B]" aria-hidden="true" />
+            </div>
+            <p className="mt-2 text-[24px] font-semibold text-[#FF6B6B]">{stats.rejected}</p>
+          </div>
+        </div>
+
+        {/* Applications List */}
+        <div className="space-y-3">
+          {applicationItems.length === 0 ? (
+            <div className="rounded-[16px] border border-[rgba(255,255,255,0.08)] bg-[#101218] p-12 text-center">
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[rgba(255,255,255,0.05)]">
+                <i className="fa-solid fa-inbox text-[28px] text-[rgba(255,255,255,0.3)]" aria-hidden="true" />
+              </div>
+              <p className="text-[14px] font-semibold text-[rgba(255,255,255,0.92)]">Keine Bewerbungen vorhanden</p>
+              <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.55)]">
+                Sobald neue Bewerbungen eingehen, werden sie hier angezeigt.
+              </p>
+            </div>
+          ) : (
+            applicationItems.map((item) => {
+              const status = statusMap[item.status];
+              const roleIcon = roleIcons[item.role] || "fa-user";
+              const date = new Date(item.createdAt).toLocaleDateString("de-DE", {
+                day: "2-digit",
+                month: "2-digit",
+                year: "numeric"
+              });
+              const timeAgo = (() => {
+                const now = new Date();
+                const created = new Date(item.createdAt);
+                const diffMs = now.getTime() - created.getTime();
+                const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+                if (diffDays === 0) return "Heute";
+                if (diffDays === 1) return "Gestern";
+                if (diffDays < 7) return `vor ${diffDays} Tagen`;
+                return date;
+              })();
+              
+              return (
+                <div
+                  key={item.id}
+                  className="rounded-[14px] border border-[rgba(255,255,255,0.10)] bg-[#14161A] p-4 shadow-[0_14px_28px_rgba(0,0,0,0.24)] transition hover:border-[rgba(255,255,255,0.18)]"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-9 w-9 items-center justify-center rounded-[10px] border border-[rgba(255,255,255,0.10)] bg-[rgba(255,255,255,0.05)] text-[rgba(255,255,255,0.70)]">
+                          <i className={`fa-solid ${roleIcon} text-[13px]`} aria-hidden="true" />
+                        </div>
+                        <p className="truncate text-[14px] font-semibold text-[rgba(255,255,255,0.92)]">
+                          {item.username}
+                        </p>
+                        {item.status === "new" && (
+                          <span className="flex h-2 w-2 rounded-full bg-[#2BFE71]" />
+                        )}
+                      </div>
+                      <p className="mt-1 text-[12px] text-[rgba(255,255,255,0.55)]">
+                        {item.role} • {item.id}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={[
+                          "inline-flex items-center gap-1.5 rounded-[9px] border px-2.5 py-1 text-[11px] font-semibold",
+                          status.badgeClass
+                        ].join(" ")}
+                      >
+                        <i className={`fa-solid ${status.icon} text-[10px]`} aria-hidden="true" />
+                        {status.label}
+                      </span>
+                    </div>
+                  </div>
+
+                  <p className="mt-3 text-[12px] leading-[18px] text-[rgba(255,255,255,0.65)]">
+                    {item.experience}
+                  </p>
+
+                  <div className="mt-3 flex items-center justify-between gap-3">
+                    <span className="text-[11px] text-[rgba(255,255,255,0.45)]">{timeAgo}</span>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onSetApplicationStatus(item.id, "accepted")}
+                        className={[
+                          "rounded-[8px] border px-3 py-1.5 text-[11px] font-semibold transition",
+                          item.status === "accepted"
+                            ? "border-[#2BD9FF] bg-[rgba(43,217,255,0.15)] text-[#2BD9FF]"
+                            : "border-[rgba(255,255,255,0.12)] bg-[#16181C] text-[rgba(255,255,255,0.70)] hover:border-[#2BD9FF] hover:text-[#2BD9FF]"
+                        ].join(" ")}
+                      >
+                        Annehmen
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onSetApplicationStatus(item.id, "rejected")}
+                        className={[
+                          "rounded-[8px] border px-3 py-1.5 text-[11px] font-semibold transition",
+                          item.status === "rejected"
+                            ? "border-[#FF6B6B] bg-[rgba(255,91,91,0.15)] text-[#FF6B6B]"
+                            : "border-[rgba(255,255,255,0.12)] bg-[#16181C] text-[rgba(255,255,255,0.70)] hover:border-[#FF6B6B] hover:text-[#FF6B6B]"
+                        ].join(" ")}
+                      >
+                        Ablehnen
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onSetApplicationStatus(item.id, "reviewing")}
+                        className={[
+                          "rounded-[8px] border px-3 py-1.5 text-[11px] font-semibold transition",
+                          item.status === "reviewing"
+                            ? "border-[#FFD166] bg-[rgba(255,209,102,0.15)] text-[#FFD166]"
+                            : "border-[rgba(255,255,255,0.12)] bg-[#16181C] text-[rgba(255,255,255,0.70)] hover:border-[#FFD166] hover:text-[#FFD166]"
+                        ].join(" ")}
+                      >
+                        Prüfen
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
         </div>
       </div>
     );
