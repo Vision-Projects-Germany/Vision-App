@@ -167,67 +167,6 @@ type MemberRoleDialogState = {
   presetRoleId?: string;
 };
 
-// Placeholder data until a ticket API exists.
-const TICKET_PLACEHOLDER_ITEMS: TicketItem[] = [
-  {
-    id: "TCK-1042",
-    title: "Launcher crasht beim Start",
-    requester: "vision",
-    status: "open",
-    priority: "high",
-    createdAt: "2026-02-03T12:10:00.000Z",
-    lastUpdateAt: "2026-02-08T18:42:00.000Z",
-    preview: "Beim Öffnen kommt ein Blackscreen und danach schließt sich die App."
-  },
-  {
-    id: "TCK-1037",
-    title: "Media Upload dauert sehr lange",
-    requester: "Blizz606",
-    status: "pending",
-    priority: "medium",
-    createdAt: "2026-02-01T09:24:00.000Z",
-    lastUpdateAt: "2026-02-06T20:05:00.000Z",
-    preview: "Beim Drag&Drop hängt es manchmal, vor allem bei großen PNGs."
-  },
-  {
-    id: "TCK-1029",
-    title: "Profilbild wird nicht angezeigt",
-    requester: "guest123",
-    status: "closed",
-    priority: "low",
-    createdAt: "2026-01-28T14:11:00.000Z",
-    lastUpdateAt: "2026-01-30T08:40:00.000Z",
-    preview: "AvatarMediaId ist gesetzt, aber im UI bleibt es leer."
-  }
-];
-
-const APPLICATION_PLACEHOLDER_ITEMS: ApplicationItem[] = [
-  {
-    id: "APP-241",
-    username: "PixelCrafter",
-    role: "Builder",
-    experience: "3 Jahre Serverbau, WorldEdit, Terraforming",
-    createdAt: "2026-02-10T16:30:00.000Z",
-    status: "new"
-  },
-  {
-    id: "APP-237",
-    username: "ModWolf",
-    role: "Moderator",
-    experience: "Community Support und Ticket-Erfahrung",
-    createdAt: "2026-02-08T11:15:00.000Z",
-    status: "reviewing"
-  },
-  {
-    id: "APP-229",
-    username: "NovaDesign",
-    role: "Designer",
-    experience: "UI/UX, Branding, Social Assets",
-    createdAt: "2026-02-04T20:02:00.000Z",
-    status: "accepted"
-  }
-];
-
 const formatTicketShortDate = (iso: string) => {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
@@ -781,6 +720,158 @@ function mapNewsItems(items: unknown[]) {
     .filter((item) => item.id);
 }
 
+function mapTicketStatus(value: unknown): TicketStatus {
+  if (typeof value !== "string") {
+    return "open";
+  }
+  const normalized = value.trim().toLowerCase().replace(/[\s_-]+/g, "");
+  if (normalized === "open" || normalized === "new") {
+    return "open";
+  }
+  if (normalized === "pending" || normalized === "inprogress" || normalized === "progress") {
+    return "pending";
+  }
+  if (normalized === "closed" || normalized === "solved" || normalized === "done") {
+    return "closed";
+  }
+  return "open";
+}
+
+function mapTicketItems(items: unknown[]): TicketItem[] {
+  return items
+    .map((item) => {
+      const raw = item as Record<string, unknown>;
+      const id =
+        typeof raw.id === "string"
+          ? raw.id
+          : typeof raw.ticketId === "string"
+            ? raw.ticketId
+            : typeof raw.uid === "string"
+              ? raw.uid
+              : "";
+      const title =
+        typeof raw.title === "string"
+          ? raw.title
+          : typeof raw.subject === "string"
+            ? raw.subject
+            : "Untitled ticket";
+      const requester =
+        typeof raw.requester === "string"
+          ? raw.requester
+          : typeof raw.username === "string"
+            ? raw.username
+            : typeof raw.createdBy === "string"
+              ? raw.createdBy
+              : "Unknown";
+      const preview =
+        typeof raw.preview === "string"
+          ? raw.preview
+          : typeof raw.message === "string"
+            ? raw.message
+            : typeof raw.description === "string"
+              ? raw.description
+              : "";
+      const createdAt =
+        typeof raw.createdAt === "string"
+          ? raw.createdAt
+          : typeof raw.created_at === "string"
+            ? raw.created_at
+            : new Date().toISOString();
+      const updatedAt =
+        typeof raw.updatedAt === "string"
+          ? raw.updatedAt
+          : typeof raw.updated_at === "string"
+            ? raw.updated_at
+            : createdAt;
+      const priority =
+        typeof raw.priority === "string" && raw.priority.trim()
+          ? raw.priority
+          : "medium";
+
+      return {
+        id: id || `${title}-${createdAt}`,
+        title,
+        requester,
+        status: mapTicketStatus(raw.status),
+        priority,
+        createdAt,
+        lastUpdateAt: updatedAt,
+        preview
+      } as TicketItem;
+    })
+    .filter((ticket) => Boolean(ticket.id));
+}
+
+function mapApplicationStatus(value: unknown): ApplicationStatus {
+  if (typeof value !== "string") {
+    return "new";
+  }
+  const normalized = value.trim().toLowerCase().replace(/[\s_-]+/g, "");
+  if (normalized === "new" || normalized === "open") {
+    return "new";
+  }
+  if (normalized === "reviewing" || normalized === "inreview" || normalized === "pending") {
+    return "reviewing";
+  }
+  if (normalized === "accepted" || normalized === "approved") {
+    return "accepted";
+  }
+  if (normalized === "rejected" || normalized === "denied") {
+    return "rejected";
+  }
+  return "new";
+}
+
+function mapApplicationItems(items: unknown[]): ApplicationItem[] {
+  return items
+    .map((item) => {
+      const raw = item as Record<string, unknown>;
+      const id =
+        typeof raw.id === "string"
+          ? raw.id
+          : typeof raw.applicationId === "string"
+            ? raw.applicationId
+            : "";
+      const username =
+        typeof raw.username === "string"
+          ? raw.username
+          : typeof raw.user === "string"
+            ? raw.user
+            : typeof raw.createdBy === "string"
+              ? raw.createdBy
+              : "Unknown";
+      const role =
+        typeof raw.role === "string"
+          ? raw.role
+          : typeof raw.position === "string"
+            ? raw.position
+            : "—";
+      const experience =
+        typeof raw.experience === "string"
+          ? raw.experience
+          : typeof raw.message === "string"
+            ? raw.message
+            : typeof raw.text === "string"
+              ? raw.text
+              : "";
+      const createdAt =
+        typeof raw.createdAt === "string"
+          ? raw.createdAt
+          : typeof raw.created_at === "string"
+            ? raw.created_at
+            : new Date().toISOString();
+      return {
+        id: id || `${username}-${createdAt}`,
+        username,
+        role,
+        experience,
+        createdAt,
+        status: mapApplicationStatus(raw.status)
+      } as ApplicationItem;
+    })
+    .filter((application) => Boolean(application.id));
+}
+
 function looksLikeUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
     value
@@ -1292,9 +1383,12 @@ export default function App() {
   const [mcVersions, setMcVersions] = useState<string[]>([]);
   const [mcVersionsLoading, setMcVersionsLoading] = useState(false);
   const [mcVersionsError, setMcVersionsError] = useState(false);
-  const [applicationItems, setApplicationItems] = useState<ApplicationItem[]>(
-    APPLICATION_PLACEHOLDER_ITEMS
-  );
+  const [applicationItems, setApplicationItems] = useState<ApplicationItem[]>([]);
+  const [applicationsLoading, setApplicationsLoading] = useState(false);
+  const [applicationsError, setApplicationsError] = useState<string | null>(null);
+  const [ticketItems, setTicketItems] = useState<TicketItem[]>([]);
+  const [ticketsLoading, setTicketsLoading] = useState(false);
+  const [ticketsError, setTicketsError] = useState<string | null>(null);
   const [pendingApplicationAction, setPendingApplicationAction] =
     useState<PendingApplicationAction | null>(null);
   const [showClippy, setShowClippy] = useState(false);
@@ -3077,6 +3171,86 @@ export default function App() {
   }, [activePage, permissionFlags.canAccessRoles, rolesRefreshTick, user]);
 
   useEffect(() => {
+    if (activePage !== "tickets") {
+      return;
+    }
+    if (!permissionFlags.canViewTickets) {
+      return;
+    }
+    if (!user) {
+      setTicketItems([]);
+      setTicketsLoading(false);
+      setTicketsError("Bitte zuerst anmelden.");
+      return;
+    }
+
+    setTicketsLoading(true);
+    setTicketsError(null);
+    setTicketItems([]);
+
+    (async () => {
+      const token = await getApiToken();
+      const data = await requestJson<{ items?: unknown[] }>(
+        "https://api.blizz-developments-official.de/api/tickets?page=1&limit=50",
+        {
+          headers: { Authorization: `Bearer ${token}` }
+        }
+      );
+      const rawItems = Array.isArray(data.items) ? data.items : [];
+      setTicketItems(mapTicketItems(rawItems));
+    })()
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : "Unbekannter Fehler.";
+        console.error("Failed to load tickets", error);
+        setTicketsError(`Tickets konnten nicht geladen werden. (${message})`);
+        showToast("Tickets konnten nicht geladen werden.", "error");
+      })
+      .finally(() => {
+        setTicketsLoading(false);
+      });
+  }, [activePage, permissionFlags.canViewTickets, user]);
+
+  useEffect(() => {
+    if (activePage !== "applications") {
+      return;
+    }
+    if (!permissionFlags.canViewApplications) {
+      return;
+    }
+    if (!user) {
+      setApplicationItems([]);
+      setApplicationsLoading(false);
+      setApplicationsError("Bitte zuerst anmelden.");
+      return;
+    }
+
+    setApplicationsLoading(true);
+    setApplicationsError(null);
+    setApplicationItems([]);
+
+    (async () => {
+      const token = await getApiToken();
+      const data = await requestJson<{ items?: unknown[] }>(
+        "https://api.blizz-developments-official.de/api/applications?page=1&limit=50",
+        {
+          headers: { Authorization: `Bearer ${token}` }
+        }
+      );
+      const rawItems = Array.isArray(data.items) ? data.items : [];
+      setApplicationItems(mapApplicationItems(rawItems));
+    })()
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : "Unbekannter Fehler.";
+        console.error("Failed to load applications", error);
+        setApplicationsError(`Bewerbungen konnten nicht geladen werden. (${message})`);
+        showToast("Bewerbungen konnten nicht geladen werden.", "error");
+      })
+      .finally(() => {
+        setApplicationsLoading(false);
+      });
+  }, [activePage, permissionFlags.canViewApplications, user]);
+
+  useEffect(() => {
     if (activePage === "home") {
       setRedirectSeconds(null);
       return;
@@ -3857,6 +4031,9 @@ export default function App() {
                     authzFetchError,
                     userProfileData,
                     redirectSeconds,
+                    ticketItems,
+                    ticketsLoading,
+                    ticketsError,
                     members,
                     membersLoading,
                     membersError,
@@ -3887,6 +4064,8 @@ export default function App() {
                     firebaseProfileLoading,
                     firebaseProfileError,
                     applicationItems,
+                    applicationsLoading,
+                    applicationsError,
                     requestApplicationStatusChange
                   )}
                 </div>
@@ -5527,6 +5706,9 @@ function renderContent(
   authzFetchError: string | null,
   userProfileData: Record<string, unknown> | null,
   redirectSeconds: number | null,
+  ticketItems: TicketItem[],
+  ticketsLoading: boolean,
+  ticketsError: string | null,
   members: MemberProfile[],
   membersLoading: boolean,
   membersError: string | null,
@@ -5561,6 +5743,8 @@ function renderContent(
   firebaseProfileLoading: boolean,
   firebaseProfileError: string | null,
   applicationItems: ApplicationItem[],
+  applicationsLoading: boolean,
+  applicationsError: string | null,
   onRequestApplicationStatusChange: (
     id: string,
     username: string,
@@ -6898,7 +7082,7 @@ function renderContent(
       );
     }
 
-    const tickets = [...TICKET_PLACEHOLDER_ITEMS].sort((a, b) =>
+    const tickets = [...ticketItems].sort((a, b) =>
       a.lastUpdateAt < b.lastUpdateAt ? 1 : -1
     );
     const statusLabel: Record<TicketStatus, "Open" | "In progress" | "Solved"> = {
@@ -6924,6 +7108,12 @@ function renderContent(
             Zurück
           </button>
         </div>
+
+        {ticketsError && (
+          <div className="rounded-[12px] border border-[rgba(255,100,100,0.25)] bg-[rgba(255,100,100,0.08)] px-4 py-3 text-[12px] text-[rgba(255,255,255,0.75)]">
+            {ticketsError}
+          </div>
+        )}
 
         <div className="overflow-hidden rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[#101218]">
           <div className="divide-y divide-[rgba(255,255,255,0.06)]">
@@ -7006,7 +7196,12 @@ function renderContent(
                 </details>
               );
             })}
-            {!tickets.length && (
+            {ticketsLoading && (
+              <div className="px-4 py-10 text-center text-[13px] text-[rgba(255,255,255,0.55)]">
+                Lade Tickets...
+              </div>
+            )}
+            {!ticketsLoading && !tickets.length && (
               <div className="px-4 py-10 text-center text-[13px] text-[rgba(255,255,255,0.55)]">
                 Keine Tickets gefunden.
               </div>
@@ -7142,8 +7337,20 @@ function renderContent(
         </div>
 
         {/* Applications List */}
+        {applicationsError && (
+          <div className="rounded-[12px] border border-[rgba(255,100,100,0.25)] bg-[rgba(255,100,100,0.08)] px-4 py-3 text-[12px] text-[rgba(255,255,255,0.75)]">
+            {applicationsError}
+          </div>
+        )}
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {applicationItems.length === 0 ? (
+          {applicationsLoading ? (
+            <div className="col-span-full rounded-[24px] border border-[rgba(255,255,255,0.08)] bg-[#101218] p-16 text-center">
+              <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.05)]">
+                <i className="fa-solid fa-spinner fa-spin text-[28px] text-[rgba(255,255,255,0.35)]" aria-hidden="true" />
+              </div>
+              <h3 className="text-[18px] font-bold text-[rgba(255,255,255,0.92)]">Bewerbungen laden...</h3>
+            </div>
+          ) : applicationItems.length === 0 ? (
             <div className="col-span-full rounded-[24px] border border-[rgba(255,255,255,0.08)] bg-[#101218] p-16 text-center">
               <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.05)]">
                 <i className="fa-solid fa-inbox text-[32px] text-[rgba(255,255,255,0.2)]" aria-hidden="true" />
