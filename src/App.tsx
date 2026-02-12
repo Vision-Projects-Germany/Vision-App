@@ -161,6 +161,12 @@ type PendingApplicationAction = {
   status: ApplicationStatus;
 };
 
+type MemberRoleDialogState = {
+  member: MemberProfile;
+  mode: "add" | "remove";
+  presetRoleId?: string;
+};
+
 // Placeholder data until a ticket API exists.
 const TICKET_PLACEHOLDER_ITEMS: TicketItem[] = [
   {
@@ -373,6 +379,25 @@ const ROLE_PERMISSION_SUGGESTIONS = [
   "system.config.read",
   "system.config.write"
 ];
+const ROLE_PERMISSION_BASE = Array.from(
+  new Set([
+    ...PROJECT_PERMISSIONS,
+    ...MEDIA_PERMISSIONS,
+    ...NEWS_PERMISSIONS,
+    ...CALENDAR_PERMISSIONS,
+    ...ROLE_PERMISSION_SUGGESTIONS,
+    "auth.sessions.invalidate",
+    "auth.tokens.revoke",
+    "users.permissions.manage",
+    "users.roles.manage",
+    "users.ban",
+    "users.warn",
+    "stats.read.admin",
+    "profile.xp.normalize",
+    "mod.viewTickets",
+    "mod.viewApplications"
+  ])
+);
 const ADMIN_PERMISSIONS = [
   ...MEMBER_PERMISSIONS,
   ...ROLE_PERMISSIONS,
@@ -708,6 +733,14 @@ function normalizeProjectMedia(item: ProjectItem): ProjectItem {
 
 function stripHtml(value: string) {
   return value.replace(/<[^>]*>/g, "").trim();
+}
+
+function normalizeRoleId(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 function formatNewsDate(value?: string | null) {
@@ -1221,8 +1254,23 @@ export default function App() {
   const [roleCreateName, setRoleCreateName] = useState("");
   const [roleCreateDescription, setRoleCreateDescription] = useState("");
   const [roleCreatePermissions, setRoleCreatePermissions] = useState<string[]>([]);
+  const [rolePermissionPickerOpen, setRolePermissionPickerOpen] = useState(false);
+  const [rolePermissionQuery, setRolePermissionQuery] = useState("");
   const [roleCreateSaving, setRoleCreateSaving] = useState(false);
   const [roleCreateError, setRoleCreateError] = useState<string | null>(null);
+  const [roleEditCandidate, setRoleEditCandidate] = useState<AdminRoleItem | null>(null);
+  const [roleEditPermissions, setRoleEditPermissions] = useState<string[]>([]);
+  const [roleEditPickerOpen, setRoleEditPickerOpen] = useState(false);
+  const [roleEditPermissionQuery, setRoleEditPermissionQuery] = useState("");
+  const [roleEditSaving, setRoleEditSaving] = useState(false);
+  const [roleEditError, setRoleEditError] = useState<string | null>(null);
+  const [roleDeleteCandidate, setRoleDeleteCandidate] = useState<AdminRoleItem | null>(null);
+  const [roleDeleteSaving, setRoleDeleteSaving] = useState(false);
+  const [roleDeleteError, setRoleDeleteError] = useState<string | null>(null);
+  const [memberRoleDialog, setMemberRoleDialog] = useState<MemberRoleDialogState | null>(null);
+  const [memberRoleTarget, setMemberRoleTarget] = useState("");
+  const [memberRoleSaving, setMemberRoleSaving] = useState(false);
+  const [memberRoleError, setMemberRoleError] = useState<string | null>(null);
   const [banCandidate, setBanCandidate] = useState<MemberProfile | null>(null);
   const [banReason, setBanReason] = useState("Spamming");
   const [banProgress, setBanProgress] = useState(0);
@@ -1257,6 +1305,58 @@ export default function App() {
     () => buildPermissionFlags(authzPermissions, authzRoles),
     [authzPermissions, authzRoles]
   );
+  const availableRolePermissions = useMemo(() => {
+    const dynamic = rolesList.flatMap((role) =>
+      Array.isArray(role.permissions) ? role.permissions : []
+    );
+    return Array.from(
+      new Set([...ROLE_PERMISSION_BASE, ...authzPermissions, ...dynamic])
+    ).sort((a, b) => a.localeCompare(b));
+  }, [authzPermissions, rolesList]);
+  const filteredRolePermissions = useMemo(() => {
+    const query = rolePermissionQuery.trim().toLowerCase();
+    if (!query) {
+      return availableRolePermissions;
+    }
+    return availableRolePermissions.filter((permission) =>
+      permission.toLowerCase().includes(query)
+    );
+  }, [availableRolePermissions, rolePermissionQuery]);
+  const customRolePermissionCandidate = rolePermissionQuery.trim().toLowerCase();
+  const canAddCustomRolePermission = Boolean(
+    customRolePermissionCandidate &&
+      !availableRolePermissions.some(
+        (permission) => permission.toLowerCase() === customRolePermissionCandidate
+      )
+  );
+  const memberRoleOptions = useMemo(() => {
+    if (!memberRoleDialog) {
+      return [];
+    }
+    const roleIds = rolesList.map((role) => role.id).filter(Boolean);
+    const currentRoles = Array.isArray(memberRoleDialog.member.roles)
+      ? memberRoleDialog.member.roles
+      : [];
+    return memberRoleDialog.mode === "add"
+      ? roleIds.filter((roleId) => !currentRoles.includes(roleId))
+      : currentRoles;
+  }, [memberRoleDialog, rolesList]);
+  const filteredRoleEditPermissions = useMemo(() => {
+    const query = roleEditPermissionQuery.trim().toLowerCase();
+    if (!query) {
+      return availableRolePermissions;
+    }
+    return availableRolePermissions.filter((permission) =>
+      permission.toLowerCase().includes(query)
+    );
+  }, [availableRolePermissions, roleEditPermissionQuery]);
+  const customRoleEditPermissionCandidate = roleEditPermissionQuery.trim().toLowerCase();
+  const canAddCustomRoleEditPermission = Boolean(
+    customRoleEditPermissionCandidate &&
+      !availableRolePermissions.some(
+        (permission) => permission.toLowerCase() === customRoleEditPermissionCandidate
+      )
+  );
   const setApplicationStatus = (id: string, status: ApplicationStatus) => {
     setApplicationItems((prev) =>
       prev.map((item) => (item.id === id ? { ...item, status } : item))
@@ -1280,6 +1380,8 @@ export default function App() {
     setRoleCreateName("");
     setRoleCreateDescription("");
     setRoleCreatePermissions([]);
+    setRolePermissionPickerOpen(false);
+    setRolePermissionQuery("");
     setRoleCreateError(null);
     setRoleCreateOpen(true);
   };
@@ -1289,6 +1391,87 @@ export default function App() {
     }
     setRoleCreateOpen(false);
     setRoleCreateError(null);
+  };
+  const toggleRoleEditPermission = (permission: string) => {
+    setRoleEditPermissions((prev) =>
+      prev.includes(permission)
+        ? prev.filter((perm) => perm !== permission)
+        : [...prev, permission]
+    );
+  };
+  const handleOpenRoleEdit = (role: AdminRoleItem) => {
+    setRoleEditCandidate(role);
+    setRoleEditPermissions(
+      Array.isArray(role.permissions) ? [...new Set(role.permissions)] : []
+    );
+    setRoleEditPickerOpen(false);
+    setRoleEditPermissionQuery("");
+    setRoleEditError(null);
+  };
+  const handleCloseRoleEdit = () => {
+    if (roleEditSaving) {
+      return;
+    }
+    setRoleEditCandidate(null);
+    setRoleEditError(null);
+  };
+  const handleOpenRoleDelete = (role: AdminRoleItem) => {
+    setRoleDeleteCandidate(role);
+    setRoleDeleteError(null);
+  };
+  const handleOpenMemberRoleDialog = (
+    member: MemberProfile,
+    mode: "add" | "remove",
+    presetRoleId?: string
+  ) => {
+    const roleIds = rolesList.map((role) => role.id).filter(Boolean);
+    const currentRoles = Array.isArray(member.roles) ? member.roles : [];
+    const available = mode === "add"
+      ? roleIds.filter((roleId) => !currentRoles.includes(roleId))
+      : currentRoles.filter((roleId) => roleId !== "admin");
+    setMemberRoleDialog({ member, mode, presetRoleId });
+    setMemberRoleTarget(
+      presetRoleId && available.includes(presetRoleId)
+        ? presetRoleId
+        : available[0] ?? ""
+    );
+    setMemberRoleError(null);
+  };
+  const handleCloseMemberRoleDialog = () => {
+    if (memberRoleSaving) {
+      return;
+    }
+    setMemberRoleDialog(null);
+    setMemberRoleError(null);
+  };
+  const handleCloseRoleDelete = () => {
+    if (roleDeleteSaving) {
+      return;
+    }
+    setRoleDeleteCandidate(null);
+    setRoleDeleteError(null);
+  };
+  const handleAddCustomRolePermission = () => {
+    if (!customRolePermissionCandidate) {
+      return;
+    }
+    setRoleCreatePermissions((prev) =>
+      prev.includes(customRolePermissionCandidate)
+        ? prev
+        : [...prev, customRolePermissionCandidate]
+    );
+    setRolePermissionQuery("");
+  };
+  const handleAddCustomRoleEditPermission = () => {
+    if (!customRoleEditPermissionCandidate) {
+      return;
+    }
+    setRoleEditPermissions((prev) =>
+      prev.includes(customRoleEditPermissionCandidate)
+        ? prev
+        : [...prev, customRoleEditPermissionCandidate]
+    );
+    setRoleEditPermissionQuery("");
   };
   const requestApplicationStatusChange = (
     id: string,
@@ -2792,7 +2975,7 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (activePage !== "roles") {
+    if (activePage !== "roles" && activePage !== "members") {
       return;
     }
     if (!permissionFlags.canAccessRoles) {
@@ -2811,20 +2994,35 @@ export default function App() {
 
     (async () => {
       const token = await getApiToken();
-      const data = await requestJson<
-        | { items?: Record<string, unknown>[] }
-        | Record<string, unknown>[]
-      >("https://api.blizz-developments-official.de/api/admin/roles", {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const collectedRawItems: Record<string, unknown>[] = [];
+      const limit = 200;
 
-      const rawItems = Array.isArray(data)
-        ? data
-        : Array.isArray((data as { items?: unknown[] })?.items)
-          ? ((data as { items?: Record<string, unknown>[] }).items ?? [])
-          : [];
+      for (let page = 1; page <= 20; page += 1) {
+        const data = await requestJson<
+          | { items?: Record<string, unknown>[] }
+          | Record<string, unknown>[]
+        >(`https://api.blizz-developments-official.de/api/admin/roles?page=${page}&limit=${limit}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
 
-      const mapped = rawItems
+        const rawItems = Array.isArray(data)
+          ? data
+          : Array.isArray((data as { items?: unknown[] })?.items)
+            ? ((data as { items?: Record<string, unknown>[] }).items ?? [])
+            : [];
+
+        if (!rawItems.length) {
+          break;
+        }
+
+        collectedRawItems.push(...rawItems);
+
+        if (rawItems.length < limit) {
+          break;
+        }
+      }
+
+      const mapped = collectedRawItems
         .map((entry) => {
           const record = entry as Record<string, unknown>;
           const idValue =
@@ -2862,7 +3060,11 @@ export default function App() {
         })
         .filter((item) => item.id);
 
-      setRolesList(mapped);
+      const deduped = Array.from(
+        new Map(mapped.map((item) => [item.id, item])).values()
+      );
+
+      setRolesList(deduped);
     })()
       .catch((error) => {
         const message = error instanceof Error ? error.message : "Unbekannter Fehler.";
@@ -3039,8 +3241,13 @@ export default function App() {
       return;
     }
     const name = roleCreateName.trim();
+    const roleId = normalizeRoleId(name);
     if (!name) {
       setRoleCreateError("Bitte einen Rollennamen eingeben.");
+      return;
+    }
+    if (!roleId) {
+      setRoleCreateError("Ungültiger Rollenname.");
       return;
     }
     if (!roleCreatePermissions.length) {
@@ -3059,13 +3266,12 @@ export default function App() {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          name,
-          description: roleCreateDescription.trim() || null,
+          roleId,
           permissions: roleCreatePermissions
         })
       });
 
-      showToast(`Rolle "${name}" erstellt.`, "success");
+      showToast(`Rolle "${roleId}" erstellt.`, "success");
       setRoleCreateOpen(false);
       setRolesRefreshTick((prev) => prev + 1);
     } catch (error) {
@@ -3074,6 +3280,131 @@ export default function App() {
       showToast("Rolle konnte nicht erstellt werden.", "error");
     } finally {
       setRoleCreateSaving(false);
+    }
+  };
+  const handleSaveRoleEdit = async () => {
+    if (!user || !roleEditCandidate) {
+      return;
+    }
+    if (!roleEditPermissions.length) {
+      setRoleEditError("Bitte mindestens eine Permission setzen.");
+      return;
+    }
+    setRoleEditSaving(true);
+    setRoleEditError(null);
+    try {
+      const token = await getApiToken();
+      await requestJson<unknown>(
+        `https://api.blizz-developments-official.de/api/admin/roles/${encodeURIComponent(roleEditCandidate.id)}`,
+        {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            permissions: roleEditPermissions
+          })
+        }
+      );
+      showToast(`Rolle "${roleEditCandidate.id}" aktualisiert.`, "success");
+      setRoleEditCandidate(null);
+      setRolesRefreshTick((prev) => prev + 1);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unbekannter Fehler.";
+      setRoleEditError(message);
+      showToast("Rolle konnte nicht bearbeitet werden.", "error");
+    } finally {
+      setRoleEditSaving(false);
+    }
+  };
+  const handleDeleteRole = async () => {
+    if (!user || !roleDeleteCandidate) {
+      return;
+    }
+    setRoleDeleteSaving(true);
+    setRoleDeleteError(null);
+    try {
+      const token = await getApiToken();
+      await requestJson<unknown>(
+        `https://api.blizz-developments-official.de/api/admin/roles/${encodeURIComponent(roleDeleteCandidate.id)}`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        }
+      );
+
+      setExpandedRoleIds((prev) => prev.filter((id) => id !== roleDeleteCandidate.id));
+      setRolesRefreshTick((prev) => prev + 1);
+      showToast(`Rolle "${roleDeleteCandidate.id}" gelöscht.`, "success");
+      setRoleDeleteCandidate(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unbekannter Fehler.";
+      setRoleDeleteError(message);
+      showToast("Rolle konnte nicht gelöscht werden.", "error");
+    } finally {
+      setRoleDeleteSaving(false);
+    }
+  };
+  const handleSubmitMemberRoleChange = async () => {
+    if (!user || !memberRoleDialog || !memberRoleTarget) {
+      return;
+    }
+    if (memberRoleDialog.mode === "remove" && memberRoleTarget === "admin") {
+      setMemberRoleError('Die Rolle "admin" kann nicht entfernt werden.');
+      showToast('Die Rolle "admin" kann nicht entfernt werden.', "error");
+      return;
+    }
+    setMemberRoleSaving(true);
+    setMemberRoleError(null);
+    try {
+      const token = await getApiToken();
+      const endpoint =
+        memberRoleDialog.mode === "add"
+          ? "roles/add"
+          : "roles/remove";
+      await requestJson<unknown>(
+        `https://api.blizz-developments-official.de/api/admin/users/${encodeURIComponent(memberRoleDialog.member.uid)}/${endpoint}`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            roles: [memberRoleTarget]
+          })
+        }
+      );
+      setMembers((prev) =>
+        prev.map((member) => {
+          if (member.uid !== memberRoleDialog.member.uid) {
+            return member;
+          }
+          const currentRoles = Array.isArray(member.roles) ? member.roles : [];
+          const nextRoles =
+            memberRoleDialog.mode === "add"
+              ? Array.from(new Set([...currentRoles, memberRoleTarget]))
+              : currentRoles.filter((role) => role !== memberRoleTarget);
+          return { ...member, roles: nextRoles };
+        })
+      );
+      showToast(
+        memberRoleDialog.mode === "add"
+          ? `Rolle "${memberRoleTarget}" hinzugefügt.`
+          : `Rolle "${memberRoleTarget}" entfernt.`,
+        "success"
+      );
+      setMemberRoleDialog(null);
+      setMemberRoleTarget("");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unbekannter Fehler.";
+      setMemberRoleError(message);
+      showToast("Rollenänderung fehlgeschlagen.", "error");
+    } finally {
+      setMemberRoleSaving(false);
     }
   };
 
@@ -3535,6 +3866,9 @@ export default function App() {
                     expandedRoleIds,
                     toggleRoleExpanded,
                     handleOpenRoleCreate,
+                    handleOpenRoleEdit,
+                    handleOpenRoleDelete,
+                    handleOpenMemberRoleDialog,
                     openBanDialog,
                     openWarnDialog,
                     handleAuthzTest,
@@ -3678,28 +4012,65 @@ export default function App() {
                   <label className="text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]">
                     Permissions
                   </label>
-                  <div className="mt-2 max-h-[190px] overflow-auto rounded-[10px] border border-[rgba(255,255,255,0.10)] bg-[#0F1116] p-3">
-                    <div className="flex flex-wrap gap-2">
-                      {ROLE_PERMISSION_SUGGESTIONS.map((permission) => {
-                        const selected = roleCreatePermissions.includes(permission);
-                        return (
-                          <button
-                            key={permission}
-                            type="button"
-                            onClick={() => toggleRoleCreatePermission(permission)}
-                            className={[
-                              "rounded-[8px] border px-2.5 py-1 text-[11px] transition",
-                              selected
-                                ? "border-[#2BFE71] bg-[rgba(43,254,113,0.15)] text-[#2BFE71]"
-                                : "border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.03)] text-[rgba(255,255,255,0.72)] hover:border-[rgba(255,255,255,0.28)]"
-                            ].join(" ")}
-                          >
-                            {permission}
-                          </button>
-                        );
-                      })}
+                  <button
+                    type="button"
+                    onClick={() => setRolePermissionPickerOpen((prev) => !prev)}
+                    className="mt-2 flex w-full items-center justify-between rounded-[10px] border border-[rgba(255,255,255,0.10)] bg-[#0F1116] px-3 py-2 text-left text-[12px] text-[rgba(255,255,255,0.8)] transition hover:border-[rgba(255,255,255,0.22)]"
+                  >
+                    <span>
+                      {rolePermissionPickerOpen ? "Permission-Liste schließen" : "Permission-Liste öffnen"}
+                    </span>
+                    <i
+                      className={`fa-solid fa-chevron-${rolePermissionPickerOpen ? "up" : "down"} text-[10px] text-[rgba(255,255,255,0.55)]`}
+                      aria-hidden="true"
+                    />
+                  </button>
+                  {rolePermissionPickerOpen && (
+                    <div className="mt-2 rounded-[10px] border border-[rgba(255,255,255,0.10)] bg-[#0F1116] p-3">
+                      <input
+                        value={rolePermissionQuery}
+                        onChange={(event) => setRolePermissionQuery(event.target.value)}
+                        className="w-full rounded-[8px] border border-[rgba(255,255,255,0.10)] bg-[#0D0F14] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.85)] outline-none focus:border-[#2BFE71]"
+                        placeholder="Permission suchen..."
+                      />
+                      {canAddCustomRolePermission && (
+                        <button
+                          type="button"
+                          onClick={handleAddCustomRolePermission}
+                          className="mt-2 rounded-[8px] border border-[rgba(255,255,255,0.14)] bg-[#171A21] px-3 py-1.5 text-[11px] font-semibold text-[rgba(255,255,255,0.78)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
+                        >
+                          "{customRolePermissionCandidate}" hinzufügen
+                        </button>
+                      )}
+                      <div className="mt-3 max-h-[220px] overflow-auto">
+                        <div className="flex flex-wrap gap-2">
+                          {filteredRolePermissions.map((permission) => {
+                            const selected = roleCreatePermissions.includes(permission);
+                            return (
+                              <button
+                                key={permission}
+                                type="button"
+                                onClick={() => toggleRoleCreatePermission(permission)}
+                                className={[
+                                  "rounded-[8px] border px-2.5 py-1 text-[11px] transition",
+                                  selected
+                                    ? "border-[#2BFE71] bg-[rgba(43,254,113,0.15)] text-[#2BFE71]"
+                                    : "border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.03)] text-[rgba(255,255,255,0.72)] hover:border-[rgba(255,255,255,0.28)]"
+                                ].join(" ")}
+                              >
+                                {permission}
+                              </button>
+                            );
+                          })}
+                          {!filteredRolePermissions.length && (
+                            <p className="text-[11px] text-[rgba(255,255,255,0.5)]">
+                              Keine Permissions gefunden.
+                            </p>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                  </div>
+                  )}
                   <p className="mt-2 text-[11px] text-[rgba(255,255,255,0.5)]">
                     Ausgewählt: {roleCreatePermissions.length}
                   </p>
@@ -3728,6 +4099,120 @@ export default function App() {
                   disabled={roleCreateSaving}
                 >
                   {roleCreateSaving ? "Erstelle..." : "Rolle erstellen"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {roleEditCandidate && (
+          <div className="fixed inset-0 z-[79] flex items-center justify-center bg-black/70 px-4">
+            <div className="w-full max-w-[620px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
+              <div className="flex items-center justify-between">
+                <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
+                  Rolle bearbeiten
+                </h3>
+                <button
+                  type="button"
+                  onClick={handleCloseRoleEdit}
+                  className="flex h-8 w-8 items-center justify-center rounded-[8px] border border-[rgba(255,255,255,0.14)] bg-[#171A21] text-[rgba(255,255,255,0.78)] transition hover:border-[rgba(255,255,255,0.28)]"
+                  aria-label="Dialog schliessen"
+                >
+                  <i className="fa-solid fa-xmark" aria-hidden="true" />
+                </button>
+              </div>
+              <p className="mt-2 text-[12px] text-[rgba(255,255,255,0.55)]">
+                Rolle: <span className="font-semibold text-[rgba(255,255,255,0.9)]">{roleEditCandidate.id}</span>
+              </p>
+              <div className="mt-4">
+                <label className="text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]">
+                  Permissions
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setRoleEditPickerOpen((prev) => !prev)}
+                  className="mt-2 flex w-full items-center justify-between rounded-[10px] border border-[rgba(255,255,255,0.10)] bg-[#0F1116] px-3 py-2 text-left text-[12px] text-[rgba(255,255,255,0.8)] transition hover:border-[rgba(255,255,255,0.22)]"
+                >
+                  <span>
+                    {roleEditPickerOpen ? "Permission-Liste schließen" : "Permission-Liste öffnen"}
+                  </span>
+                  <i
+                    className={`fa-solid fa-chevron-${roleEditPickerOpen ? "up" : "down"} text-[10px] text-[rgba(255,255,255,0.55)]`}
+                    aria-hidden="true"
+                  />
+                </button>
+                {roleEditPickerOpen && (
+                  <div className="mt-2 rounded-[10px] border border-[rgba(255,255,255,0.10)] bg-[#0F1116] p-3">
+                    <input
+                      value={roleEditPermissionQuery}
+                      onChange={(event) => setRoleEditPermissionQuery(event.target.value)}
+                      className="w-full rounded-[8px] border border-[rgba(255,255,255,0.10)] bg-[#0D0F14] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.85)] outline-none focus:border-[#2BFE71]"
+                      placeholder="Permission suchen..."
+                    />
+                    {canAddCustomRoleEditPermission && (
+                      <button
+                        type="button"
+                        onClick={handleAddCustomRoleEditPermission}
+                        className="mt-2 rounded-[8px] border border-[rgba(255,255,255,0.14)] bg-[#171A21] px-3 py-1.5 text-[11px] font-semibold text-[rgba(255,255,255,0.78)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
+                      >
+                        "{customRoleEditPermissionCandidate}" hinzufügen
+                      </button>
+                    )}
+                    <div className="mt-3 max-h-[220px] overflow-auto">
+                      <div className="flex flex-wrap gap-2">
+                        {filteredRoleEditPermissions.map((permission) => {
+                          const selected = roleEditPermissions.includes(permission);
+                          return (
+                            <button
+                              key={`edit-${permission}`}
+                              type="button"
+                              onClick={() => toggleRoleEditPermission(permission)}
+                              className={[
+                                "rounded-[8px] border px-2.5 py-1 text-[11px] transition",
+                                selected
+                                  ? "border-[#2BFE71] bg-[rgba(43,254,113,0.15)] text-[#2BFE71]"
+                                  : "border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.03)] text-[rgba(255,255,255,0.72)] hover:border-[rgba(255,255,255,0.28)]"
+                              ].join(" ")}
+                            >
+                              {permission}
+                            </button>
+                          );
+                        })}
+                        {!filteredRoleEditPermissions.length && (
+                          <p className="text-[11px] text-[rgba(255,255,255,0.5)]">
+                            Keine Permissions gefunden.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <p className="mt-2 text-[11px] text-[rgba(255,255,255,0.5)]">
+                  Ausgewählt: {roleEditPermissions.length}
+                </p>
+              </div>
+              {roleEditError && (
+                <div className="mt-4 rounded-[10px] border border-[rgba(255,100,100,0.25)] bg-[rgba(255,100,100,0.08)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.8)]">
+                  {roleEditError}
+                </div>
+              )}
+              <div className="mt-5 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={handleCloseRoleEdit}
+                  className="cta-secondary px-4 py-2 text-[12px]"
+                  disabled={roleEditSaving}
+                >
+                  Abbrechen
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleSaveRoleEdit();
+                  }}
+                  className="cta-primary px-4 py-2 text-[12px] disabled:opacity-60"
+                  disabled={roleEditSaving}
+                >
+                  {roleEditSaving ? "Speichere..." : "Speichern"}
                 </button>
               </div>
             </div>
@@ -3772,6 +4257,115 @@ export default function App() {
                   className="cta-primary px-4 py-2 text-[12px]"
                 >
                   Bestätigen
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {roleDeleteCandidate && (
+          <div className="fixed inset-0 z-[79] flex items-center justify-center bg-black/70 px-4">
+            <div className="w-full max-w-[460px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
+              <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
+                Rolle löschen
+              </h3>
+              <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.65)]">
+                Rolle{" "}
+                <span className="font-semibold text-[rgba(255,255,255,0.92)]">
+                  {roleDeleteCandidate.id}
+                </span>{" "}
+                wirklich löschen?
+              </p>
+              {roleDeleteError && (
+                <div className="mt-3 rounded-[10px] border border-[rgba(255,100,100,0.25)] bg-[rgba(255,100,100,0.08)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.8)]">
+                  {roleDeleteError}
+                </div>
+              )}
+              <div className="mt-5 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={handleCloseRoleDelete}
+                  disabled={roleDeleteSaving}
+                  className="cta-secondary px-4 py-2 text-[12px]"
+                >
+                  Abbrechen
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleDeleteRole();
+                  }}
+                  disabled={roleDeleteSaving}
+                  className="rounded-[10px] border border-[#C74646] bg-[#FF5B5B] px-4 py-2 text-[12px] font-semibold text-[#0D0E12] shadow-[0_4px_0_#C74646] transition active:translate-y-[2px] active:shadow-[0_2px_0_#C74646] disabled:opacity-60"
+                >
+                  {roleDeleteSaving ? "Lösche..." : "Löschen"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {memberRoleDialog && (
+          <div className="fixed inset-0 z-[79] flex items-center justify-center bg-black/70 px-4">
+            <div className="w-full max-w-[460px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
+              <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
+                {memberRoleDialog.mode === "add" ? "Rolle hinzufügen" : "Rolle entfernen"}
+              </h3>
+              <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.65)]">
+                User:{" "}
+                <span className="font-semibold text-[rgba(255,255,255,0.9)]">
+                  {memberRoleDialog.member.username ?? memberRoleDialog.member.uid}
+                </span>
+              </p>
+              {memberRoleDialog.mode === "add" ? (
+                <div className="mt-4">
+                  <label className="text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]">
+                    Rolle
+                  </label>
+                  <select
+                    value={memberRoleTarget}
+                    onChange={(event) => setMemberRoleTarget(event.target.value)}
+                    className="mt-2 w-full rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[#0F1116] px-3 py-2 text-[13px] text-[rgba(255,255,255,0.85)] outline-none focus:border-[#2BFE71]"
+                    disabled={memberRoleSaving || memberRoleOptions.length === 0}
+                  >
+                    {!memberRoleOptions.length && <option value="">Keine Rollen verfügbar</option>}
+                    {memberRoleOptions.map((roleId) => (
+                      <option key={roleId} value={roleId}>
+                        {roleId}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <p className="mt-4 text-[13px] text-[rgba(255,255,255,0.72)]">
+                  Rolle{" "}
+                  <span className="font-semibold text-[rgba(255,255,255,0.92)]">
+                    {memberRoleTarget || memberRoleDialog.presetRoleId || "—"}
+                  </span>{" "}
+                  wirklich entfernen?
+                </p>
+              )}
+              {memberRoleError && (
+                <div className="mt-3 rounded-[10px] border border-[rgba(255,100,100,0.25)] bg-[rgba(255,100,100,0.08)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.8)]">
+                  {memberRoleError}
+                </div>
+              )}
+              <div className="mt-5 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={handleCloseMemberRoleDialog}
+                  disabled={memberRoleSaving}
+                  className="cta-secondary px-4 py-2 text-[12px]"
+                >
+                  Abbrechen
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleSubmitMemberRoleChange();
+                  }}
+                  disabled={memberRoleSaving || !memberRoleTarget}
+                  className="cta-primary px-4 py-2 text-[12px] disabled:opacity-60"
+                >
+                  {memberRoleSaving ? "Speichere..." : "Bestätigen"}
                 </button>
               </div>
             </div>
@@ -4942,6 +5536,13 @@ function renderContent(
   expandedRoleIds: string[],
   onToggleRoleExpanded: (roleId: string) => void,
   onOpenRoleCreate: () => void,
+  onOpenRoleEdit: (role: AdminRoleItem) => void,
+  onOpenRoleDelete: (role: AdminRoleItem) => void,
+  onOpenMemberRoleDialog: (
+    member: MemberProfile,
+    mode: "add" | "remove",
+    presetRoleId?: string
+  ) => void,
   onOpenBanDialog: (member: MemberProfile) => void,
   onOpenWarnDialog: (member: MemberProfile) => void,
   handleAuthzTest: () => void,
@@ -6713,6 +7314,7 @@ function renderContent(
     }
     const canBanUsers = permissionFlags.canBanUsers;
     const canWarnUsers = permissionFlags.canWarnUsers;
+    const canManageUserRoles = permissionFlags.canAccessRoles;
     const showActions = canBanUsers || canWarnUsers;
     return (
       <div className="space-y-8">
@@ -6790,9 +7392,42 @@ function renderContent(
                   {member.uid}
                 </div>
                 <div className="text-[11px] text-[rgba(255,255,255,0.6)]">
-                  {member.roles && member.roles.length > 0
-                    ? member.roles.join(", ")
-                    : "—"}
+                  <div className="flex flex-wrap items-center gap-1">
+                    {Array.isArray(member.roles) && member.roles.length > 0 ? (
+                      member.roles.map((roleId) => (
+                        <span
+                          key={`${member.uid}-${roleId}`}
+                          className="inline-flex items-center gap-1 rounded-[8px] border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.04)] px-2 py-0.5 text-[10px] text-[rgba(255,255,255,0.78)]"
+                        >
+                          {roleId}
+                          {canManageUserRoles && roleId !== "admin" && (
+                            <button
+                              type="button"
+                              onClick={() => onOpenMemberRoleDialog(member, "remove", roleId)}
+                              className="text-[rgba(255,255,255,0.55)] transition hover:text-[#FF8A8A]"
+                              aria-label={`Rolle ${roleId} entfernen`}
+                              title={`Rolle ${roleId} entfernen`}
+                            >
+                              <i className="fa-solid fa-xmark text-[9px]" aria-hidden="true" />
+                            </button>
+                          )}
+                        </span>
+                      ))
+                    ) : (
+                      <span>—</span>
+                    )}
+                    {canManageUserRoles && (
+                      <button
+                        type="button"
+                        onClick={() => onOpenMemberRoleDialog(member, "add")}
+                        className="inline-flex items-center rounded-[8px] border border-[rgba(43,254,113,0.35)] bg-[rgba(43,254,113,0.12)] px-2 py-0.5 text-[10px] font-semibold text-[#2BFE71] transition hover:bg-[rgba(43,254,113,0.22)]"
+                        title="Rolle hinzufügen"
+                        aria-label="Rolle hinzufügen"
+                      >
+                        Add
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="text-[11px] text-[rgba(255,255,255,0.6)]">
                   {member.minecraftName ? `MC: ${member.minecraftName}` : "—"}
@@ -6905,10 +7540,17 @@ function renderContent(
               key={role.id}
               className="rounded-[14px] border border-[rgba(255,255,255,0.10)] bg-[#101218] shadow-[0_12px_22px_rgba(0,0,0,0.25)] transition hover:border-[rgba(255,255,255,0.18)]"
             >
-              <button
-                type="button"
+              <div
+                className="flex cursor-pointer items-center justify-between gap-3 px-4 py-4"
                 onClick={() => onToggleRoleExpanded(role.id)}
-                className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left"
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onToggleRoleExpanded(role.id);
+                  }
+                }}
+                role="button"
+                tabIndex={0}
               >
                 <div className="min-w-0">
                   <p className="truncate text-[15px] font-semibold text-[rgba(255,255,255,0.92)]">
@@ -6919,17 +7561,43 @@ function renderContent(
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="rounded-[10px] border border-[rgba(43,254,113,0.35)] bg-[rgba(43,254,113,0.12)] px-3 py-1 text-[11px] font-semibold text-[#2BFE71]">
-                    {role.permissions.length} Rechte
-                  </span>
-                  <i
-                    className={`fa-solid fa-chevron-down text-[12px] text-[rgba(255,255,255,0.55)] transition-transform duration-300 ${
-                      expandedRoleIds.includes(role.id) ? "rotate-180" : ""
-                    }`}
-                    aria-hidden="true"
-                  />
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onOpenRoleEdit(role);
+                    }}
+                    className="flex h-8 w-8 items-center justify-center rounded-[6px] bg-[rgba(43,254,113,0.12)] text-[#2BFE71] shadow-[0_0_0_1px_rgba(43,254,113,0.2)] transition hover:bg-[rgba(43,254,113,0.2)]"
+                    title="Rolle bearbeiten"
+                    aria-label={`Rolle ${role.id} bearbeiten`}
+                  >
+                    <i className="fa-solid fa-pen" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onOpenRoleDelete(role);
+                    }}
+                    className="mr-1 flex h-8 w-8 items-center justify-center rounded-[6px] bg-[rgba(255,91,91,0.18)] text-[#FF8A8A] shadow-[0_0_0_1px_rgba(255,91,91,0.25)] transition hover:bg-[rgba(255,91,91,0.28)] hover:text-[#FF5B5B]"
+                    title="Rolle löschen"
+                    aria-label={`Rolle ${role.id} löschen`}
+                  >
+                    <i className="fa-solid fa-trash" aria-hidden="true" />
+                  </button>
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-[10px] border border-[rgba(43,254,113,0.35)] bg-[rgba(43,254,113,0.12)] px-3 py-1 text-[11px] font-semibold text-[#2BFE71]">
+                      {role.permissions.length} Rechte
+                    </span>
+                    <i
+                      className={`fa-solid fa-chevron-down text-[12px] text-[rgba(255,255,255,0.55)] transition-transform duration-300 ${
+                        expandedRoleIds.includes(role.id) ? "rotate-180" : ""
+                      }`}
+                      aria-hidden="true"
+                    />
+                  </div>
                 </div>
-              </button>
+              </div>
 
               <div
                 className={`overflow-hidden transition-all duration-300 ${
