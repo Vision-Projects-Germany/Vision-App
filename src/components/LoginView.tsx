@@ -69,7 +69,7 @@ export function LoginView({
             type="button"
             onClick={onToggleExpanded}
             disabled={loading}
-            className={(expanded ? "cta-secondary" : "cta-primary") + " mt-5 w-full transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"}
+            className={(expanded ? "cta-secondary" : "cta-primary") + " mt-5 w-full transition-all duration-200 active:scale-[0.98]"}
             aria-expanded={expanded}
             aria-label={expanded ? "Abbrechen" : "Anmelden"}
           >
@@ -159,7 +159,7 @@ export function LoginView({
 
               <button
                 type="button"
-                className={(canSubmit ? "cta-primary" : "cta-secondary") + " w-full justify-center transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"}
+                className={(canSubmit ? "cta-primary" : "cta-secondary") + " w-full justify-center transition-all duration-200 active:scale-[0.98]"}
                 disabled={loading || !canSubmit}
                 onClick={onSubmit}
                 aria-label="Login absenden"

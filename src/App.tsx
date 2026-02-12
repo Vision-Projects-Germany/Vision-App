@@ -3716,7 +3716,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={handleCloseRoleCreate}
-                  className="rounded-[10px] border border-[rgba(255,255,255,0.14)] bg-[#171A21] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.78)] transition hover:border-[rgba(255,255,255,0.28)]"
+                  className="cta-secondary px-4 py-2 text-[12px]"
                   disabled={roleCreateSaving}
                 >
                   Abbrechen
@@ -3724,7 +3724,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => void handleCreateRole()}
-                  className="rounded-[10px] border border-[#1E9A55] bg-[#2BFE71] px-4 py-2 text-[12px] font-semibold text-[#0D0E12] shadow-[0_4px_0_#1E9A55] transition active:translate-y-[2px] active:shadow-[0_2px_0_#1E9A55] disabled:opacity-60"
+                  className="cta-primary px-4 py-2 text-[12px] disabled:opacity-60"
                   disabled={roleCreateSaving}
                 >
                   {roleCreateSaving ? "Erstelle..." : "Rolle erstellen"}
@@ -3762,14 +3762,14 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setPendingApplicationAction(null)}
-                  className="rounded-[10px] border border-[rgba(255,255,255,0.14)] bg-[#171A21] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.78)] transition hover:border-[rgba(255,255,255,0.28)]"
+                  className="cta-secondary px-4 py-2 text-[12px]"
                 >
                   Abbrechen
                 </button>
                 <button
                   type="button"
                   onClick={confirmApplicationStatusChange}
-                  className="rounded-[10px] border border-[#1E9A55] bg-[#2BFE71] px-4 py-2 text-[12px] font-semibold text-[#0D0E12] shadow-[0_4px_0_#1E9A55] transition active:translate-y-[2px] active:shadow-[0_2px_0_#1E9A55]"
+                  className="cta-primary px-4 py-2 text-[12px]"
                 >
                   Bestätigen
                 </button>
@@ -3844,7 +3844,7 @@ export default function App() {
                     setBanCandidate(null);
                     resetBanHold();
                   }}
-                  className="w-full rounded-[10px] border border-[rgba(255,255,255,0.14)] bg-[#171A21] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.78)] transition hover:border-[rgba(255,255,255,0.28)]"
+                  className="w-full cta-secondary px-4 py-2 text-[12px]"
                 >
                   Abbrechen
                 </button>
@@ -3919,7 +3919,7 @@ export default function App() {
                     setWarnCandidate(null);
                     resetWarnHold();
                   }}
-                  className="w-full rounded-[10px] border border-[rgba(255,255,255,0.14)] bg-[#171A21] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.78)] transition hover:border-[rgba(255,255,255,0.28)]"
+                  className="w-full cta-secondary px-4 py-2 text-[12px]"
                 >
                   Abbrechen
                 </button>
@@ -4073,7 +4073,7 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => setSelectedProject(null)}
-                    className="rounded-[10px] border border-[rgba(255,255,255,0.14)] bg-[#16181c] px-4 py-2 text-[13px] font-semibold text-[rgba(255,255,255,0.92)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
+                    className="cta-secondary px-4 py-2 text-[13px]"
                   >
                     Schliessen
                   </button>
@@ -4207,7 +4207,7 @@ export default function App() {
                           type="button"
                           onClick={editingProjectId ? handleUpdateProject : handleCreateProject}
                           disabled={projectSaving || !projectModrinthId.trim()}
-                          className="rounded-full bg-[#2BFE71] px-4 py-2 text-[12px] font-semibold text-[#0D0E12] disabled:opacity-60"
+                          className="cta-primary px-4 py-2 text-[12px] disabled:opacity-60"
                         >
                           {projectSaving
                             ? "Speichern..."
@@ -4505,7 +4505,7 @@ export default function App() {
                             projectSaving ||
                             (!editingProjectId && (!projectLoader || !projectVersion))
                           }
-                          className="rounded-full bg-[#2BFE71] px-4 py-2 text-[12px] font-semibold text-[#0D0E12] disabled:opacity-60"
+                          className="cta-primary px-4 py-2 text-[12px] disabled:opacity-60"
                         >
                           {projectSaving
                             ? "Speichern..."
@@ -4602,7 +4602,7 @@ export default function App() {
                       type="button"
                       onClick={handleMediaUpload}
                       disabled={mediaUploadLoading || !mediaUploadFile}
-                      className="rounded-full bg-[#2BFE71] px-4 py-2 text-[12px] font-semibold text-[#0D0E12] disabled:opacity-60"
+                      className="cta-primary px-4 py-2 text-[12px] disabled:opacity-60"
                     >
                       {mediaUploadLoading ? "Hochladen..." : "Upload starten"}
                     </button>
@@ -4743,7 +4743,7 @@ export default function App() {
                       type="button"
                       onClick={handleCreateNews}
                       disabled={newsSaving || newsCoverUploading}
-                      className="rounded-full bg-[#2BFE71] px-4 py-2 text-[12px] font-semibold text-[#0D0E12] disabled:opacity-60"
+                      className="cta-primary px-4 py-2 text-[12px] disabled:opacity-60"
                     >
                       {newsSaving || newsCoverUploading ? "Speichern..." : "News speichern"}
                     </button>
@@ -4785,7 +4785,7 @@ export default function App() {
                   <div className="md:col-span-2 mt-2">
                     <button
                       type="button"
-                      className="rounded-full bg-[#2BFE71] px-4 py-2 text-[12px] font-semibold text-[#0D0E12]"
+                      className="cta-primary px-4 py-2 text-[12px]"
                     >
                       Event speichern
                     </button>
@@ -4809,7 +4809,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setProjectDeleteCandidate(null)}
-                  className="rounded-[10px] border border-[rgba(255,255,255,0.14)] bg-[#171A21] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.78)] transition hover:border-[rgba(255,255,255,0.28)]"
+                  className="cta-secondary px-4 py-2 text-[12px]"
                 >
                   Abbrechen
                 </button>
@@ -4842,7 +4842,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setNewsDeleteCandidate(null)}
-                  className="rounded-[10px] border border-[rgba(255,255,255,0.14)] bg-[#171A21] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.78)] transition hover:border-[rgba(255,255,255,0.28)]"
+                  className="cta-secondary px-4 py-2 text-[12px]"
                   disabled={newsDeleting}
                 >
                   Abbrechen
@@ -5211,7 +5211,7 @@ function renderContent(
           <button
             type="button"
             onClick={() => onNavigate("editor")}
-            className="flex items-center gap-2 rounded-[12px] border border-[rgba(255,255,255,0.12)] bg-[#16181c] px-4 py-3 text-[14px] font-semibold text-[rgba(255,255,255,0.70)] transition hover:border-[#2BFE71] hover:bg-[rgba(43,254,113,0.1)] hover:text-[#2BFE71]"
+            className="cta-secondary flex items-center gap-2 px-4 py-3 text-[14px]"
             aria-label="Zurück"
           >
             <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
@@ -5221,7 +5221,7 @@ function renderContent(
             <button
               type="button"
               onClick={handleNewProject}
-              className="flex items-center gap-2 rounded-[12px] bg-[#2BFE71] px-6 py-3 text-[14px] font-semibold text-[#0D0E12] transition hover:bg-[#25e565]"
+              className="cta-primary flex items-center gap-2 px-6 py-3 text-[14px]"
             >
               <i className="fa-solid fa-plus" aria-hidden="true" />
               Neues Projekt
@@ -5671,7 +5671,7 @@ function renderContent(
           <button
             type="button"
             onClick={() => onNavigate("editor")}
-            className="flex items-center gap-2 rounded-[12px] border border-[rgba(255,255,255,0.12)] bg-[#16181c] px-4 py-3 text-[14px] font-semibold text-[rgba(255,255,255,0.70)] transition hover:border-[#2BFE71] hover:bg-[rgba(43,254,113,0.1)] hover:text-[#2BFE71]"
+            className="cta-secondary flex items-center gap-2 px-4 py-3 text-[14px]"
             aria-label="Zurück"
           >
             <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
@@ -5680,7 +5680,7 @@ function renderContent(
           <button
             type="button"
             onClick={() => setEditorModal("news")}
-            className="flex items-center gap-2 rounded-[12px] bg-[#2BFE71] px-6 py-3 text-[14px] font-semibold text-[#0D0E12] transition hover:bg-[#25e565]"
+            className="cta-primary flex items-center gap-2 px-6 py-3 text-[14px]"
           >
             <i className="fa-solid fa-plus" aria-hidden="true" />
             Neue News
@@ -5767,7 +5767,7 @@ function renderContent(
           <button
             type="button"
             onClick={() => onNavigate("editor")}
-            className="flex items-center gap-2 rounded-[12px] border border-[rgba(255,255,255,0.12)] bg-[#16181c] px-4 py-3 text-[14px] font-semibold text-[rgba(255,255,255,0.70)] transition hover:border-[#2BFE71] hover:bg-[rgba(43,254,113,0.1)] hover:text-[#2BFE71]"
+            className="cta-secondary flex items-center gap-2 px-4 py-3 text-[14px]"
             aria-label="Zurück"
           >
             <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
@@ -5777,7 +5777,7 @@ function renderContent(
             <button
               type="button"
               onClick={() => setEditorModal("media")}
-              className="flex items-center gap-2 rounded-[12px] bg-[#2BFE71] px-6 py-3 text-[14px] font-semibold text-[#0D0E12] transition hover:bg-[#25e565]"
+              className="cta-primary flex items-center gap-2 px-6 py-3 text-[14px]"
             >
               <i className="fa-solid fa-plus" aria-hidden="true" />
               Bild hochladen
@@ -5821,7 +5821,7 @@ function renderContent(
             <button
               type="button"
               onClick={handleDeleteSelectedMedia}
-              className="flex items-center gap-2 rounded-[8px] border border-[rgba(255,255,255,0.14)] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.75)] transition-all duration-300 hover:border-[#FF5B5B] hover:text-[#FF5B5B] hover:bg-[rgba(255,91,91,0.1)] hover:scale-105"
+              className="flex items-center gap-2 rounded-[8px] border border-[rgba(255,255,255,0.14)] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.75)] transition-all duration-300 hover:border-[#FF5B5B] hover:text-[#FF5B5B] hover:bg-[rgba(255,91,91,0.1)]"
             >
               <i className="fa-solid fa-trash-can" aria-hidden="true" />
               Löschen
@@ -5848,7 +5848,7 @@ function renderContent(
                   <button
                     type="button"
                     onClick={() => fetchMediaPage(section.key, 1, true)}
-                    className="rounded-[8px] border border-[rgba(255,255,255,0.14)] px-4 py-2 text-[12px] text-[rgba(255,255,255,0.75)] transition-all duration-300 hover:border-[#2BFE71] hover:text-[#2BFE71] hover:bg-[rgba(43,254,113,0.08)] hover:scale-105"
+                    className="rounded-[8px] border border-[rgba(255,255,255,0.14)] px-4 py-2 text-[12px] text-[rgba(255,255,255,0.75)] transition-all duration-300 hover:border-[#2BFE71] hover:text-[#2BFE71] hover:bg-[rgba(43,254,113,0.08)]"
                     disabled={loading}
                   >
                     {loading ? (
@@ -5928,7 +5928,7 @@ function renderContent(
                                 <button
                                   type="button"
                                   onClick={() => toggleMediaSelection(section.key, item.id!)}
-                                  className={`flex h-8 w-8 items-center justify-center rounded-[8px] border text-[12px] transition-all duration-300 transform hover:scale-110 ${isSelected
+                                  className={`flex h-8 w-8 items-center justify-center rounded-[8px] border text-[12px] transition-all duration-300 ${isSelected
                                     ? "border-[#2BFE71] bg-[#2BFE71] text-[#0D0E12] shadow-[0_0_15px_rgba(43,254,113,0.5)]"
                                     : "border-[rgba(255,255,255,0.35)] bg-black/40 backdrop-blur-sm text-white hover:border-[#2BFE71] hover:bg-[rgba(43,254,113,0.2)]"
                                     }`}
@@ -5939,7 +5939,7 @@ function renderContent(
                                 <button
                                   type="button"
                                   onClick={() => handleDeleteMedia(section.key, item.id!)}
-                                  className="flex h-8 w-8 items-center justify-center rounded-[8px] border border-[rgba(255,255,255,0.35)] bg-black/40 backdrop-blur-sm text-[12px] text-white transition-all duration-300 transform hover:scale-110 hover:border-[#FF5B5B] hover:text-[#FF5B5B] hover:bg-[rgba(255,91,91,0.2)]"
+                                  className="flex h-8 w-8 items-center justify-center rounded-[8px] border border-[rgba(255,255,255,0.35)] bg-black/40 backdrop-blur-sm text-[12px] text-white transition-all duration-300 hover:border-[#FF5B5B] hover:text-[#FF5B5B] hover:bg-[rgba(255,91,91,0.2)]"
                                   aria-label="Löschen"
                                 >
                                   <i className="fa-solid fa-trash-can" aria-hidden="true" />
@@ -5982,7 +5982,7 @@ function renderContent(
                     type="button"
                     onClick={() => fetchMediaPage(section.key, pageValue + 1)}
                     disabled={!hasMore || loading}
-                    className="rounded-[8px] border border-[rgba(255,255,255,0.14)] px-4 py-2 text-[12px] text-[rgba(255,255,255,0.75)] transition-all duration-300 hover:border-[#2BFE71] hover:text-[#2BFE71] hover:bg-[rgba(43,254,113,0.08)] hover:scale-105 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:hover:bg-transparent"
+                    className="rounded-[8px] border border-[rgba(255,255,255,0.14)] px-4 py-2 text-[12px] text-[rgba(255,255,255,0.75)] transition-all duration-300 hover:border-[#2BFE71] hover:text-[#2BFE71] hover:bg-[rgba(43,254,113,0.08)] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                   >
                     {loading ? (
                       <span className="flex items-center gap-2">
@@ -6316,7 +6316,7 @@ function renderContent(
           <button
             type="button"
             onClick={() => onNavigate("admin")}
-            className="flex items-center gap-2 rounded-[12px] border border-[rgba(255,255,255,0.12)] bg-[#16181c] px-4 py-3 text-[14px] font-semibold text-[rgba(255,255,255,0.70)] transition hover:border-[#2BFE71] hover:bg-[rgba(43,254,113,0.1)] hover:text-[#2BFE71]"
+            className="cta-secondary flex items-center gap-2 px-4 py-3 text-[14px]"
             aria-label="Zurück"
           >
             <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
@@ -6475,7 +6475,7 @@ function renderContent(
           <button
             type="button"
             onClick={() => onNavigate("admin")}
-            className="group flex items-center gap-2 rounded-[12px] border border-[rgba(255,255,255,0.12)] bg-[#16181c] px-4 py-3 text-[14px] font-semibold text-[rgba(255,255,255,0.70)] transition-all hover:border-[#2BFE71] hover:bg-[rgba(43,254,113,0.1)] hover:text-[#2BFE71] hover:scale-105 active:scale-95"
+            className="cta-secondary group flex items-center gap-2 px-4 py-3 text-[14px] active:scale-95"
             aria-label="Zurück"
           >
             <i className="fa-solid fa-arrow-left text-[14px] transition-transform group-hover:-translate-x-1" aria-hidden="true" />
@@ -6720,7 +6720,7 @@ function renderContent(
           <button
             type="button"
             onClick={() => onNavigate("admin")}
-            className="flex items-center gap-2 rounded-[12px] border border-[rgba(255,255,255,0.12)] bg-[#16181c] px-4 py-3 text-[14px] font-semibold text-[rgba(255,255,255,0.70)] transition hover:border-[#2BFE71] hover:bg-[rgba(43,254,113,0.1)] hover:text-[#2BFE71]"
+            className="cta-secondary flex items-center gap-2 px-4 py-3 text-[14px]"
             aria-label="Zurück"
           >
             <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
@@ -6873,7 +6873,7 @@ function renderContent(
           <button
             type="button"
             onClick={() => onNavigate("admin")}
-            className="flex items-center gap-2 rounded-[12px] border border-[rgba(255,255,255,0.12)] bg-[#16181c] px-4 py-3 text-[14px] font-semibold text-[rgba(255,255,255,0.70)] transition hover:border-[#2BFE71] hover:bg-[rgba(43,254,113,0.1)] hover:text-[#2BFE71]"
+            className="cta-secondary flex items-center gap-2 px-4 py-3 text-[14px]"
             aria-label="Zurück"
           >
             <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
@@ -6883,7 +6883,7 @@ function renderContent(
             <button
               type="button"
               onClick={onOpenRoleCreate}
-              className="rounded-[10px] border border-[#1E9A55] bg-[#2BFE71] px-5 py-2.5 text-[13px] font-semibold text-[#0D0E12] shadow-[0_4px_0_#1E9A55] transition active:translate-y-[2px] active:shadow-[0_2px_0_#1E9A55]"
+              className="cta-primary px-5 py-2.5 text-[13px]"
             >
               Rolle erstellen
             </button>
@@ -7014,7 +7014,7 @@ function renderContent(
         <button
           type="button"
           onClick={onLogout}
-          className="mt-[12px] rounded-full border border-[rgba(255,255,255,0.12)] bg-[#16181c] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.85)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
+          className="cta-secondary mt-[12px] px-4 py-2 text-[12px]"
         >
           Abmelden
         </button>
