@@ -91,6 +91,15 @@ interface MemberProfile {
   projects?: string[];
 }
 
+interface AdminRoleItem {
+  id: string;
+  name: string;
+  description?: string | null;
+  permissions: string[];
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
 interface ModrinthGalleryItem {
   url?: string;
   raw_url?: string;
@@ -337,6 +346,33 @@ const CALENDAR_PERMISSIONS = [
 ];
 const MEMBER_PERMISSIONS = ["users.read.admin", "users.edit.admin"];
 const ROLE_PERMISSIONS = ["users.roles.manage", "users.permissions.manage"];
+const ROLE_PERMISSION_SUGGESTIONS = [
+  "users.read.admin",
+  "users.edit.admin",
+  "users.roles.manage",
+  "users.permissions.manage",
+  "projects.create",
+  "projects.edit",
+  "projects.delete",
+  "projects.publish",
+  "projects.unpublish",
+  "news.create",
+  "news.edit",
+  "news.delete",
+  "news.publish",
+  "news.unpublish",
+  "calendar.create",
+  "calendar.edit",
+  "calendar.delete",
+  "calendar.publish",
+  "calendar.unpublish",
+  "media.upload",
+  "media.delete",
+  "media.moderate",
+  "content.audit.read",
+  "system.config.read",
+  "system.config.write"
+];
 const ADMIN_PERMISSIONS = [
   ...MEMBER_PERMISSIONS,
   ...ROLE_PERMISSIONS,
@@ -1176,6 +1212,17 @@ export default function App() {
   const [members, setMembers] = useState<MemberProfile[]>([]);
   const [membersLoading, setMembersLoading] = useState(false);
   const [membersError, setMembersError] = useState<string | null>(null);
+  const [rolesList, setRolesList] = useState<AdminRoleItem[]>([]);
+  const [rolesLoading, setRolesLoading] = useState(false);
+  const [rolesError, setRolesError] = useState<string | null>(null);
+  const [expandedRoleIds, setExpandedRoleIds] = useState<string[]>([]);
+  const [rolesRefreshTick, setRolesRefreshTick] = useState(0);
+  const [roleCreateOpen, setRoleCreateOpen] = useState(false);
+  const [roleCreateName, setRoleCreateName] = useState("");
+  const [roleCreateDescription, setRoleCreateDescription] = useState("");
+  const [roleCreatePermissions, setRoleCreatePermissions] = useState<string[]>([]);
+  const [roleCreateSaving, setRoleCreateSaving] = useState(false);
+  const [roleCreateError, setRoleCreateError] = useState<string | null>(null);
   const [banCandidate, setBanCandidate] = useState<MemberProfile | null>(null);
   const [banReason, setBanReason] = useState("Spamming");
   const [banProgress, setBanProgress] = useState(0);
@@ -1214,6 +1261,34 @@ export default function App() {
     setApplicationItems((prev) =>
       prev.map((item) => (item.id === id ? { ...item, status } : item))
     );
+  };
+  const toggleRoleExpanded = (roleId: string) => {
+    setExpandedRoleIds((prev) =>
+      prev.includes(roleId)
+        ? prev.filter((id) => id !== roleId)
+        : [...prev, roleId]
+    );
+  };
+  const toggleRoleCreatePermission = (permission: string) => {
+    setRoleCreatePermissions((prev) =>
+      prev.includes(permission)
+        ? prev.filter((perm) => perm !== permission)
+        : [...prev, permission]
+    );
+  };
+  const handleOpenRoleCreate = () => {
+    setRoleCreateName("");
+    setRoleCreateDescription("");
+    setRoleCreatePermissions([]);
+    setRoleCreateError(null);
+    setRoleCreateOpen(true);
+  };
+  const handleCloseRoleCreate = () => {
+    if (roleCreateSaving) {
+      return;
+    }
+    setRoleCreateOpen(false);
+    setRoleCreateError(null);
   };
   const requestApplicationStatusChange = (
     id: string,
@@ -2717,6 +2792,89 @@ export default function App() {
   ]);
 
   useEffect(() => {
+    if (activePage !== "roles") {
+      return;
+    }
+    if (!permissionFlags.canAccessRoles) {
+      return;
+    }
+    if (!user) {
+      setRolesList([]);
+      setRolesLoading(false);
+      setRolesError("Bitte zuerst anmelden.");
+      return;
+    }
+
+    setRolesLoading(true);
+    setRolesError(null);
+    setRolesList([]);
+
+    (async () => {
+      const token = await getApiToken();
+      const data = await requestJson<
+        | { items?: Record<string, unknown>[] }
+        | Record<string, unknown>[]
+      >("https://api.blizz-developments-official.de/api/admin/roles", {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      const rawItems = Array.isArray(data)
+        ? data
+        : Array.isArray((data as { items?: unknown[] })?.items)
+          ? ((data as { items?: Record<string, unknown>[] }).items ?? [])
+          : [];
+
+      const mapped = rawItems
+        .map((entry) => {
+          const record = entry as Record<string, unknown>;
+          const idValue =
+            typeof record.id === "string"
+              ? record.id
+              : typeof record.roleId === "string"
+                ? record.roleId
+                : typeof record.slug === "string"
+                  ? record.slug
+                  : "";
+          const nameValue =
+            typeof record.name === "string"
+              ? record.name
+              : typeof record.title === "string"
+                ? record.title
+                : idValue;
+          const permissionsValue = Array.isArray(record.permissions)
+            ? (record.permissions as string[])
+            : [];
+          return {
+            id: idValue || nameValue || "role",
+            name: nameValue || idValue || "Unbekannte Rolle",
+            description:
+              typeof record.description === "string"
+                ? record.description
+                : typeof record.excerpt === "string"
+                  ? record.excerpt
+                  : null,
+            permissions: permissionsValue,
+            createdAt:
+              typeof record.createdAt === "string" ? record.createdAt : null,
+            updatedAt:
+              typeof record.updatedAt === "string" ? record.updatedAt : null
+          } as AdminRoleItem;
+        })
+        .filter((item) => item.id);
+
+      setRolesList(mapped);
+    })()
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : "Unbekannter Fehler.";
+        console.error("Failed to load roles", error);
+        setRolesError(`Rollen konnten nicht geladen werden. (${message})`);
+      })
+      .finally(() => {
+        setRolesLoading(false);
+      });
+  }, [activePage, permissionFlags.canAccessRoles, rolesRefreshTick, user]);
+
+  useEffect(() => {
     if (activePage === "home") {
       setRedirectSeconds(null);
       return;
@@ -2872,6 +3030,50 @@ export default function App() {
       }
     } catch (error) {
       console.error("Logout fehlgeschlagen", error);
+    }
+  };
+
+  const handleCreateRole = async () => {
+    if (!user) {
+      setRoleCreateError("Bitte zuerst anmelden.");
+      return;
+    }
+    const name = roleCreateName.trim();
+    if (!name) {
+      setRoleCreateError("Bitte einen Rollennamen eingeben.");
+      return;
+    }
+    if (!roleCreatePermissions.length) {
+      setRoleCreateError("Bitte mindestens eine Permission setzen.");
+      return;
+    }
+
+    setRoleCreateSaving(true);
+    setRoleCreateError(null);
+    try {
+      const token = await getApiToken();
+      await requestJson<unknown>("https://api.blizz-developments-official.de/api/admin/roles", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          name,
+          description: roleCreateDescription.trim() || null,
+          permissions: roleCreatePermissions
+        })
+      });
+
+      showToast(`Rolle "${name}" erstellt.`, "success");
+      setRoleCreateOpen(false);
+      setRolesRefreshTick((prev) => prev + 1);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unbekannter Fehler.";
+      setRoleCreateError(message);
+      showToast("Rolle konnte nicht erstellt werden.", "error");
+    } finally {
+      setRoleCreateSaving(false);
     }
   };
 
@@ -3327,6 +3529,12 @@ export default function App() {
                     members,
                     membersLoading,
                     membersError,
+                    rolesList,
+                    rolesLoading,
+                    rolesError,
+                    expandedRoleIds,
+                    toggleRoleExpanded,
+                    handleOpenRoleCreate,
                     openBanDialog,
                     openWarnDialog,
                     handleAuthzTest,
@@ -3426,6 +3634,105 @@ export default function App() {
             </div>
           </div>
         </div>
+        {roleCreateOpen && (
+          <div className="fixed inset-0 z-[79] flex items-center justify-center bg-black/70 px-4">
+            <div className="w-full max-w-[620px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
+              <div className="flex items-center justify-between">
+                <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
+                  Rolle erstellen
+                </h3>
+                <button
+                  type="button"
+                  onClick={handleCloseRoleCreate}
+                  className="flex h-8 w-8 items-center justify-center rounded-[8px] border border-[rgba(255,255,255,0.14)] bg-[#171A21] text-[rgba(255,255,255,0.78)] transition hover:border-[rgba(255,255,255,0.28)]"
+                  aria-label="Dialog schliessen"
+                >
+                  <i className="fa-solid fa-xmark" aria-hidden="true" />
+                </button>
+              </div>
+
+              <div className="mt-4 grid gap-3">
+                <div>
+                  <label className="text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]">
+                    Rollenname
+                  </label>
+                  <input
+                    value={roleCreateName}
+                    onChange={(event) => setRoleCreateName(event.target.value)}
+                    className="mt-2 w-full rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[#0F1116] px-3 py-2 text-[13px] text-[rgba(255,255,255,0.85)] outline-none focus:border-[#2BFE71]"
+                    placeholder="z.B. Content Manager"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]">
+                    Beschreibung
+                  </label>
+                  <textarea
+                    value={roleCreateDescription}
+                    onChange={(event) => setRoleCreateDescription(event.target.value)}
+                    className="mt-2 h-20 w-full resize-none rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[#0F1116] px-3 py-2 text-[13px] text-[rgba(255,255,255,0.85)] outline-none focus:border-[#2BFE71]"
+                    placeholder="Kurzbeschreibung der Rolle"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]">
+                    Permissions
+                  </label>
+                  <div className="mt-2 max-h-[190px] overflow-auto rounded-[10px] border border-[rgba(255,255,255,0.10)] bg-[#0F1116] p-3">
+                    <div className="flex flex-wrap gap-2">
+                      {ROLE_PERMISSION_SUGGESTIONS.map((permission) => {
+                        const selected = roleCreatePermissions.includes(permission);
+                        return (
+                          <button
+                            key={permission}
+                            type="button"
+                            onClick={() => toggleRoleCreatePermission(permission)}
+                            className={[
+                              "rounded-[8px] border px-2.5 py-1 text-[11px] transition",
+                              selected
+                                ? "border-[#2BFE71] bg-[rgba(43,254,113,0.15)] text-[#2BFE71]"
+                                : "border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.03)] text-[rgba(255,255,255,0.72)] hover:border-[rgba(255,255,255,0.28)]"
+                            ].join(" ")}
+                          >
+                            {permission}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <p className="mt-2 text-[11px] text-[rgba(255,255,255,0.5)]">
+                    Ausgewählt: {roleCreatePermissions.length}
+                  </p>
+                </div>
+              </div>
+
+              {roleCreateError && (
+                <div className="mt-4 rounded-[10px] border border-[rgba(255,100,100,0.25)] bg-[rgba(255,100,100,0.08)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.8)]">
+                  {roleCreateError}
+                </div>
+              )}
+
+              <div className="mt-5 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={handleCloseRoleCreate}
+                  className="rounded-[10px] border border-[rgba(255,255,255,0.14)] bg-[#171A21] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.78)] transition hover:border-[rgba(255,255,255,0.28)]"
+                  disabled={roleCreateSaving}
+                >
+                  Abbrechen
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleCreateRole()}
+                  className="rounded-[10px] border border-[#1E9A55] bg-[#2BFE71] px-4 py-2 text-[12px] font-semibold text-[#0D0E12] shadow-[0_4px_0_#1E9A55] transition active:translate-y-[2px] active:shadow-[0_2px_0_#1E9A55] disabled:opacity-60"
+                  disabled={roleCreateSaving}
+                >
+                  {roleCreateSaving ? "Erstelle..." : "Rolle erstellen"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {pendingApplicationAction && (
           <div className="fixed inset-0 z-[78] flex items-center justify-center bg-black/70 px-4">
             <div className="w-full max-w-[460px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
@@ -4629,6 +4936,12 @@ function renderContent(
   members: MemberProfile[],
   membersLoading: boolean,
   membersError: string | null,
+  rolesList: AdminRoleItem[],
+  rolesLoading: boolean,
+  rolesError: string | null,
+  expandedRoleIds: string[],
+  onToggleRoleExpanded: (roleId: string) => void,
+  onOpenRoleCreate: () => void,
   onOpenBanDialog: (member: MemberProfile) => void,
   onOpenWarnDialog: (member: MemberProfile) => void,
   handleAuthzTest: () => void,
@@ -6566,11 +6879,91 @@ function renderContent(
             <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
             Zurück
           </button>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={onOpenRoleCreate}
+              className="rounded-[10px] border border-[#1E9A55] bg-[#2BFE71] px-5 py-2.5 text-[13px] font-semibold text-[#0D0E12] shadow-[0_4px_0_#1E9A55] transition active:translate-y-[2px] active:shadow-[0_2px_0_#1E9A55]"
+            >
+              Rolle erstellen
+            </button>
+          </div>
         </div>
-        <div className="rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] p-4">
-          <p className="text-[13px] text-[rgba(255,255,255,0.65)]">
-            Roles-Verwaltung kommt noch.
-          </p>
+        {rolesError && (
+          <div className="rounded-[12px] border border-[rgba(255,100,100,0.25)] bg-[rgba(255,100,100,0.08)] px-4 py-3 text-[12px] text-[rgba(255,255,255,0.75)]">
+            {rolesError}
+          </div>
+        )}
+        <div className="grid gap-3 grid-cols-1">
+          {!rolesLoading && !rolesList.length && !rolesError && (
+            <div className="rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[#101218] px-4 py-4 text-[13px] text-[rgba(255,255,255,0.60)]">
+              Keine Rollen gefunden.
+            </div>
+          )}
+          {rolesList.map((role) => (
+            <div
+              key={role.id}
+              className="rounded-[14px] border border-[rgba(255,255,255,0.10)] bg-[#101218] shadow-[0_12px_22px_rgba(0,0,0,0.25)] transition hover:border-[rgba(255,255,255,0.18)]"
+            >
+              <button
+                type="button"
+                onClick={() => onToggleRoleExpanded(role.id)}
+                className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-[15px] font-semibold text-[rgba(255,255,255,0.92)]">
+                    {role.name}
+                  </p>
+                  <p className="mt-1 text-[12px] text-[rgba(255,255,255,0.52)]">
+                    {role.id}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="rounded-[10px] border border-[rgba(43,254,113,0.35)] bg-[rgba(43,254,113,0.12)] px-3 py-1 text-[11px] font-semibold text-[#2BFE71]">
+                    {role.permissions.length} Rechte
+                  </span>
+                  <i
+                    className={`fa-solid fa-chevron-down text-[12px] text-[rgba(255,255,255,0.55)] transition-transform duration-300 ${
+                      expandedRoleIds.includes(role.id) ? "rotate-180" : ""
+                    }`}
+                    aria-hidden="true"
+                  />
+                </div>
+              </button>
+
+              <div
+                className={`overflow-hidden transition-all duration-300 ${
+                  expandedRoleIds.includes(role.id)
+                    ? "max-h-[420px] opacity-100"
+                    : "max-h-0 opacity-0"
+                }`}
+              >
+                <div className="border-t border-[rgba(255,255,255,0.08)] px-4 py-4">
+                  {role.description && (
+                    <p className="text-[12px] leading-[18px] text-[rgba(255,255,255,0.66)]">
+                      {role.description}
+                    </p>
+                  )}
+                  {role.permissions.length > 0 ? (
+                    <div className={`${role.description ? "mt-3" : ""} flex flex-wrap gap-2`}>
+                      {role.permissions.map((perm) => (
+                        <span
+                          key={`${role.id}-${perm}`}
+                          className="rounded-[8px] border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.04)] px-2.5 py-1 text-[11px] text-[rgba(255,255,255,0.70)]"
+                        >
+                          {perm}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className={`${role.description ? "mt-3" : ""} text-[12px] text-[rgba(255,255,255,0.55)]`}>
+                      Keine Permissions hinterlegt.
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     );
