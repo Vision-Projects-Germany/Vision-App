@@ -95,9 +95,8 @@ fn discord_update_presence(app_id: String, presence: DiscordPresencePayload) -> 
         || presence.smallImageText.is_some()
     {
         let mut assets = activity::Assets::new();
-        if let Some(large_key) = presence.largeImageKey.as_deref() {
-            assets = assets.large_image(large_key);
-        }
+        let large_key = "launcher_icon";
+        assets = assets.large_image(large_key);
         if let Some(large_text) = presence.largeImageText.as_deref() {
             assets = assets.large_text(large_text);
         }
@@ -123,6 +122,21 @@ fn discord_update_presence(app_id: String, presence: DiscordPresencePayload) -> 
     client
         .set_activity(activity)
         .map_err(|error| format!("discord update failed: {error}"))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn discord_clear_presence() -> Result<(), String> {
+    let mut guard = discord_client()
+        .lock()
+        .map_err(|_| "discord client lock failed")?;
+
+    if let Some(client) = guard.as_mut() {
+        client
+            .clear_activity()
+            .map_err(|error| format!("discord clear failed: {error}"))?;
+    }
 
     Ok(())
 }
@@ -171,6 +185,7 @@ async fn http_request(request: HttpRequest) -> Result<HttpResponse, String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -184,6 +199,7 @@ pub fn run() {
             get_app_info,
             http_request,
             discord_update_presence,
+            discord_clear_presence,
             auth::oauth_prepare_login,
             auth::oauth_handle_callback,
             auth::oauth_refresh_if_needed,

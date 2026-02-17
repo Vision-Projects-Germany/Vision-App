@@ -12,6 +12,8 @@ import { MainCard } from "./components/MainCard";
 import { SideIcons } from "./components/SideIcons";
 import { LoginView } from "./components/LoginView";
 import { auth, db } from "./firebase";
+import { ProfilePage } from "./features/profile/ProfilePage";
+import { SettingsPage } from "./features/settings/SettingsPage";
 import clippyImage from "./assets/clippy/Clippy.png";
 
 interface NewsItem {
@@ -167,6 +169,17 @@ type MemberRoleDialogState = {
   presetRoleId?: string;
 };
 
+type MemberProjectDialogState = {
+  member: MemberProfile;
+};
+
+type AppSettings = {
+  discordPresenceEnabled: boolean;
+  autoRefreshEnabled: boolean;
+  projectCacheEnabled: boolean;
+  toastEnabled: boolean;
+};
+
 const formatTicketShortDate = (iso: string) => {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
@@ -209,6 +222,7 @@ const MIN_MC_VERSION = "1.20";
 const TEAM_APPLICATION_URL =
   (import.meta.env.VITE_TEAM_APPLICATION_URL as string | undefined) ??
   "https://vision-projects.eu/apply";
+const APP_SETTINGS_KEY = "vision.desktop.settings.v1";
 
 const activityStatusLabels: Record<
   NonNullable<ProjectItem["activityStatus"]>,
@@ -1231,6 +1245,11 @@ export default function App() {
   );
   const [firebaseProfileLoading, setFirebaseProfileLoading] = useState(false);
   const [firebaseProfileError, setFirebaseProfileError] = useState<string | null>(null);
+  const [profileDebugVisible, setProfileDebugVisible] = useState(false);
+  const [profileBio, setProfileBio] = useState("");
+  const [profileInterestsInput, setProfileInterestsInput] = useState("");
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
   const [authzPermissions, setAuthzPermissions] = useState<string[]>([]);
   const [authzRoles, setAuthzRoles] = useState<string[]>([]);
   const [authzFetchLoading, setAuthzFetchLoading] = useState(false);
@@ -1362,6 +1381,10 @@ export default function App() {
   const [memberRoleTarget, setMemberRoleTarget] = useState("");
   const [memberRoleSaving, setMemberRoleSaving] = useState(false);
   const [memberRoleError, setMemberRoleError] = useState<string | null>(null);
+  const [memberProjectDialog, setMemberProjectDialog] = useState<MemberProjectDialogState | null>(null);
+  const [memberProjectTarget, setMemberProjectTarget] = useState("");
+  const [memberProjectSaving, setMemberProjectSaving] = useState(false);
+  const [memberProjectError, setMemberProjectError] = useState<string | null>(null);
   const [banCandidate, setBanCandidate] = useState<MemberProfile | null>(null);
   const [banReason, setBanReason] = useState("Spamming");
   const [banProgress, setBanProgress] = useState(0);
@@ -1392,9 +1415,51 @@ export default function App() {
   const [pendingApplicationAction, setPendingApplicationAction] =
     useState<PendingApplicationAction | null>(null);
   const [showClippy, setShowClippy] = useState(false);
+  const [appSettings, setAppSettings] = useState<AppSettings>(() => {
+    const defaults: AppSettings = {
+      discordPresenceEnabled: true,
+      autoRefreshEnabled: true,
+      projectCacheEnabled: true,
+      toastEnabled: true
+    };
+    try {
+      const raw = localStorage.getItem(APP_SETTINGS_KEY);
+      if (!raw) return defaults;
+      const parsed = JSON.parse(raw) as Partial<AppSettings>;
+      return {
+        discordPresenceEnabled:
+          typeof parsed.discordPresenceEnabled === "boolean"
+            ? parsed.discordPresenceEnabled
+            : defaults.discordPresenceEnabled,
+        autoRefreshEnabled:
+          typeof parsed.autoRefreshEnabled === "boolean"
+            ? parsed.autoRefreshEnabled
+            : defaults.autoRefreshEnabled,
+        projectCacheEnabled:
+          typeof parsed.projectCacheEnabled === "boolean"
+            ? parsed.projectCacheEnabled
+            : defaults.projectCacheEnabled,
+        toastEnabled:
+          typeof parsed.toastEnabled === "boolean"
+            ? parsed.toastEnabled
+            : defaults.toastEnabled
+      };
+    } catch {
+      return defaults;
+    }
+  });
   const [warmupActive, setWarmupActive] = useState(false);
   const warmupUidRef = useRef<string | null>(null);
   const warmupCancelRef = useRef<(() => void) | null>(null);
+  void username;
+  void firebaseProfileLoading;
+  void firebaseProfileError;
+  void profileBio;
+  void setProfileBio;
+  void profileInterestsInput;
+  void setProfileInterestsInput;
+  void profileSaving;
+  void profileSaveError;
   const permissionFlags = useMemo(
     () => buildPermissionFlags(authzPermissions, authzRoles),
     [authzPermissions, authzRoles]
@@ -1419,9 +1484,9 @@ export default function App() {
   const customRolePermissionCandidate = rolePermissionQuery.trim().toLowerCase();
   const canAddCustomRolePermission = Boolean(
     customRolePermissionCandidate &&
-      !availableRolePermissions.some(
-        (permission) => permission.toLowerCase() === customRolePermissionCandidate
-      )
+    !availableRolePermissions.some(
+      (permission) => permission.toLowerCase() === customRolePermissionCandidate
+    )
   );
   const memberRoleOptions = useMemo(() => {
     if (!memberRoleDialog) {
@@ -1435,6 +1500,21 @@ export default function App() {
       ? roleIds.filter((roleId) => !currentRoles.includes(roleId))
       : currentRoles;
   }, [memberRoleDialog, rolesList]);
+  const memberProjectOptions = useMemo(() => {
+    if (!memberProjectDialog) {
+      return [];
+    }
+    const currentProjects = Array.isArray(memberProjectDialog.member.projects)
+      ? memberProjectDialog.member.projects
+      : [];
+    const currentSet = new Set(currentProjects);
+    return projectItems
+      .filter((project) => project.id && !currentSet.has(project.id))
+      .map((project) => ({
+        id: project.id,
+        label: project.title || project.id
+      }));
+  }, [memberProjectDialog, projectItems]);
   const filteredRoleEditPermissions = useMemo(() => {
     const query = roleEditPermissionQuery.trim().toLowerCase();
     if (!query) {
@@ -1447,9 +1527,9 @@ export default function App() {
   const customRoleEditPermissionCandidate = roleEditPermissionQuery.trim().toLowerCase();
   const canAddCustomRoleEditPermission = Boolean(
     customRoleEditPermissionCandidate &&
-      !availableRolePermissions.some(
-        (permission) => permission.toLowerCase() === customRoleEditPermissionCandidate
-      )
+    !availableRolePermissions.some(
+      (permission) => permission.toLowerCase() === customRoleEditPermissionCandidate
+    )
   );
   const setApplicationStatus = (id: string, status: ApplicationStatus) => {
     setApplicationItems((prev) =>
@@ -1537,6 +1617,23 @@ export default function App() {
     }
     setMemberRoleDialog(null);
     setMemberRoleError(null);
+  };
+  const handleOpenMemberProjectDialog = (member: MemberProfile) => {
+    const currentProjects = Array.isArray(member.projects) ? member.projects : [];
+    const currentSet = new Set(currentProjects);
+    const available = projectItems
+      .filter((project) => project.id && !currentSet.has(project.id))
+      .map((project) => project.id);
+    setMemberProjectDialog({ member });
+    setMemberProjectTarget(available[0] ?? "");
+    setMemberProjectError(null);
+  };
+  const handleCloseMemberProjectDialog = () => {
+    if (memberProjectSaving) {
+      return;
+    }
+    setMemberProjectDialog(null);
+    setMemberProjectError(null);
   };
   const handleCloseRoleDelete = () => {
     if (roleDeleteSaving) {
@@ -2128,6 +2225,9 @@ export default function App() {
   };
 
   const showToast = (message: string, variant: "success" | "error" = "success") => {
+    if (!appSettings.toastEnabled) {
+      return;
+    }
     const duration = 4000;
     if (toastTimerRef.current !== null) {
       window.clearTimeout(toastTimerRef.current);
@@ -2160,6 +2260,18 @@ export default function App() {
       }, 400);
     }, duration);
   };
+
+  useEffect(() => {
+    localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings));
+    if (!appSettings.projectCacheEnabled) {
+      localStorage.removeItem("vision.projects.cache.v3");
+    }
+    if (!appSettings.toastEnabled) {
+      setToastVisible(false);
+      setToastMessage(null);
+      setToastProgress(0);
+    }
+  }, [appSettings]);
 
   const submitBan = async (member: MemberProfile, reason: string) => {
     if (!user) {
@@ -2341,17 +2453,21 @@ export default function App() {
     };
 
     loadNews();
-    const intervalId = window.setInterval(loadNews, 60000);
+    const intervalId = appSettings.autoRefreshEnabled
+      ? window.setInterval(loadNews, 60000)
+      : null;
 
     return () => {
-      window.clearInterval(intervalId);
+      if (intervalId !== null) {
+        window.clearInterval(intervalId);
+      }
       controller.abort();
     };
-  }, []);
+  }, [appSettings.autoRefreshEnabled]);
 
   useEffect(() => {
     let active = true;
-    if (activePage !== "home") {
+    if (activePage !== "home" || !appSettings.discordPresenceEnabled) {
       return () => {
         active = false;
       };
@@ -2392,7 +2508,23 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [activePage]);
+  }, [activePage, appSettings.discordPresenceEnabled]);
+
+  useEffect(() => {
+    if (appSettings.discordPresenceEnabled) {
+      return;
+    }
+    (async () => {
+      if (!(await isRunningInTauri())) {
+        return;
+      }
+      try {
+        await invoke("discord_clear_presence");
+      } catch (error) {
+        console.error("[discord] clear presence failed", error);
+      }
+    })();
+  }, [appSettings.discordPresenceEnabled]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -2401,7 +2533,9 @@ export default function App() {
     // localStorage.removeItem("vision.projects.cache");
 
     const loadProjects = async () => {
-      const cachedRaw = localStorage.getItem(CACHE_KEY);
+      const cachedRaw = appSettings.projectCacheEnabled
+        ? localStorage.getItem(CACHE_KEY)
+        : null;
       let cachedItems: ProjectItem[] | null = null;
       if (cachedRaw) {
         try {
@@ -2477,7 +2611,9 @@ export default function App() {
         if (!controller.signal.aborted) {
           setProjectItems(enrichedItems);
           setProjectError(false);
-          localStorage.setItem(CACHE_KEY, JSON.stringify(enrichedItems));
+          if (appSettings.projectCacheEnabled) {
+            localStorage.setItem(CACHE_KEY, JSON.stringify(enrichedItems));
+          }
         }
       } catch (error) {
         if (error instanceof Error && error.name !== "AbortError") {
@@ -2496,13 +2632,17 @@ export default function App() {
     };
 
     loadProjects();
-    const intervalId = window.setInterval(loadProjects, 60000);
+    const intervalId = appSettings.autoRefreshEnabled
+      ? window.setInterval(loadProjects, 60000)
+      : null;
 
     return () => {
-      window.clearInterval(intervalId);
+      if (intervalId !== null) {
+        window.clearInterval(intervalId);
+      }
       controller.abort();
     };
-  }, []);
+  }, [appSettings.autoRefreshEnabled, appSettings.projectCacheEnabled]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -2703,6 +2843,11 @@ export default function App() {
         typeof (event as any).getModifierState === "function"
           ? (event as any).getModifierState("AltGraph")
           : false;
+      if ((event.altKey || altGraph) && event.key.toLowerCase() === "d") {
+        event.preventDefault();
+        setProfileDebugVisible((prev) => !prev);
+        return;
+      }
       if ((event.altKey || altGraph) && event.key === "#") {
         event.preventDefault();
         setShowClippy((prev) => !prev);
@@ -3393,6 +3538,62 @@ export default function App() {
     }
   };
 
+  useEffect(() => {
+    const record = userProfileData ?? {};
+    const bioValue = typeof record.bio === "string" ? record.bio : "";
+    const interestsValue = Array.isArray(record.interests)
+      ? (record.interests as unknown[])
+        .filter((value): value is string => typeof value === "string")
+      : [];
+    setProfileBio(bioValue);
+    setProfileInterestsInput(interestsValue.join(", "));
+  }, [userProfileData]);
+
+  const handleSaveProfile = async () => {
+    if (!user) {
+      setProfileSaveError("Bitte zuerst anmelden.");
+      return;
+    }
+
+    setProfileSaving(true);
+    setProfileSaveError(null);
+    try {
+      const token = await getApiToken();
+      const interests = profileInterestsInput
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
+
+      await requestJson<unknown>(
+        `https://api.blizz-developments-official.de/api/profile/${encodeURIComponent(user.uid)}`,
+        {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            bio: profileBio.trim(),
+            interests
+          })
+        }
+      );
+
+      setUserProfileData((prev) => ({
+        ...(prev ?? {}),
+        bio: profileBio.trim(),
+        interests
+      }));
+      showToast("Profil gespeichert.", "success");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unbekannter Fehler.";
+      setProfileSaveError(message);
+      showToast("Profil konnte nicht gespeichert werden.", "error");
+    } finally {
+      setProfileSaving(false);
+    }
+  };
+
   const handleLogout = async () => {
     try {
       setAuthzPermissions([]);
@@ -3408,6 +3609,8 @@ export default function App() {
       console.error("Logout fehlgeschlagen", error);
     }
   };
+  void handleReadFirebaseProfile;
+  void handleSaveProfile;
 
   const handleCreateRole = async () => {
     if (!user) {
@@ -3579,6 +3782,71 @@ export default function App() {
       showToast("Rollenänderung fehlgeschlagen.", "error");
     } finally {
       setMemberRoleSaving(false);
+    }
+  };
+
+  const handleSubmitMemberProjectAdd = async () => {
+    if (!user || !memberProjectDialog || !memberProjectTarget) {
+      return;
+    }
+    setMemberProjectSaving(true);
+    setMemberProjectError(null);
+    try {
+      const targetUid = memberProjectDialog.member.uid;
+      const projectId = memberProjectTarget;
+      const token = await getApiToken();
+
+      let addedViaApi = false;
+      try {
+        await requestJson<unknown>(
+          `https://api.blizz-developments-official.de/api/admin/users/${encodeURIComponent(targetUid)}/projects/add`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              projects: [projectId]
+            })
+          }
+        );
+        addedViaApi = true;
+      } catch {
+        // Fallback for setups where the admin project endpoint is not available yet.
+        await updateDoc(doc(db, "users", targetUid), {
+          projects: arrayUnion(projectId)
+        });
+      }
+
+      setMembers((prev) =>
+        prev.map((member) => {
+          if (member.uid !== targetUid) {
+            return member;
+          }
+          const currentProjects = Array.isArray(member.projects) ? member.projects : [];
+          if (currentProjects.includes(projectId)) {
+            return member;
+          }
+          return { ...member, projects: [...currentProjects, projectId] };
+        })
+      );
+      if (user.uid === targetUid) {
+        setUserProjectIds((prev) => (prev.includes(projectId) ? prev : [...prev, projectId]));
+      }
+
+      showToast(
+        addedViaApi ? "Projekt hinzugefügt." : "Projekt hinzugefügt (Fallback).",
+        "success"
+      );
+      setMemberProjectDialog(null);
+      setMemberProjectTarget("");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unbekannter Fehler.";
+      setMemberProjectError(message);
+      showToast("Projekt konnte nicht hinzugefügt werden.", "error");
+    } finally {
+      setMemberProjectSaving(false);
     }
   };
 
@@ -4046,6 +4314,7 @@ export default function App() {
                     handleOpenRoleEdit,
                     handleOpenRoleDelete,
                     handleOpenMemberRoleDialog,
+                    handleOpenMemberProjectDialog,
                     openBanDialog,
                     openWarnDialog,
                     handleAuthzTest,
@@ -4054,15 +4323,14 @@ export default function App() {
                     authzResult,
                     handleAuthzCopy,
                     authzCopied,
+                    profileDebugVisible,
+                    appSettings,
+                    setAppSettings,
                     user,
-                    username,
                     userProjectIds,
                     setSelectedProject,
                     setEditorModal,
                     handleLogout,
-                    handleReadFirebaseProfile,
-                    firebaseProfileLoading,
-                    firebaseProfileError,
                     applicationItems,
                     applicationsLoading,
                     applicationsError,
@@ -4140,7 +4408,7 @@ export default function App() {
                     window.open(url, "_blank", "noopener,noreferrer");
                   });
                 }}
-                className="mt-4 w-full rounded-none border-2 border-[#1E9A55] bg-[#2BFE71] px-4 py-3 text-[13px] font-semibold text-[#0D0E12] shadow-[0_4px_0_#1E9A55,0_10px_22px_rgba(43,254,113,0.25)] transition active:translate-y-[4px] active:shadow-[0_0px_0_#1E9A55,0_6px_14px_rgba(43,254,113,0.18)]"
+                className="cta-primary mt-4 w-full justify-center px-4 py-3 text-[13px]"
               >
                 Jetzt bewerben
               </button>
@@ -4545,6 +4813,64 @@ export default function App() {
                   className="cta-primary px-4 py-2 text-[12px] disabled:opacity-60"
                 >
                   {memberRoleSaving ? "Speichere..." : "Bestätigen"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {memberProjectDialog && (
+          <div className="fixed inset-0 z-[79] flex items-center justify-center bg-black/70 px-4">
+            <div className="w-full max-w-[460px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
+              <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
+                Projekt hinzufügen
+              </h3>
+              <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.65)]">
+                User:{" "}
+                <span className="font-semibold text-[rgba(255,255,255,0.9)]">
+                  {memberProjectDialog.member.username ?? memberProjectDialog.member.uid}
+                </span>
+              </p>
+              <div className="mt-4">
+                <label className="text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]">
+                  Projekt
+                </label>
+                <select
+                  value={memberProjectTarget}
+                  onChange={(event) => setMemberProjectTarget(event.target.value)}
+                  className="mt-2 w-full rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[#0F1116] px-3 py-2 text-[13px] text-[rgba(255,255,255,0.85)] outline-none focus:border-[#2BFE71]"
+                  disabled={memberProjectSaving || memberProjectOptions.length === 0}
+                >
+                  {!memberProjectOptions.length && <option value="">Keine Projekte verfügbar</option>}
+                  {memberProjectOptions.map((projectOption) => (
+                    <option key={projectOption.id} value={projectOption.id}>
+                      {projectOption.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {memberProjectError && (
+                <div className="mt-3 rounded-[10px] border border-[rgba(255,100,100,0.25)] bg-[rgba(255,100,100,0.08)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.8)]">
+                  {memberProjectError}
+                </div>
+              )}
+              <div className="mt-5 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={handleCloseMemberProjectDialog}
+                  disabled={memberProjectSaving}
+                  className="cta-secondary px-4 py-2 text-[12px]"
+                >
+                  Abbrechen
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleSubmitMemberProjectAdd();
+                  }}
+                  disabled={memberProjectSaving || !memberProjectTarget}
+                  className="cta-primary px-4 py-2 text-[12px] disabled:opacity-60"
+                >
+                  {memberProjectSaving ? "Speichere..." : "Hinzufügen"}
                 </button>
               </div>
             </div>
@@ -5725,6 +6051,7 @@ function renderContent(
     mode: "add" | "remove",
     presetRoleId?: string
   ) => void,
+  onOpenMemberProjectDialog: (member: MemberProfile) => void,
   onOpenBanDialog: (member: MemberProfile) => void,
   onOpenWarnDialog: (member: MemberProfile) => void,
   handleAuthzTest: () => void,
@@ -5733,15 +6060,14 @@ function renderContent(
   authzResult: string | null,
   handleAuthzCopy: () => void,
   authzCopied: boolean,
+  profileDebugVisible: boolean,
+  appSettings: AppSettings,
+  setAppSettings: (updater: (prev: AppSettings) => AppSettings) => void,
   user: User | null,
-  username: string | null,
   userProjectIds: string[],
   onSelectProject: (project: ProjectItem | null) => void,
   setEditorModal: (value: "project" | "news" | "event" | "member" | "media" | null) => void,
   onLogout: () => Promise<void>,
-  onReadFirebaseProfile: () => Promise<void>,
-  firebaseProfileLoading: boolean,
-  firebaseProfileError: string | null,
   applicationItems: ApplicationItem[],
   applicationsLoading: boolean,
   applicationsError: string | null,
@@ -6236,21 +6562,40 @@ function renderContent(
 
   if (page === "settings") {
     return (
-      <>
-        <h1 className="text-[20px] font-semibold text-[rgba(255,255,255,0.92)]">
-          Einstellungen
-        </h1>
-        <p className="mt-[8px] text-[13px] text-[rgba(255,255,255,0.60)]">
-          Einstellungen kommen später.
-        </p>
-        <button
-          type="button"
-          onClick={() => onNavigate("settings-debug")}
-          className="mt-4 rounded-[10px] border border-[rgba(255,255,255,0.12)] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.75)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
-        >
-          Profil-Debug (Test)
-        </button>
-        <div className="mt-4 rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] p-4">
+      <SettingsPage
+        settings={appSettings}
+        onUpdate={setAppSettings}
+        onNavigate={onNavigate}
+        profileDebugVisible={profileDebugVisible}
+      />
+    );
+  }
+
+  if (page === "settings-debug") {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h1 className="text-[20px] font-semibold text-[rgba(255,255,255,0.92)]">
+            Profil-Debug
+          </h1>
+          <button
+            type="button"
+            onClick={() => onNavigate("settings")}
+            className="rounded-[10px] border border-[rgba(255,255,255,0.12)] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.75)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
+          >
+            Zurück
+          </button>
+        </div>
+        <div className="rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] p-4">
+          <p className="text-[12px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]">
+            users/{user?.uid}
+          </p>
+          <pre className="mt-3 text-[12px] text-[rgba(255,255,255,0.75)] whitespace-pre-wrap">
+            {userProfileData ? JSON.stringify(userProfileData, null, 2) : "Keine Daten."}
+          </pre>
+        </div>
+
+        <div className="rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-[12px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]">
               Authz-Test
@@ -6293,33 +6638,6 @@ function renderContent(
               </div>
             </div>
           )}
-        </div>
-      </>
-    );
-  }
-
-  if (page === "settings-debug") {
-    return (
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h1 className="text-[20px] font-semibold text-[rgba(255,255,255,0.92)]">
-            Profil-Debug
-          </h1>
-          <button
-            type="button"
-            onClick={() => onNavigate("settings")}
-            className="rounded-[10px] border border-[rgba(255,255,255,0.12)] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.75)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
-          >
-            Zurück
-          </button>
-        </div>
-        <div className="rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] p-4">
-          <p className="text-[12px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]">
-            users/{user?.uid}
-          </p>
-          <pre className="mt-3 text-[12px] text-[rgba(255,255,255,0.75)] whitespace-pre-wrap">
-            {userProfileData ? JSON.stringify(userProfileData, null, 2) : "Keine Daten."}
-          </pre>
         </div>
       </div>
     );
@@ -7522,6 +7840,7 @@ function renderContent(
     const canBanUsers = permissionFlags.canBanUsers;
     const canWarnUsers = permissionFlags.canWarnUsers;
     const canManageUserRoles = permissionFlags.canAccessRoles;
+    const canManageMemberProjects = permissionFlags.canAccessMembers || permissionFlags.isModerator;
     const showActions = canBanUsers || canWarnUsers;
     return (
       <div className="space-y-8">
@@ -7640,27 +7959,40 @@ function renderContent(
                   {member.minecraftName ? `MC: ${member.minecraftName}` : "—"}
                   {typeof member.level === "number" ? ` · Lvl ${member.level}` : ""}
                   {member.experience ? ` · ${member.experience}` : ""}
-                  {Array.isArray(member.projects) && member.projects.length > 0 && (
-                    <div className="mt-1 flex flex-wrap gap-1">
-                      {member.projects.slice(0, 3).map((projectId) => {
-                        const label = projectTitleById.get(projectId) ?? projectId.slice(0, 8);
-                        return (
-                          <span
-                            key={projectId}
-                            className="inline-flex items-center border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.03)] px-2 py-0.5 text-[10px] text-[rgba(255,255,255,0.72)]"
-                            title={projectId}
-                          >
-                            {label}
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {Array.isArray(member.projects) && member.projects.length > 0 ? (
+                      <>
+                        {member.projects.slice(0, 3).map((projectId) => {
+                          const label = projectTitleById.get(projectId) ?? projectId.slice(0, 8);
+                          return (
+                            <span
+                              key={projectId}
+                              className="inline-flex items-center border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.03)] px-2 py-0.5 text-[10px] text-[rgba(255,255,255,0.72)]"
+                              title={projectId}
+                            >
+                              {label}
+                            </span>
+                          );
+                        })}
+                        {member.projects.length > 3 && (
+                          <span className="text-[10px] text-[rgba(255,255,255,0.45)]">
+                            +{member.projects.length - 3}
                           </span>
-                        );
-                      })}
-                      {member.projects.length > 3 && (
-                        <span className="text-[10px] text-[rgba(255,255,255,0.45)]">
-                          +{member.projects.length - 3}
-                        </span>
-                      )}
-                    </div>
-                  )}
+                        )}
+                      </>
+                    ) : null}
+                    {canManageMemberProjects && (
+                      <button
+                        type="button"
+                        onClick={() => onOpenMemberProjectDialog(member)}
+                        className="inline-flex items-center rounded-[8px] border border-[rgba(43,254,113,0.35)] bg-[rgba(43,254,113,0.12)] px-2 py-0.5 text-[10px] font-semibold text-[#2BFE71] transition hover:bg-[rgba(43,254,113,0.22)]"
+                        title="Projekt hinzufügen"
+                        aria-label="Projekt hinzufügen"
+                      >
+                        + Projekt
+                      </button>
+                    )}
+                  </div>
                 </div>
                 {showActions && (
                   <div className="flex items-center gap-2">
@@ -7797,9 +8129,8 @@ function renderContent(
                       {role.permissions.length} Rechte
                     </span>
                     <i
-                      className={`fa-solid fa-chevron-down text-[12px] text-[rgba(255,255,255,0.55)] transition-transform duration-300 ${
-                        expandedRoleIds.includes(role.id) ? "rotate-180" : ""
-                      }`}
+                      className={`fa-solid fa-chevron-down text-[12px] text-[rgba(255,255,255,0.55)] transition-transform duration-300 ${expandedRoleIds.includes(role.id) ? "rotate-180" : ""
+                        }`}
                       aria-hidden="true"
                     />
                   </div>
@@ -7807,11 +8138,10 @@ function renderContent(
               </div>
 
               <div
-                className={`overflow-hidden transition-all duration-300 ${
-                  expandedRoleIds.includes(role.id)
-                    ? "max-h-[420px] opacity-100"
-                    : "max-h-0 opacity-0"
-                }`}
+                className={`overflow-hidden transition-all duration-300 ${expandedRoleIds.includes(role.id)
+                  ? "max-h-[420px] opacity-100"
+                  : "max-h-0 opacity-0"
+                  }`}
               >
                 <div className="border-t border-[rgba(255,255,255,0.08)] px-4 py-4">
                   {role.description && (
@@ -7845,56 +8175,7 @@ function renderContent(
   }
 
   if (page === "profile") {
-    if (!user) {
-      return (
-        <p className="text-[13px] text-[rgba(255,255,255,0.60)]">
-          Bitte zuerst anmelden.
-        </p>
-      );
-    }
-
-    return (
-      <>
-        <h1 className="text-[20px] font-semibold text-[rgba(255,255,255,0.92)]">
-          Profil
-        </h1>
-        <p className="mt-[8px] text-[13px] text-[rgba(255,255,255,0.60)]">
-          Username: {username ?? "Unbekannt"}
-        </p>
-
-        <div className="mt-4 rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-[12px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]">
-              Firebase Profil
-            </p>
-            <button
-              type="button"
-              onClick={() => void onReadFirebaseProfile()}
-              disabled={firebaseProfileLoading}
-              className="cta-secondary px-4 py-2 text-[12px]"
-            >
-              {firebaseProfileLoading ? "Lade..." : "Profil auslesen"}
-            </button>
-          </div>
-          {firebaseProfileError && (
-            <p className="mt-3 text-[12px] text-[rgba(255,125,125,0.92)]">
-              {firebaseProfileError}
-            </p>
-          )}
-          <pre className="scrollbox mt-3 max-h-[240px] overflow-auto whitespace-pre-wrap text-[12px] text-[rgba(255,255,255,0.75)]">
-            {userProfileData ? JSON.stringify(userProfileData, null, 2) : "Keine Daten."}
-          </pre>
-        </div>
-
-        <button
-          type="button"
-          onClick={onLogout}
-          className="cta-secondary mt-[12px] px-4 py-2 text-[12px]"
-        >
-          Abmelden
-        </button>
-      </>
-    );
+    return <ProfilePage onLogout={onLogout} />;
   }
 
   return null;

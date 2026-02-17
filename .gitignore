@@ -22,3 +22,12 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Tauri / Rust
+src-tauri/target/
+target/
+
+# Tauri build outputs (je nach Setup)
+src-tauri/gen/
+src-tauri/.tauri/
+
