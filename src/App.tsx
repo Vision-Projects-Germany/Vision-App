@@ -1406,10 +1406,7 @@ export default function App() {
   const toastTimerRef = useRef<number | null>(null);
   const toastIntervalRef = useRef<number | null>(null);
   const updaterCheckedRef = useRef(false);
-<<<<<<< HEAD
-=======
   const [updateCheckLoading, setUpdateCheckLoading] = useState(false);
->>>>>>> 2a35210 (Fixed a few Bugs)
   const [mcVersions, setMcVersions] = useState<string[]>([]);
   const [mcVersionsLoading, setMcVersionsLoading] = useState(false);
   const [mcVersionsError, setMcVersionsError] = useState(false);
@@ -2280,8 +2277,6 @@ export default function App() {
     }
   }, [appSettings]);
 
-<<<<<<< HEAD
-=======
   const runUpdaterCheck = async (manual: boolean) => {
     if (updateCheckLoading) {
       return;
@@ -2321,37 +2316,12 @@ export default function App() {
       setUpdateCheckLoading(false);
     }
   };
-
->>>>>>> 2a35210 (Fixed a few Bugs)
   useEffect(() => {
     if (updaterCheckedRef.current) {
       return;
     }
     updaterCheckedRef.current = true;
-<<<<<<< HEAD
-
-    (async () => {
-      if (!(await isRunningInTauri())) {
-        return;
-      }
-      try {
-        const update = await checkUpdate();
-        if (!update) {
-          return;
-        }
-        await update.downloadAndInstall();
-        try {
-          await relaunch();
-        } catch {
-          showToast("Update installiert. Bitte App neu starten.", "success");
-        }
-      } catch (error) {
-        console.error("[updater] check/install failed", error);
-      }
-    })();
-=======
     void runUpdaterCheck(false);
->>>>>>> 2a35210 (Fixed a few Bugs)
   }, []);
 
   const submitBan = async (member: MemberProfile, reason: string) => {
