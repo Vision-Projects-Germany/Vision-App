@@ -3,6 +3,8 @@ import { useMemo, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { check as checkUpdate } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faChevronRight } from "@fortawesome/free-solid-svg-icons";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut, type User } from "firebase/auth";
@@ -1403,6 +1405,7 @@ export default function App() {
   const [toastProgress, setToastProgress] = useState(0);
   const toastTimerRef = useRef<number | null>(null);
   const toastIntervalRef = useRef<number | null>(null);
+  const updaterCheckedRef = useRef(false);
   const [mcVersions, setMcVersions] = useState<string[]>([]);
   const [mcVersionsLoading, setMcVersionsLoading] = useState(false);
   const [mcVersionsError, setMcVersionsError] = useState(false);
@@ -2272,6 +2275,33 @@ export default function App() {
       setToastProgress(0);
     }
   }, [appSettings]);
+
+  useEffect(() => {
+    if (updaterCheckedRef.current) {
+      return;
+    }
+    updaterCheckedRef.current = true;
+
+    (async () => {
+      if (!(await isRunningInTauri())) {
+        return;
+      }
+      try {
+        const update = await checkUpdate();
+        if (!update) {
+          return;
+        }
+        await update.downloadAndInstall();
+        try {
+          await relaunch();
+        } catch {
+          showToast("Update installiert. Bitte App neu starten.", "success");
+        }
+      } catch (error) {
+        console.error("[updater] check/install failed", error);
+      }
+    })();
+  }, []);
 
   const submitBan = async (member: MemberProfile, reason: string) => {
     if (!user) {

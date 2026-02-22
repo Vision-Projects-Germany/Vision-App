@@ -50,9 +50,12 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+<<<<<<< HEAD
           # Diese Secrets musst du im Repo anlegen:
           # TAURI_PRIVATE_KEY = Inhalt deiner .key Datei
           # TAURI_KEY_PASSWORD = Passwort (nur falls gesetzt)
+=======
+>>>>>>> 9e2cfda (Resolve conflicts after rebase)
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
         with:
