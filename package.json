@@ -16,11 +16,16 @@
     "@fortawesome/free-regular-svg-icons": "^7.1.0",
     "@fortawesome/free-solid-svg-icons": "^7.1.0",
     "@fortawesome/react-fontawesome": "^3.1.1",
-    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/api": "2.9.0",
     "@tauri-apps/plugin-dialog": "^2.6.0",
     "@tauri-apps/plugin-opener": "^2.5.2",
+<<<<<<< HEAD
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.10.0",
+=======
+    "@tauri-apps/plugin-process": "2.3.1",
+    "@tauri-apps/plugin-updater": "2.9.0",
+>>>>>>> 2a35210 (Fixed a few Bugs)
     "discord-rpc": "^4.0.1",
     "firebase": "^12.7.0",
     "react": "^19.0.0",

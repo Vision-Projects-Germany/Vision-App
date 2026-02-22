@@ -10,6 +10,8 @@ interface SettingsPageProps {
   onUpdate: (updater: (prev: AppSettings) => AppSettings) => void;
   onNavigate: (page: string) => void;
   profileDebugVisible?: boolean;
+  onCheckForUpdates: () => void;
+  updateCheckLoading: boolean;
 }
 
 interface ToggleSwitchProps {
@@ -59,7 +61,14 @@ function SettingItem({ icon, title, description, enabled, onChange, isLast }: Se
   );
 }
 
-export function SettingsPage({ settings, onUpdate, onNavigate, profileDebugVisible }: SettingsPageProps) {
+export function SettingsPage({
+  settings,
+  onUpdate,
+  onNavigate,
+  profileDebugVisible,
+  onCheckForUpdates,
+  updateCheckLoading
+}: SettingsPageProps) {
   const toggleSetting = (key: keyof AppSettings) => {
     onUpdate((prev) => ({ ...prev, [key]: !prev[key] }));
   };
@@ -213,10 +222,12 @@ export function SettingsPage({ settings, onUpdate, onNavigate, profileDebugVisib
 
             <button
               type="button"
+              onClick={onCheckForUpdates}
+              disabled={updateCheckLoading}
               className="flex-1 rounded-xl border border-[#3dff7d] bg-[#50fa7b] px-6 py-4 text-sm font-bold text-black shadow-[0_0_20px_rgba(80,250,123,0.3)] transition-all hover:bg-[#3dff7d] hover:shadow-[0_0_25px_rgba(80,250,123,0.5)] active:scale-[0.99] active:shadow-none flex justify-center items-center gap-2"
             >
-              <i className="fas fa-sync-alt"></i>
-              Nach Updates suchen
+              <i className={`fas ${updateCheckLoading ? "fa-spinner fa-spin" : "fa-sync-alt"}`}></i>
+              {updateCheckLoading ? "Suche..." : "Nach Updates suchen"}
             </button>
           </div>
         </div>

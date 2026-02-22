@@ -1406,6 +1406,10 @@ export default function App() {
   const toastTimerRef = useRef<number | null>(null);
   const toastIntervalRef = useRef<number | null>(null);
   const updaterCheckedRef = useRef(false);
+<<<<<<< HEAD
+=======
+  const [updateCheckLoading, setUpdateCheckLoading] = useState(false);
+>>>>>>> 2a35210 (Fixed a few Bugs)
   const [mcVersions, setMcVersions] = useState<string[]>([]);
   const [mcVersionsLoading, setMcVersionsLoading] = useState(false);
   const [mcVersionsError, setMcVersionsError] = useState(false);
@@ -2276,11 +2280,55 @@ export default function App() {
     }
   }, [appSettings]);
 
+<<<<<<< HEAD
+=======
+  const runUpdaterCheck = async (manual: boolean) => {
+    if (updateCheckLoading) {
+      return;
+    }
+    if (!(await isRunningInTauri())) {
+      if (manual) {
+        showToast("Updater ist nur in der Desktop-App verfügbar.", "error");
+      }
+      return;
+    }
+
+    setUpdateCheckLoading(true);
+    try {
+      const update = await checkUpdate();
+      if (!update) {
+        if (manual) {
+          showToast("Kein Update verfügbar.", "success");
+        }
+        return;
+      }
+
+      if (manual) {
+        showToast(`Update gefunden: v${update.version}`, "success");
+      }
+      await update.downloadAndInstall();
+      try {
+        await relaunch();
+      } catch {
+        showToast("Update installiert. Bitte App neu starten.", "success");
+      }
+    } catch (error) {
+      console.error("[updater] check/install failed", error);
+      if (manual) {
+        showToast("Updateprüfung fehlgeschlagen.", "error");
+      }
+    } finally {
+      setUpdateCheckLoading(false);
+    }
+  };
+
+>>>>>>> 2a35210 (Fixed a few Bugs)
   useEffect(() => {
     if (updaterCheckedRef.current) {
       return;
     }
     updaterCheckedRef.current = true;
+<<<<<<< HEAD
 
     (async () => {
       if (!(await isRunningInTauri())) {
@@ -2301,6 +2349,9 @@ export default function App() {
         console.error("[updater] check/install failed", error);
       }
     })();
+=======
+    void runUpdaterCheck(false);
+>>>>>>> 2a35210 (Fixed a few Bugs)
   }, []);
 
   const submitBan = async (member: MemberProfile, reason: string) => {
@@ -4356,6 +4407,8 @@ export default function App() {
                     profileDebugVisible,
                     appSettings,
                     setAppSettings,
+                    runUpdaterCheck,
+                    updateCheckLoading,
                     user,
                     userProjectIds,
                     setSelectedProject,
@@ -6093,6 +6146,8 @@ function renderContent(
   profileDebugVisible: boolean,
   appSettings: AppSettings,
   setAppSettings: (updater: (prev: AppSettings) => AppSettings) => void,
+  onCheckForUpdates: (manual: boolean) => Promise<void>,
+  updateCheckLoading: boolean,
   user: User | null,
   userProjectIds: string[],
   onSelectProject: (project: ProjectItem | null) => void,
@@ -6597,6 +6652,10 @@ function renderContent(
         onUpdate={setAppSettings}
         onNavigate={onNavigate}
         profileDebugVisible={profileDebugVisible}
+        onCheckForUpdates={() => {
+          void onCheckForUpdates(true);
+        }}
+        updateCheckLoading={updateCheckLoading}
       />
     );
   }
