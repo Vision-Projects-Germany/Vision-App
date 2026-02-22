@@ -1,7 +1,7 @@
-{
+﻿{
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Vision Desktop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.vision.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -25,12 +25,19 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "icon": [
       "../src/assets/logos/vision_desktop/Launcher_icon.ico"
     ]
   },
   "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/Vision-Projects-Germany/Vision-App/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDlCMzQ4OEEyQkM5NjQ2OUIKUldTYlJwYThvb2cwbSsyV2tibXUrNWtSTW9QcXF4VytvNVZEbmFYRFQ1UUJGNjFDU0ZYWittc08K"
+    },
     "deep-link": {
       "desktop": {
         "schemes": ["vision"]
