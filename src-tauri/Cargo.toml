@@ -1,6 +1,6 @@
 [package]
 name = "vision-desktop"
-version = "0.1.0"
+version = "0.1.1"
 description = "Vision Desktop control center"
 authors = ["Vision Team"]
 license = ""

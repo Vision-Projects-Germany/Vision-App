@@ -31,3 +31,5 @@ target/
 src-tauri/gen/
 src-tauri/.tauri/
 
+.vscode/
+

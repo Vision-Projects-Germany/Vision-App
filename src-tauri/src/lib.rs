@@ -28,16 +28,17 @@ struct HttpResponse {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct DiscordPresencePayload {
     state: Option<String>,
-    startTimestamp: Option<i64>,
-    endTimestamp: Option<i64>,
-    largeImageKey: Option<String>,
-    largeImageText: Option<String>,
-    smallImageKey: Option<String>,
-    smallImageText: Option<String>,
-    partyId: Option<String>,
-    joinSecret: Option<String>,
+    start_timestamp: Option<i64>,
+    end_timestamp: Option<i64>,
+    large_image_key: Option<String>,
+    large_image_text: Option<String>,
+    small_image_key: Option<String>,
+    small_image_text: Option<String>,
+    party_id: Option<String>,
+    join_secret: Option<String>,
 }
 
 static DISCORD_CLIENT: OnceLock<Mutex<Option<DiscordIpcClient>>> = OnceLock::new();
@@ -78,43 +79,46 @@ fn discord_update_presence(app_id: String, presence: DiscordPresencePayload) -> 
         activity = activity.state(state);
     }
 
-    if presence.startTimestamp.is_some() || presence.endTimestamp.is_some() {
+    if presence.start_timestamp.is_some() || presence.end_timestamp.is_some() {
         let mut timestamps = activity::Timestamps::new();
-        if let Some(start) = presence.startTimestamp {
+        if let Some(start) = presence.start_timestamp {
             timestamps = timestamps.start(normalize_timestamp(start));
         }
-        if let Some(end) = presence.endTimestamp {
+        if let Some(end) = presence.end_timestamp {
             timestamps = timestamps.end(normalize_timestamp(end));
         }
         activity = activity.timestamps(timestamps);
     }
 
-    if presence.largeImageKey.is_some()
-        || presence.largeImageText.is_some()
-        || presence.smallImageKey.is_some()
-        || presence.smallImageText.is_some()
+    if presence.large_image_key.is_some()
+        || presence.large_image_text.is_some()
+        || presence.small_image_key.is_some()
+        || presence.small_image_text.is_some()
     {
         let mut assets = activity::Assets::new();
-        let large_key = "launcher_icon";
+        let large_key = presence
+            .large_image_key
+            .as_deref()
+            .unwrap_or("launcher_icon");
         assets = assets.large_image(large_key);
-        if let Some(large_text) = presence.largeImageText.as_deref() {
+        if let Some(large_text) = presence.large_image_text.as_deref() {
             assets = assets.large_text(large_text);
         }
-        if let Some(small_key) = presence.smallImageKey.as_deref() {
+        if let Some(small_key) = presence.small_image_key.as_deref() {
             assets = assets.small_image(small_key);
         }
-        if let Some(small_text) = presence.smallImageText.as_deref() {
+        if let Some(small_text) = presence.small_image_text.as_deref() {
             assets = assets.small_text(small_text);
         }
         activity = activity.assets(assets);
     }
 
-    if let Some(party_id) = presence.partyId.as_deref() {
+    if let Some(party_id) = presence.party_id.as_deref() {
         let party = activity::Party::new().id(party_id);
         activity = activity.party(party);
     }
 
-    if let Some(join_secret) = presence.joinSecret.as_deref() {
+    if let Some(join_secret) = presence.join_secret.as_deref() {
         let secrets = activity::Secrets::new().join(join_secret);
         activity = activity.secrets(secrets);
     }
@@ -143,9 +147,13 @@ fn discord_clear_presence() -> Result<(), String> {
 
 #[tauri::command]
 fn get_app_info() -> AppInfo {
+    let config_version = serde_json::from_str::<serde_json::Value>(include_str!("../tauri.conf.json"))
+        .ok()
+        .and_then(|value| value.get("version").and_then(|v| v.as_str()).map(str::to_string));
+
     AppInfo {
         name: "Vision Desktop".to_string(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        version: config_version.unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string()),
     }
 }
 

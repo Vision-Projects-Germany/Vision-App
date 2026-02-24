@@ -157,6 +157,8 @@ type ApplicationItem = {
   experience: string;
   createdAt: string;
   status: ApplicationStatus;
+  apiStatus: string;
+  apiApplicationStatus: string;
 };
 
 type PendingApplicationAction = {
@@ -826,7 +828,12 @@ function mapApplicationStatus(value: unknown): ApplicationStatus {
   if (normalized === "new" || normalized === "open") {
     return "new";
   }
-  if (normalized === "reviewing" || normalized === "inreview" || normalized === "pending") {
+  if (
+    normalized === "reviewing" ||
+    normalized === "review" ||
+    normalized === "inreview" ||
+    normalized === "pending"
+  ) {
     return "reviewing";
   }
   if (normalized === "accepted" || normalized === "approved") {
@@ -845,8 +852,12 @@ function mapApplicationItems(items: unknown[]): ApplicationItem[] {
       const id =
         typeof raw.id === "string"
           ? raw.id
+          : typeof raw.id === "number"
+            ? String(raw.id)
           : typeof raw.applicationId === "string"
             ? raw.applicationId
+            : typeof raw.applicationId === "number"
+              ? String(raw.applicationId)
             : "";
       const username =
         typeof raw.username === "string"
@@ -855,16 +866,27 @@ function mapApplicationItems(items: unknown[]): ApplicationItem[] {
             ? raw.user
             : typeof raw.createdBy === "string"
               ? raw.createdBy
+              : typeof raw.submittedBy === "string"
+                ? raw.submittedBy
               : "Unknown";
-      const role =
+      const roleRaw =
         typeof raw.role === "string"
           ? raw.role
-          : typeof raw.position === "string"
-            ? raw.position
-            : "—";
+          : typeof raw.type === "string"
+            ? raw.type
+            : typeof raw.position === "string"
+              ? raw.position
+              : "—";
+      const role = roleRaw
+        ? roleRaw.charAt(0).toUpperCase() + roleRaw.slice(1)
+        : "—";
       const experience =
         typeof raw.experience === "string"
           ? raw.experience
+          : typeof raw.description === "string"
+            ? raw.description
+            : typeof raw.notes === "string"
+              ? raw.notes
           : typeof raw.message === "string"
             ? raw.message
             : typeof raw.text === "string"
@@ -876,13 +898,25 @@ function mapApplicationItems(items: unknown[]): ApplicationItem[] {
           : typeof raw.created_at === "string"
             ? raw.created_at
             : new Date().toISOString();
+      const apiStatus =
+        typeof raw.status === "string" && raw.status.trim()
+          ? raw.status.trim()
+          : "unknown";
+      const apiApplicationStatus =
+        typeof raw.applicationStatus === "string" && raw.applicationStatus.trim()
+          ? raw.applicationStatus.trim()
+          : typeof raw.status === "string" && raw.status.trim()
+            ? raw.status.trim()
+            : "unknown";
       return {
         id: id || `${username}-${createdAt}`,
         username,
         role,
         experience,
         createdAt,
-        status: mapApplicationStatus(raw.status)
+        status: mapApplicationStatus(raw.applicationStatus ?? raw.status),
+        apiStatus,
+        apiApplicationStatus
       } as ApplicationItem;
     })
     .filter((application) => Boolean(application.id));
@@ -1405,6 +1439,8 @@ export default function App() {
   const [toastProgress, setToastProgress] = useState(0);
   const toastTimerRef = useRef<number | null>(null);
   const toastIntervalRef = useRef<number | null>(null);
+  const [connectionRecovering, setConnectionRecovering] = useState(false);
+  const connectivityProbeRunningRef = useRef(false);
   const updaterCheckedRef = useRef(false);
   const [updateCheckLoading, setUpdateCheckLoading] = useState(false);
   const [mcVersions, setMcVersions] = useState<string[]>([]);
@@ -1416,8 +1452,13 @@ export default function App() {
   const [ticketItems, setTicketItems] = useState<TicketItem[]>([]);
   const [ticketsLoading, setTicketsLoading] = useState(false);
   const [ticketsError, setTicketsError] = useState<string | null>(null);
+  const [applicationsRefreshTick, setApplicationsRefreshTick] = useState(0);
   const [pendingApplicationAction, setPendingApplicationAction] =
     useState<PendingApplicationAction | null>(null);
+  const [applicationRejectNotes, setApplicationRejectNotes] = useState("");
+  const [applicationActionLoading, setApplicationActionLoading] = useState(false);
+  const [applicationActionError, setApplicationActionError] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState<string>("Unbekannt");
   const [showClippy, setShowClippy] = useState(false);
   const [appSettings, setAppSettings] = useState<AppSettings>(() => {
     const defaults: AppSettings = {
@@ -1536,8 +1577,26 @@ export default function App() {
     )
   );
   const setApplicationStatus = (id: string, status: ApplicationStatus) => {
+    const mappedApiApplicationStatus =
+      status === "accepted"
+        ? "approved"
+        : status === "rejected"
+          ? "rejected"
+          : status === "reviewing"
+            ? "review"
+            : "pending";
+    const mappedApiStatus = status === "rejected" ? "closed" : "open";
     setApplicationItems((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, status } : item))
+      prev.map((item) =>
+        item.id === id
+          ? {
+            ...item,
+            status,
+            apiApplicationStatus: mappedApiApplicationStatus,
+            apiStatus: mappedApiStatus
+          }
+          : item
+      )
     );
   };
   const toggleRoleExpanded = (roleId: string) => {
@@ -1673,18 +1732,70 @@ export default function App() {
     username: string,
     status: ApplicationStatus
   ) => {
+    setApplicationActionError(null);
+    if (status !== "rejected") {
+      setApplicationRejectNotes("");
+    }
     if (status === "reviewing") {
       setApplicationStatus(id, status);
       return;
     }
     setPendingApplicationAction({ id, username, status });
   };
-  const confirmApplicationStatusChange = () => {
+  const confirmApplicationStatusChange = async () => {
     if (!pendingApplicationAction) {
       return;
     }
-    setApplicationStatus(pendingApplicationAction.id, pendingApplicationAction.status);
-    setPendingApplicationAction(null);
+
+    if (
+      pendingApplicationAction.status === "rejected" &&
+      !applicationRejectNotes.trim()
+    ) {
+      setApplicationActionError("Bitte einen Grund für die Ablehnung eintragen.");
+      return;
+    }
+
+    try {
+      setApplicationActionLoading(true);
+      setApplicationActionError(null);
+      const token = await getApiToken();
+      const id = encodeURIComponent(pendingApplicationAction.id);
+      if (pendingApplicationAction.status === "accepted") {
+        await requestText(
+          `https://api.blizz-developments-official.de/api/applications/${id}/approve`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`
+            }
+          }
+        );
+      } else if (pendingApplicationAction.status === "rejected") {
+        await requestText(
+          `https://api.blizz-developments-official.de/api/applications/${id}/reject`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ notes: applicationRejectNotes.trim() })
+          }
+        );
+      }
+
+      setApplicationStatus(pendingApplicationAction.id, pendingApplicationAction.status);
+      setPendingApplicationAction(null);
+      setApplicationRejectNotes("");
+      setApplicationsRefreshTick((prev) => prev + 1);
+      showToast("Bewerbung aktualisiert.", "success");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unbekannter Fehler.";
+      setApplicationActionError(message);
+      showToast("Bewerbung konnte nicht aktualisiert werden.", "error");
+    } finally {
+      setApplicationActionLoading(false);
+    }
   };
   const visiblePages = useMemo(() => {
     const isModRole = authzRoles.includes("moderator") || authzRoles.includes("admin");
@@ -2277,6 +2388,133 @@ export default function App() {
     }
   }, [appSettings]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadAppVersion = async () => {
+      if (!(await isRunningInTauri())) {
+        if (!cancelled) {
+          setAppVersion("Dev");
+        }
+        return;
+      }
+      try {
+        const info = await invoke<{ version?: string }>("get_app_info");
+        if (!cancelled) {
+          setAppVersion(info?.version?.trim() || "Unbekannt");
+        }
+      } catch {
+        if (!cancelled) {
+          setAppVersion("Unbekannt");
+        }
+      }
+    };
+
+    void loadAppVersion();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const wait = (ms: number) =>
+      new Promise<void>((resolve) => {
+        window.setTimeout(resolve, ms);
+      });
+
+    const pingInternet = async () => {
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        return false;
+      }
+
+      try {
+        const response = await fetch("https://api.blizz-developments-official.de/api/health", {
+          method: "GET",
+          cache: "no-store"
+        });
+        if (response.ok) {
+          return true;
+        }
+      } catch {
+        // ignore and try fallback probe
+      }
+
+      try {
+        await fetch("https://www.google.com/generate_204", {
+          method: "GET",
+          cache: "no-store",
+          mode: "no-cors"
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    const runProbe = async () => {
+      if (connectivityProbeRunningRef.current || cancelled) {
+        return;
+      }
+      connectivityProbeRunningRef.current = true;
+      try {
+        const firstCheck = await pingInternet();
+        if (firstCheck) {
+          if (!cancelled) {
+            setConnectionRecovering(false);
+          }
+          return;
+        }
+
+        await wait(2000);
+        if (cancelled) {
+          return;
+        }
+
+        const retryCheck = await pingInternet();
+        if (!cancelled) {
+          setConnectionRecovering(!retryCheck);
+        }
+      } finally {
+        connectivityProbeRunningRef.current = false;
+      }
+    };
+
+    void runProbe();
+    const intervalId = window.setInterval(() => {
+      void runProbe();
+    }, 20000);
+
+    const onOnline = () => {
+      void runProbe();
+    };
+    const onOffline = () => {
+      void runProbe();
+    };
+
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
+    };
+  }, []);
+
+  const connectionOverlay = connectionRecovering ? (
+    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-[rgba(6,8,14,0.88)] backdrop-blur-[2px]">
+      <div className="flex flex-col items-center gap-4">
+        <div className="loader" />
+        <p className="text-[14px] font-semibold text-[rgba(255,255,255,0.9)]">
+          Verbindung wird wiederhergestellt...
+        </p>
+      </div>
+    </div>
+  ) : null;
+
   const runUpdaterCheck = async (manual: boolean) => {
     if (updateCheckLoading) {
       return;
@@ -2310,7 +2548,8 @@ export default function App() {
     } catch (error) {
       console.error("[updater] check/install failed", error);
       if (manual) {
-        showToast("Updateprüfung fehlgeschlagen.", "error");
+        const reason = error instanceof Error ? error.message : String(error);
+        showToast(`Updatepruefung fehlgeschlagen: ${reason}`, "error");
       }
     } finally {
       setUpdateCheckLoading(false);
@@ -3425,15 +3664,37 @@ export default function App() {
     setApplicationItems([]);
 
     (async () => {
-      const token = await getApiToken();
-      const data = await requestJson<{ items?: unknown[] }>(
-        "https://api.blizz-developments-official.de/api/applications?page=1&limit=50",
-        {
+      const endpoint = "https://api.blizz-developments-official.de/api/applications?page=1&limit=50";
+      let data: Record<string, unknown> | unknown[];
+
+      try {
+        const token = await getApiToken();
+        data = await requestJson<Record<string, unknown> | unknown[]>(endpoint, {
           headers: { Authorization: `Bearer ${token}` }
-        }
-      );
-      const rawItems = Array.isArray(data.items) ? data.items : [];
-      setApplicationItems(mapApplicationItems(rawItems));
+        });
+      } catch (firstError) {
+        // Fallback: some environments expose this endpoint without auth.
+        data = await requestJson<Record<string, unknown> | unknown[]>(endpoint);
+        console.warn("[applications] auth request failed, used public fallback", firstError);
+      }
+
+      const payload = data as Record<string, unknown>;
+      const rawItems = Array.isArray(data)
+        ? data
+        : Array.isArray(payload?.items)
+          ? payload.items
+          : Array.isArray((payload as any)?.data?.items)
+            ? (payload as any).data.items
+            : Array.isArray((payload as any)?.applications)
+              ? (payload as any).applications
+              : [];
+
+      const mapped = mapApplicationItems(rawItems);
+      console.log("[applications] load", {
+        rawCount: rawItems.length,
+        mappedCount: mapped.length
+      });
+      setApplicationItems(mapped);
     })()
       .catch((error) => {
         const message = error instanceof Error ? error.message : "Unbekannter Fehler.";
@@ -3444,7 +3705,7 @@ export default function App() {
       .finally(() => {
         setApplicationsLoading(false);
       });
-  }, [activePage, permissionFlags.canViewApplications, user]);
+  }, [activePage, permissionFlags.canViewApplications, user, applicationsRefreshTick]);
 
   useEffect(() => {
     if (activePage === "home") {
@@ -4226,43 +4487,49 @@ export default function App() {
 
   if (isAuthGateLoading) {
     return (
-      <AppShell withSidebar={false}>
-        <div className="flex h-full w-full items-center justify-center">
-          <div className="loader" />
-        </div>
-      </AppShell>
+      <>
+        <AppShell withSidebar={false}>
+          <div className="flex h-full w-full items-center justify-center">
+            <div className="loader" />
+          </div>
+        </AppShell>
+        {connectionOverlay}
+      </>
     );
   }
 
   const isAuthenticated = Boolean(user);
   if (!isAuthenticated) {
     return (
-      <AppShell withSidebar={false}>
-        <div className="relative flex h-full w-full items-center justify-center overflow-hidden bg-[#0a0b10]">
-          <div className="pointer-events-none absolute inset-0">
-            <div className="absolute -left-[200px] -top-[200px] h-[520px] w-[520px] rounded-full bg-[rgba(80,250,123,0.14)] blur-[120px]" />
-            <div className="absolute -right-[240px] -top-[240px] h-[560px] w-[560px] rounded-full bg-[rgba(110,214,255,0.12)] blur-[140px]" />
+      <>
+        <AppShell withSidebar={false}>
+          <div className="relative flex h-full w-full items-center justify-center overflow-hidden bg-[#0a0b10]">
+            <div className="pointer-events-none absolute inset-0">
+              <div className="absolute -left-[200px] -top-[200px] h-[520px] w-[520px] rounded-full bg-[rgba(80,250,123,0.14)] blur-[120px]" />
+              <div className="absolute -right-[240px] -top-[240px] h-[560px] w-[560px] rounded-full bg-[rgba(110,214,255,0.12)] blur-[140px]" />
+            </div>
+            <div className="relative z-10 w-[440px]">
+              <LoginView
+                expanded={loginDialogOpen}
+                onToggleExpanded={() => {
+                  setLoginError(null);
+                  setLoginDialogError(null);
+                  setLoginDialogOpen((prev) => !prev);
+                }}
+                loading={loginSubmitting}
+                error={loginDialogError ?? loginError}
+                email={loginEmail}
+                password={loginPassword}
+                onChangeEmail={setLoginEmail}
+                onChangePassword={setLoginPassword}
+                onSubmit={() => void handleEmailPasswordLogin()}
+                onRegister={() => void openUrl("https://vision-projects.eu/accounting/register")}
+              />
+            </div>
           </div>
-          <div className="relative z-10 w-[440px]">
-            <LoginView
-              expanded={loginDialogOpen}
-              onToggleExpanded={() => {
-                setLoginError(null);
-                setLoginDialogError(null);
-                setLoginDialogOpen((prev) => !prev);
-              }}
-              loading={loginSubmitting}
-              error={loginDialogError ?? loginError}
-              email={loginEmail}
-              password={loginPassword}
-              onChangeEmail={setLoginEmail}
-              onChangePassword={setLoginPassword}
-              onSubmit={() => void handleEmailPasswordLogin()}
-              onRegister={() => void openUrl("https://vision-projects.eu/accounting/register")}
-            />
-          </div>
-        </div>
-      </AppShell>
+        </AppShell>
+        {connectionOverlay}
+      </>
     );
   }
 
@@ -4271,33 +4538,39 @@ export default function App() {
   if (isBootLoading) {
     if (warmupActive) {
       return (
-        <AppShell withSidebar={false}>
-          <div className="relative flex h-full w-full items-center justify-center overflow-hidden bg-[#0a0b10]">
-            <div className="pointer-events-none absolute inset-0">
-              <div className="absolute -left-[180px] -top-[220px] h-[520px] w-[520px] rounded-full bg-[rgba(80,250,123,0.14)] blur-[120px]" />
-              <div className="absolute -right-[260px] -top-[240px] h-[560px] w-[560px] rounded-full bg-[rgba(110,214,255,0.12)] blur-[140px]" />
-            </div>
-            <div className="relative z-10 flex flex-col items-center justify-center gap-4">
-              <div className="loader" />
-              <div className="text-center">
-                <p className="text-[14px] font-semibold text-[rgba(255,255,255,0.85)]">
-                  Getting everything ready...
-                </p>
-                <p className="mt-1 text-[12px] text-[rgba(255,255,255,0.55)]">
-                  Inhalte werden vorgeladen.
-                </p>
+        <>
+          <AppShell withSidebar={false}>
+            <div className="relative flex h-full w-full items-center justify-center overflow-hidden bg-[#0a0b10]">
+              <div className="pointer-events-none absolute inset-0">
+                <div className="absolute -left-[180px] -top-[220px] h-[520px] w-[520px] rounded-full bg-[rgba(80,250,123,0.14)] blur-[120px]" />
+                <div className="absolute -right-[260px] -top-[240px] h-[560px] w-[560px] rounded-full bg-[rgba(110,214,255,0.12)] blur-[140px]" />
+              </div>
+              <div className="relative z-10 flex flex-col items-center justify-center gap-4">
+                <div className="loader" />
+                <div className="text-center">
+                  <p className="text-[14px] font-semibold text-[rgba(255,255,255,0.85)]">
+                    Getting everything ready...
+                  </p>
+                  <p className="mt-1 text-[12px] text-[rgba(255,255,255,0.55)]">
+                    Inhalte werden vorgeladen.
+                  </p>
+                </div>
               </div>
             </div>
-          </div>
-        </AppShell>
+          </AppShell>
+          {connectionOverlay}
+        </>
       );
     }
     return (
-      <AppShell>
-        <div className="flex h-full w-full items-center justify-center">
-          <div className="loader" />
-        </div>
-      </AppShell>
+      <>
+        <AppShell>
+          <div className="flex h-full w-full items-center justify-center">
+            <div className="loader" />
+          </div>
+        </AppShell>
+        {connectionOverlay}
+      </>
     );
   }
 
@@ -4379,6 +4652,7 @@ export default function App() {
                     setAppSettings,
                     runUpdaterCheck,
                     updateCheckLoading,
+                    appVersion,
                     user,
                     userProjectIds,
                     setSelectedProject,
@@ -4743,20 +5017,51 @@ export default function App() {
                 </div>
               </div>
 
+              {pendingApplicationAction.status === "rejected" && (
+                <div className="mt-4">
+                  <label className="text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]">
+                    Grund (Pflichtfeld)
+                  </label>
+                  <textarea
+                    value={applicationRejectNotes}
+                    onChange={(event) => setApplicationRejectNotes(event.target.value)}
+                    placeholder="Nicht passend aktuell"
+                    className="mt-2 h-24 w-full resize-none rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[#0F1116] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.85)] outline-none focus:border-[#FF6B6B]"
+                  />
+                </div>
+              )}
+
+              {applicationActionError && (
+                <div className="mt-3 rounded-[10px] border border-[rgba(255,100,100,0.25)] bg-[rgba(255,100,100,0.08)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.8)]">
+                  {applicationActionError}
+                </div>
+              )}
+
               <div className="mt-5 flex items-center justify-end gap-3">
                 <button
                   type="button"
-                  onClick={() => setPendingApplicationAction(null)}
+                  onClick={() => {
+                    if (applicationActionLoading) return;
+                    setPendingApplicationAction(null);
+                    setApplicationRejectNotes("");
+                    setApplicationActionError(null);
+                  }}
                   className="cta-secondary px-4 py-2 text-[12px]"
+                  disabled={applicationActionLoading}
                 >
                   Abbrechen
                 </button>
                 <button
                   type="button"
-                  onClick={confirmApplicationStatusChange}
+                  onClick={() => void confirmApplicationStatusChange()}
                   className="cta-primary px-4 py-2 text-[12px]"
+                  disabled={
+                    applicationActionLoading ||
+                    (pendingApplicationAction.status === "rejected" &&
+                      !applicationRejectNotes.trim())
+                  }
                 >
-                  Bestätigen
+                  {applicationActionLoading ? "Sende..." : "Bestätigen"}
                 </button>
               </div>
             </div>
@@ -5081,9 +5386,9 @@ export default function App() {
         )}
         {toastMessage && (
           <div
-            className={`fixed bottom-6 left-1/2 z-[80] w-[min(680px,calc(100vw-32px))] -translate-x-1/2 overflow-hidden rounded-none border-2 px-4 py-3 text-[12px] font-semibold shadow-[0_20px_40px_rgba(0,0,0,0.45)] transition-all duration-300 ${toastVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-2"} ${toastVariant === "success"
-              ? "border-[rgba(46,204,113,0.45)] bg-[rgba(21,40,28,0.92)] text-[#7CFFB0]"
-              : "border-[rgba(255,91,91,0.45)] bg-[rgba(48,16,16,0.92)] text-[#FF9C9C]"
+            className={`fixed bottom-6 left-1/2 z-[80] w-max max-w-[min(680px,calc(100vw-32px))] -translate-x-1/2 overflow-hidden rounded-[14px] border px-4 py-3 text-[12px] font-semibold shadow-[0_20px_40px_rgba(0,0,0,0.45)] backdrop-blur-[6px] transition-all duration-300 ${toastVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-2"} ${toastVariant === "success"
+              ? "border-[rgba(46,204,113,0.32)] bg-[rgba(18,34,25,0.94)] text-[#92FFC0]"
+              : "border-[rgba(255,91,91,0.32)] bg-[rgba(44,16,16,0.94)] text-[#FFB0B0]"
               }`}
           >
             <span className="block whitespace-pre-wrap leading-[16px] text-center">
@@ -6047,6 +6352,7 @@ export default function App() {
             </div>
           </div>
         )}
+        {connectionOverlay}
       </div>
     </AppShell>
   );
@@ -6118,6 +6424,7 @@ function renderContent(
   setAppSettings: (updater: (prev: AppSettings) => AppSettings) => void,
   onCheckForUpdates: (manual: boolean) => Promise<void>,
   updateCheckLoading: boolean,
+  appVersion: string,
   user: User | null,
   userProjectIds: string[],
   onSelectProject: (project: ProjectItem | null) => void,
@@ -6626,6 +6933,7 @@ function renderContent(
           void onCheckForUpdates(true);
         }}
         updateCheckLoading={updateCheckLoading}
+        appVersion={appVersion}
       />
     );
   }
@@ -7472,18 +7780,28 @@ function renderContent(
       pending: "bg-[#FFD166] text-[#0D0E12]",
       closed: "bg-[rgba(255,255,255,0.16)] text-[rgba(255,255,255,0.82)]"
     };
+    const ticketStats = {
+      total: tickets.length,
+      open: tickets.filter((ticket) => ticket.status === "open").length,
+      pending: tickets.filter((ticket) => ticket.status === "pending").length,
+      closed: tickets.filter((ticket) => ticket.status === "closed").length
+    };
     return (
-      <div className="space-y-6">
+      <div className="space-y-8">
         <div className="flex items-center justify-between">
           <button
             type="button"
             onClick={() => onNavigate("admin")}
-            className="cta-secondary flex items-center gap-2 px-4 py-3 text-[14px]"
+            className="cta-secondary group flex items-center gap-2 px-4 py-3 text-[14px] active:scale-95"
             aria-label="Zurück"
           >
-            <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
+            <i className="fa-solid fa-arrow-left text-[14px] transition-transform group-hover:-translate-x-1" aria-hidden="true" />
             Zurück
           </button>
+          <div className="flex items-center gap-2 rounded-[10px] border border-[rgba(255,255,255,0.08)] bg-[#101218] px-3 py-1.5">
+            <span className="flex h-2 w-2 rounded-full bg-[#2BD9FF] animate-pulse" />
+            <span className="text-[12px] font-medium text-[rgba(255,255,255,0.65)]">Live Updates</span>
+          </div>
         </div>
 
         {ticketsError && (
@@ -7492,9 +7810,68 @@ function renderContent(
           </div>
         )}
 
-        <div className="overflow-hidden rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[#101218]">
-          <div className="divide-y divide-[rgba(255,255,255,0.06)]">
-            {tickets.map((ticket) => {
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+          <div className="rounded-[16px] border border-[rgba(255,255,255,0.08)] bg-[#14161A] p-5 transition hover:border-[rgba(255,255,255,0.15)]">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-[rgba(255,255,255,0.4)]">Gesamt</p>
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[rgba(255,255,255,0.05)] text-[rgba(255,255,255,0.4)]">
+                <i className="fa-solid fa-layer-group text-[12px]" aria-hidden="true" />
+              </div>
+            </div>
+            <p className="text-[28px] font-bold tracking-tight text-white">{ticketStats.total}</p>
+          </div>
+
+          <div className="rounded-[16px] border border-[rgba(43,254,113,0.15)] bg-[linear-gradient(135deg,rgba(43,254,113,0.05),rgba(20,22,26,0.5))] p-5 transition hover:border-[#2BFE71] hover:shadow-[0_0_20px_rgba(43,254,113,0.15)]">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-[#2BFE71]">Open</p>
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[rgba(43,254,113,0.1)] text-[#2BFE71]">
+                <i className="fa-solid fa-circle text-[10px]" aria-hidden="true" />
+              </div>
+            </div>
+            <p className="text-[28px] font-bold tracking-tight text-white">{ticketStats.open}</p>
+          </div>
+
+          <div className="rounded-[16px] border border-[rgba(255,209,102,0.15)] bg-[linear-gradient(135deg,rgba(255,209,102,0.05),rgba(20,22,26,0.5))] p-5 transition hover:border-[#FFD166] hover:shadow-[0_0_20px_rgba(255,209,102,0.15)]">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-[#FFD166]">In Progress</p>
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[rgba(255,209,102,0.1)] text-[#FFD166]">
+                <i className="fa-solid fa-clock text-[12px]" aria-hidden="true" />
+              </div>
+            </div>
+            <p className="text-[28px] font-bold tracking-tight text-white">{ticketStats.pending}</p>
+          </div>
+
+          <div className="rounded-[16px] border border-[rgba(43,217,255,0.15)] bg-[linear-gradient(135deg,rgba(43,217,255,0.05),rgba(20,22,26,0.5))] p-5 transition hover:border-[#2BD9FF] hover:shadow-[0_0_20px_rgba(43,217,255,0.15)]">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-[#2BD9FF]">Gelöst</p>
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[rgba(43,217,255,0.1)] text-[#2BD9FF]">
+                <i className="fa-solid fa-circle-check text-[12px]" aria-hidden="true" />
+              </div>
+            </div>
+            <p className="text-[28px] font-bold tracking-tight text-white">{ticketStats.closed}</p>
+          </div>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {ticketsLoading ? (
+            <div className="col-span-full rounded-[24px] border border-[rgba(255,255,255,0.08)] bg-[#101218] p-16 text-center">
+              <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.05)]">
+                <i className="fa-solid fa-spinner fa-spin text-[28px] text-[rgba(255,255,255,0.35)]" aria-hidden="true" />
+              </div>
+              <h3 className="text-[18px] font-bold text-[rgba(255,255,255,0.92)]">Tickets laden...</h3>
+            </div>
+          ) : tickets.length === 0 ? (
+            <div className="col-span-full rounded-[24px] border border-[rgba(255,255,255,0.08)] bg-[#101218] p-16 text-center">
+              <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.05)]">
+                <i className="fa-solid fa-ticket text-[32px] text-[rgba(255,255,255,0.2)]" aria-hidden="true" />
+              </div>
+              <h3 className="text-[18px] font-bold text-[rgba(255,255,255,0.92)]">Keine Tickets</h3>
+              <p className="mt-2 text-[14px] text-[rgba(255,255,255,0.5)]">
+                Aktuell sind keine offenen Tickets vorhanden.
+              </p>
+            </div>
+          ) : (
+            tickets.map((ticket) => {
               const requester = ticket.requester.trim();
               const requesterMatch = members.find((member) => {
                 const username = (member.username ?? "").trim();
@@ -7505,66 +7882,64 @@ function renderContent(
                 typeof requesterMatch?.avatarUrl === "string"
                   ? requesterMatch.avatarUrl
                   : null;
-              return (
-                <details key={ticket.id} className="px-4">
-                  <summary className="flex cursor-pointer select-none list-none items-center justify-between gap-4 py-4 [&::-webkit-details-marker]:hidden">
-                    <div className="min-w-0">
-                      <p className="truncate text-[14px] font-semibold text-[rgba(255,255,255,0.92)]">
-                        {ticket.title}
-                      </p>
-                      <div className="mt-1 flex items-center gap-2 text-[12px] text-[rgba(255,255,255,0.50)]">
-                        {requesterAvatarUrl ? (
-                          <img
-                            src={requesterAvatarUrl}
-                            alt=""
-                            className="h-5 w-5 rounded-full object-cover"
-                            loading="lazy"
-                            draggable={false}
-                          />
-                        ) : (
-                          <div className="h-5 w-5 rounded-full bg-[rgba(255,255,255,0.10)]" />
-                        )}
-                        <span className="truncate">{ticket.requester}</span>
-                      </div>
-                    </div>
-                    <span
-                      className={[
-                        "flex-shrink-0 rounded-[10px] px-3 py-1 text-[11px] font-semibold",
-                        statusClass[ticket.status]
-                      ].join(" ")}
-                    >
-                      {statusLabel[ticket.status]}
-                    </span>
-                  </summary>
 
-                  <div className="pb-4">
-                    <div className="rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] p-3">
-                      <p className="text-[12px] leading-relaxed text-[rgba(255,255,255,0.62)]">
-                        {ticket.preview}
-                      </p>
+              return (
+                <details
+                  key={ticket.id}
+                  className="group relative flex flex-col rounded-[20px] p-[3px] transition-transform duration-300 hover:-translate-y-1"
+                >
+                  <span
+                    aria-hidden="true"
+                    className="rainbow-draw pointer-events-none absolute inset-0 rounded-[20px] blur-[2px] opacity-0 transition-opacity duration-500 group-hover:opacity-100"
+                  />
+                  <div className="relative z-10 flex h-full w-full flex-col rounded-[17px] bg-[#14161A] border border-[rgba(255,255,255,0.08)] p-5 shadow-lg">
+                    <summary className="flex cursor-pointer list-none items-start justify-between gap-3 [&::-webkit-details-marker]:hidden">
+                      <div className="min-w-0">
+                        <p className="truncate text-[15px] font-semibold text-[rgba(255,255,255,0.92)]">
+                          {ticket.title}
+                        </p>
+                        <div className="mt-2 flex items-center gap-2 text-[12px] text-[rgba(255,255,255,0.50)]">
+                          {requesterAvatarUrl ? (
+                            <img
+                              src={requesterAvatarUrl}
+                              alt=""
+                              className="h-6 w-6 rounded-full object-cover border border-[rgba(255,255,255,0.12)]"
+                              loading="lazy"
+                              draggable={false}
+                            />
+                          ) : (
+                            <div className="h-6 w-6 rounded-full bg-[rgba(255,255,255,0.10)]" />
+                          )}
+                          <span className="truncate">{ticket.requester}</span>
+                        </div>
+                      </div>
+                      <span
+                        className={[
+                          "flex-shrink-0 rounded-[10px] px-3 py-1 text-[11px] font-semibold",
+                          statusClass[ticket.status]
+                        ].join(" ")}
+                      >
+                        {statusLabel[ticket.status]}
+                      </span>
+                    </summary>
+
+                    <div className="mt-4 border-t border-[rgba(255,255,255,0.08)] pt-4 text-[12px]">
+                      <p className="leading-relaxed text-[rgba(255,255,255,0.62)]">{ticket.preview}</p>
                       <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                        <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.55)]">
-                          <span className="font-semibold text-[rgba(255,255,255,0.75)]">
-                            Ticket ID
-                          </span>
+                        <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[rgba(255,255,255,0.55)]">
+                          <span className="font-semibold text-[rgba(255,255,255,0.75)]">Ticket ID</span>
                           <span className="ml-2">{ticket.id}</span>
                         </div>
-                        <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.55)]">
-                          <span className="font-semibold text-[rgba(255,255,255,0.75)]">
-                            Priority
-                          </span>
+                        <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[rgba(255,255,255,0.55)]">
+                          <span className="font-semibold text-[rgba(255,255,255,0.75)]">Priority</span>
                           <span className="ml-2">{ticket.priority}</span>
                         </div>
-                        <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.55)]">
-                          <span className="font-semibold text-[rgba(255,255,255,0.75)]">
-                            Created
-                          </span>
+                        <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[rgba(255,255,255,0.55)]">
+                          <span className="font-semibold text-[rgba(255,255,255,0.75)]">Created</span>
                           <span className="ml-2">{formatTicketShortDate(ticket.createdAt)}</span>
                         </div>
-                        <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.55)]">
-                          <span className="font-semibold text-[rgba(255,255,255,0.75)]">
-                            Updated
-                          </span>
+                        <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[rgba(255,255,255,0.55)]">
+                          <span className="font-semibold text-[rgba(255,255,255,0.75)]">Updated</span>
                           <span className="ml-2">{formatTicketShortDate(ticket.lastUpdateAt)}</span>
                         </div>
                       </div>
@@ -7572,18 +7947,8 @@ function renderContent(
                   </div>
                 </details>
               );
-            })}
-            {ticketsLoading && (
-              <div className="px-4 py-10 text-center text-[13px] text-[rgba(255,255,255,0.55)]">
-                Lade Tickets...
-              </div>
-            )}
-            {!ticketsLoading && !tickets.length && (
-              <div className="px-4 py-10 text-center text-[13px] text-[rgba(255,255,255,0.55)]">
-                Keine Tickets gefunden.
-              </div>
-            )}
-          </div>
+            })
+          )}
         </div>
       </div>
     );
@@ -7597,33 +7962,6 @@ function renderContent(
         </p>
       );
     }
-
-    const statusMap: Record<ApplicationStatus, { label: string; className: string; icon: string; badgeClass: string }> = {
-      new: {
-        label: "Neu",
-        className: "bg-[#2BFE71] text-[#0D0E12]",
-        icon: "fa-sparkles",
-        badgeClass: "border-[#2BFE71] bg-[rgba(43,254,113,0.15)] text-[#2BFE71]"
-      },
-      reviewing: {
-        label: "In Prüfung",
-        className: "bg-[#FFD166] text-[#0D0E12]",
-        icon: "fa-magnifying-glass",
-        badgeClass: "border-[#FFD166] bg-[rgba(255,209,102,0.15)] text-[#FFD166]"
-      },
-      accepted: {
-        label: "Angenommen",
-        className: "bg-[rgba(43,217,255,0.18)] text-[#2BD9FF]",
-        icon: "fa-circle-check",
-        badgeClass: "border-[#2BD9FF] bg-[rgba(43,217,255,0.15)] text-[#2BD9FF]"
-      },
-      rejected: {
-        label: "Abgelehnt",
-        className: "bg-[rgba(255,91,91,0.20)] text-[#FF6B6B]",
-        icon: "fa-circle-xmark",
-        badgeClass: "border-[#FF6B6B] bg-[rgba(255,91,91,0.15)] text-[#FF6B6B]"
-      }
-    };
 
     const roleIcons: Record<string, string> = {
       "Builder": "fa-hammer",
@@ -7676,7 +8014,7 @@ function renderContent(
             <div className="flex items-center justify-between mb-2">
               <p className="text-[11px] font-bold uppercase tracking-wider text-[#2BFE71]">Neu</p>
               <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[rgba(43,254,113,0.1)] text-[#2BFE71]">
-                <i className="fa-solid fa-sparkles text-[12px]" aria-hidden="true" />
+                <i className="fa-solid fa-star text-[12px]" aria-hidden="true" />
               </div>
             </div>
             <p className="text-[28px] font-bold text-white tracking-tight">{stats.new}</p>
@@ -7739,7 +8077,6 @@ function renderContent(
             </div>
           ) : (
             applicationItems.map((item) => {
-              const status = statusMap[item.status];
               const roleIcon = roleIcons[item.role] || "fa-user";
               const date = new Date(item.createdAt).toLocaleDateString("de-DE", {
                 day: "2-digit",
@@ -7764,8 +8101,8 @@ function renderContent(
                   />
                   <div className="relative z-10 flex h-full w-full flex-col rounded-[17px] bg-[#14161A] border border-[rgba(255,255,255,0.08)] p-5 shadow-lg">
                     {/* Header */}
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex items-start gap-3">
+                      <div className="flex min-w-0 items-center gap-3">
                         <div className="relative">
                           {avatarUrl ? (
                             <img
@@ -7794,15 +8131,6 @@ function renderContent(
                           </p>
                         </div>
                       </div>
-                      <span
-                        className={[
-                          "flex-shrink-0 inline-flex items-center gap-1.5 rounded-[8px] border px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide",
-                          status.badgeClass
-                        ].join(" ")}
-                      >
-                        <i className={`fa-solid ${status.icon} text-[10px]`} aria-hidden="true" />
-                        {status.label}
-                      </span>
                     </div>
 
                     {/* Content */}
@@ -7812,6 +8140,9 @@ function renderContent(
                       </p>
                       <p className="text-[13px] leading-relaxed text-[rgba(255,255,255,0.75)] line-clamp-3">
                         {item.experience}
+                      </p>
+                      <p className="mt-2 text-[11px] text-[rgba(255,255,255,0.45)]">
+                        Application: {item.apiApplicationStatus}
                       </p>
                     </div>
 

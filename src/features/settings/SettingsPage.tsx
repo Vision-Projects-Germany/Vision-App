@@ -12,6 +12,7 @@ interface SettingsPageProps {
   profileDebugVisible?: boolean;
   onCheckForUpdates: () => void;
   updateCheckLoading: boolean;
+  appVersion?: string;
 }
 
 interface ToggleSwitchProps {
@@ -67,7 +68,8 @@ export function SettingsPage({
   onNavigate,
   profileDebugVisible,
   onCheckForUpdates,
-  updateCheckLoading
+  updateCheckLoading,
+  appVersion
 }: SettingsPageProps) {
   const toggleSetting = (key: keyof AppSettings) => {
     onUpdate((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -184,8 +186,7 @@ export function SettingsPage({
             <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-5 hover:bg-white/[0.04] transition-colors">
               <p className="text-xs uppercase tracking-[0.2em] text-muted mb-2">Version</p>
               <div className="flex items-baseline gap-2">
-                <p className="text-2xl font-bold text-white">0.1.0</p>
-                <span className="text-xs text-muted">build 2402</span>
+                <p className="text-2xl font-bold text-white">{appVersion ?? "Unbekannt"}</p>
               </div>
             </div>
 

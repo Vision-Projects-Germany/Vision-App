@@ -28,6 +28,7 @@
     "createUpdaterArtifacts": true,
     "targets": "all",
     "icon": [
+      "../src/assets/logos/vision_desktop/Launcher_icon.png",
       "../src/assets/logos/vision_desktop/Launcher_icon.ico"
     ]
   },
