@@ -177,7 +177,7 @@ export function SettingsPage({
             </div>
           </div>
           <div className="px-3 py-1 bg-accent/10 border border-accent/20 rounded-full text-accent text-xs font-bold uppercase tracking-wider self-start md:self-center">
-            Beta Phase
+            Release
           </div>
         </div>
 

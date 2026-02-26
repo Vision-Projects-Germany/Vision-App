@@ -5405,7 +5405,15 @@ export default function App() {
         )}
         {selectedProject && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 px-4">
-            <div className="w-full max-w-[720px] overflow-hidden rounded-[24px] border border-[rgba(255,255,255,0.12)] bg-[#24262C] shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
+            <div className="relative w-full max-w-[720px] overflow-hidden rounded-[24px] border border-[rgba(255,255,255,0.12)] bg-[#24262C] shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
+              <button
+                type="button"
+                onClick={() => setSelectedProject(null)}
+                className="absolute right-4 top-4 z-10 flex h-9 w-9 items-center justify-center rounded-[10px] border border-[rgba(255,255,255,0.18)] bg-[rgba(13,14,18,0.65)] text-[rgba(255,255,255,0.85)] transition hover:border-[rgba(255,255,255,0.35)] hover:bg-[rgba(13,14,18,0.9)]"
+                aria-label="Schliessen"
+              >
+                <i className="fa-solid fa-xmark text-[13px]" aria-hidden="true" />
+              </button>
               {selectedProject.cover?.url ? (
                 <img
                   src={selectedProject.cover.url}
@@ -5493,47 +5501,44 @@ export default function App() {
                     </>
                   )}
                 </div>
-                <div className="mt-5 flex items-center justify-end gap-3">
-                  {(() => {
-                    const modrinthUrl = getProjectModrinthLink(selectedProject);
-                    if (!modrinthUrl) {
-                      return null;
-                    }
-                    return (
+                <div className="mt-5 flex items-center justify-between gap-3">
+                  <div>
+                    {(() => {
+                      const modrinthUrl = getProjectModrinthLink(selectedProject);
+                      if (!modrinthUrl) {
+                        return null;
+                      }
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => openModrinth(modrinthUrl)}
+                          className="rounded-[10px] bg-[#2BFE71] px-4 py-2 text-[13px] font-semibold text-[#0D0E12] transition hover:brightness-95"
+                        >
+                          Modrinth
+                        </button>
+                      );
+                    })()}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {canJoinSelectedProject && (
                       <button
                         type="button"
-                        onClick={() => openModrinth(modrinthUrl)}
+                        onClick={() => handleJoinProject(selectedProject.id)}
                         className="rounded-[10px] bg-[#2BFE71] px-4 py-2 text-[13px] font-semibold text-[#0D0E12] transition hover:brightness-95"
                       >
-                        Modrinth
+                        Beitreten
                       </button>
-                    );
-                  })()}
-                  {canJoinSelectedProject && (
-                    <button
-                      type="button"
-                      onClick={() => handleJoinProject(selectedProject.id)}
-                      className="rounded-[10px] bg-[#2BFE71] px-4 py-2 text-[13px] font-semibold text-[#0D0E12] transition hover:brightness-95"
-                    >
-                      Beitreten
-                    </button>
-                  )}
-                  {canLeaveSelectedProject && (
-                    <button
-                      type="button"
-                      onClick={() => handleLeaveProject(selectedProject.id)}
-                      className="rounded-[10px] bg-[#E24C4C] px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-[#F06060]"
-                    >
-                      Verlassen
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setSelectedProject(null)}
-                    className="cta-secondary px-4 py-2 text-[13px]"
-                  >
-                    Schliessen
-                  </button>
+                    )}
+                    {canLeaveSelectedProject && (
+                      <button
+                        type="button"
+                        onClick={() => handleLeaveProject(selectedProject.id)}
+                        className="rounded-[10px] bg-[#E24C4C] px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-[#F06060]"
+                      >
+                        Verlassen
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

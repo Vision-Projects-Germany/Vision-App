@@ -26,7 +26,7 @@ In `src-tauri/tauri.conf.json`:
 ## 2) Commit + Push
 ```bash
 git add .
-git commit -m "release: v0.1.2"
+git commit -m "release: v0.1.3"
 git push
 ```
 
