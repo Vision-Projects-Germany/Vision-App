@@ -11,7 +11,10 @@ interface SettingsPageProps {
   onNavigate: (page: string) => void;
   profileDebugVisible?: boolean;
   onCheckForUpdates: () => void;
+  onInstallUpdate: () => void;
   updateCheckLoading: boolean;
+  updateInstallLoading: boolean;
+  availableUpdateVersion?: string | null;
   appVersion?: string;
 }
 
@@ -68,7 +71,10 @@ export function SettingsPage({
   onNavigate,
   profileDebugVisible,
   onCheckForUpdates,
+  onInstallUpdate,
   updateCheckLoading,
+  updateInstallLoading,
+  availableUpdateVersion,
   appVersion
 }: SettingsPageProps) {
   const toggleSetting = (key: keyof AppSettings) => {
@@ -230,6 +236,18 @@ export function SettingsPage({
               <i className={`fas ${updateCheckLoading ? "fa-spinner fa-spin" : "fa-sync-alt"}`}></i>
               {updateCheckLoading ? "Suche..." : "Nach Updates suchen"}
             </button>
+
+            {availableUpdateVersion && (
+              <button
+                type="button"
+                onClick={onInstallUpdate}
+                disabled={updateInstallLoading}
+                className="flex-1 rounded-xl border border-[#2BD9FF] bg-[#2BD9FF] px-6 py-4 text-sm font-bold text-[#0D0E12] shadow-[0_0_20px_rgba(43,217,255,0.28)] transition-all hover:brightness-105 hover:shadow-[0_0_25px_rgba(43,217,255,0.45)] active:scale-[0.99] active:shadow-none flex justify-center items-center gap-2"
+              >
+                <i className={`fas ${updateInstallLoading ? "fa-spinner fa-spin" : "fa-download"}`}></i>
+                {updateInstallLoading ? "Installiere..." : `App updaten (${availableUpdateVersion})`}
+              </button>
+            )}
           </div>
         </div>
       </section>

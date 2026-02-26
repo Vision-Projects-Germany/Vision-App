@@ -18,7 +18,7 @@
 ## 1) Version erhöhen
 In `src-tauri/tauri.conf.json`:
 ```json
-"version": "0.1.2"
+"version": "0.1.4"
 ```
 
 ---
@@ -26,7 +26,7 @@ In `src-tauri/tauri.conf.json`:
 ## 2) Commit + Push
 ```bash
 git add .
-git commit -m "release: v0.1.3"
+git commit -m "release: v0.1.4"
 git push
 ```
 
@@ -34,14 +34,14 @@ git push
 
 ## 3) Release-Tag erstellen
 ```bash
-git tag v0.1.3
+git tag v0.1.4
 ```
 
 ---
 
 ## 4) Tag pushen (STARTET DEN BUILD)
 ```bash
-git push origin v0.1.3
+git push origin v0.1.4
 ```
 
 ---

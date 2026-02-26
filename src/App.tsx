@@ -89,10 +89,14 @@ interface MemberProfile {
   roles?: string[];
   experience?: string | null;
   level?: number | null;
+  age?: number | null;
   minecraftName?: string | null;
+  bio?: string | null;
+  interests?: string[] | null;
   avatarMediaId?: string | null;
   avatarUrl?: string | null;
   projects?: string[];
+  profileData?: Record<string, unknown>;
 }
 
 interface AdminRoleItem {
@@ -227,6 +231,7 @@ const TEAM_APPLICATION_URL =
   (import.meta.env.VITE_TEAM_APPLICATION_URL as string | undefined) ??
   "https://vision-projects.eu/apply";
 const APP_SETTINGS_KEY = "vision.desktop.settings.v1";
+const SHOW_CALENDAR_UI = false;
 
 const activityStatusLabels: Record<
   NonNullable<ProjectItem["activityStatus"]>,
@@ -500,7 +505,7 @@ const isPageAllowed = (pageId: string, flags: PermissionFlags) => {
     case "analytics":
       return flags.canAccessAnalytics;
     case "calendar":
-      return flags.canAccessCalendar;
+      return flags.canAccessCalendar && SHOW_CALENDAR_UI;
     case "admin":
       return flags.canAccessAdmin || flags.isModerator;
     case "members":
@@ -1389,6 +1394,7 @@ export default function App() {
     "all"
   );
   const [members, setMembers] = useState<MemberProfile[]>([]);
+  const [selectedMemberProfile, setSelectedMemberProfile] = useState<MemberProfile | null>(null);
   const [membersLoading, setMembersLoading] = useState(false);
   const [membersError, setMembersError] = useState<string | null>(null);
   const [rolesList, setRolesList] = useState<AdminRoleItem[]>([]);
@@ -1443,6 +1449,8 @@ export default function App() {
   const connectivityProbeRunningRef = useRef(false);
   const updaterCheckedRef = useRef(false);
   const [updateCheckLoading, setUpdateCheckLoading] = useState(false);
+  const [updateInstallLoading, setUpdateInstallLoading] = useState(false);
+  const [availableUpdateVersion, setAvailableUpdateVersion] = useState<string | null>(null);
   const [mcVersions, setMcVersions] = useState<string[]>([]);
   const [mcVersionsLoading, setMcVersionsLoading] = useState(false);
   const [mcVersionsError, setMcVersionsError] = useState(false);
@@ -1806,7 +1814,7 @@ export default function App() {
     if (permissionFlags.canAccessAnalytics) {
       pages.push("analytics");
     }
-    if (permissionFlags.canAccessCalendar) {
+    if (permissionFlags.canAccessCalendar && SHOW_CALENDAR_UI) {
       pages.push("calendar");
     }
     if (permissionFlags.canAccessAdmin || isModRole) {
@@ -2530,20 +2538,16 @@ export default function App() {
     try {
       const update = await checkUpdate();
       if (!update) {
+        setAvailableUpdateVersion(null);
         if (manual) {
           showToast("Kein Update verfügbar.", "success");
         }
         return;
       }
 
+      setAvailableUpdateVersion(update.version);
       if (manual) {
-        showToast(`Update gefunden: v${update.version}`, "success");
-      }
-      await update.downloadAndInstall();
-      try {
-        await relaunch();
-      } catch {
-        showToast("Update installiert. Bitte App neu starten.", "success");
+        showToast(`Update gefunden: v${update.version}. Nutze 'App updaten'.`, "success");
       }
     } catch (error) {
       console.error("[updater] check/install failed", error);
@@ -2555,13 +2559,49 @@ export default function App() {
       setUpdateCheckLoading(false);
     }
   };
+
+  const handleInstallUpdate = async () => {
+    if (updateInstallLoading) {
+      return;
+    }
+    if (!(await isRunningInTauri())) {
+      showToast("Updater ist nur in der Desktop-App verfügbar.", "error");
+      return;
+    }
+
+    setUpdateInstallLoading(true);
+    try {
+      const update = await checkUpdate();
+      if (!update) {
+        setAvailableUpdateVersion(null);
+        showToast("Kein Update verfügbar.", "success");
+        return;
+      }
+
+      await update.downloadAndInstall();
+      setAvailableUpdateVersion(null);
+      try {
+        await relaunch();
+      } catch {
+        showToast("Update installiert. Bitte App neu starten.", "success");
+      }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      showToast(`Update-Installation fehlgeschlagen: ${reason}`, "error");
+    } finally {
+      setUpdateInstallLoading(false);
+    }
+  };
   useEffect(() => {
+    if (!user) {
+      return;
+    }
     if (updaterCheckedRef.current) {
       return;
     }
     updaterCheckedRef.current = true;
     void runUpdaterCheck(false);
-  }, []);
+  }, [user]);
 
   const submitBan = async (member: MemberProfile, reason: string) => {
     if (!user) {
@@ -3475,11 +3515,17 @@ export default function App() {
           roles: Array.isArray(record.roles) ? (record.roles as string[]) : [],
           experience: typeof record.experience === "string" ? record.experience : null,
           level: typeof record.level === "number" ? record.level : null,
+          age: typeof record.age === "number" ? record.age : null,
           minecraftName:
             typeof record.minecraftName === "string" ? record.minecraftName : null,
+          bio: typeof record.bio === "string" ? record.bio : null,
+          interests: Array.isArray(record.interests)
+            ? (record.interests.filter((entry) => typeof entry === "string") as string[])
+            : null,
           avatarMediaId,
           avatarUrl: getAvatarThumbUrl(avatarMediaId),
-          projects: projectsValue
+          projects: projectsValue,
+          profileData: record
         } as MemberProfile;
       });
       const filtered = mapped.filter((item) => item.uid);
@@ -3740,7 +3786,7 @@ export default function App() {
 
   useEffect(() => {
     const controller = new AbortController();
-    const canLoadCalendar = permissionFlags.canAccessCalendar;
+    const canLoadCalendar = permissionFlags.canAccessCalendar && SHOW_CALENDAR_UI;
 
     if (!user || !canLoadCalendar) {
       setCalendarEvents([]);
@@ -4629,6 +4675,7 @@ export default function App() {
                     members,
                     membersLoading,
                     membersError,
+                    setSelectedMemberProfile,
                     rolesList,
                     rolesLoading,
                     rolesError,
@@ -4652,6 +4699,9 @@ export default function App() {
                     setAppSettings,
                     runUpdaterCheck,
                     updateCheckLoading,
+                    handleInstallUpdate,
+                    updateInstallLoading,
+                    availableUpdateVersion,
                     appVersion,
                     user,
                     userProjectIds,
@@ -5401,6 +5451,84 @@ export default function App() {
                 }`}
               style={{ width: `${toastProgress * 100}%` }}
             />
+          </div>
+        )}
+        {selectedMemberProfile && (
+          <div className="fixed inset-0 z-[62] flex items-center justify-center bg-black/65 px-4">
+            <div className="w-full max-w-[620px] rounded-[18px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  {selectedMemberProfile.avatarUrl ? (
+                    <img
+                      src={selectedMemberProfile.avatarUrl}
+                      alt={`${selectedMemberProfile.username ?? "User"} avatar`}
+                      className="h-11 w-11 rounded-full border border-[rgba(255,255,255,0.2)] object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-11 w-11 items-center justify-center rounded-full bg-[rgba(255,255,255,0.08)] text-[rgba(255,255,255,0.8)]">
+                      <i className="fa-solid fa-user" aria-hidden="true" />
+                    </div>
+                  )}
+                  <div>
+                    <p className="text-[16px] font-semibold text-[rgba(255,255,255,0.95)]">
+                      {selectedMemberProfile.username ?? "Unbekannt"}
+                    </p>
+                    <p className="text-[12px] text-[rgba(255,255,255,0.55)]">{selectedMemberProfile.uid}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedMemberProfile(null)}
+                  className="flex h-8 w-8 items-center justify-center rounded-[8px] border border-[rgba(255,255,255,0.14)] bg-[#171A21] text-[rgba(255,255,255,0.78)] transition hover:border-[rgba(255,255,255,0.28)]"
+                  aria-label="Dialog schliessen"
+                >
+                  <i className="fa-solid fa-xmark" aria-hidden="true" />
+                </button>
+              </div>
+
+              <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
+                  <span className="text-[rgba(255,255,255,0.5)]">Email:</span> {selectedMemberProfile.email ?? "—"}
+                </div>
+                <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
+                  <span className="text-[rgba(255,255,255,0.5)]">Minecraft:</span> {selectedMemberProfile.minecraftName ?? "—"}
+                </div>
+                <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
+                  <span className="text-[rgba(255,255,255,0.5)]">Age:</span> {selectedMemberProfile.age ?? "—"}
+                </div>
+                <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
+                  <span className="text-[rgba(255,255,255,0.5)]">Level:</span> {selectedMemberProfile.level ?? "—"}
+                </div>
+                <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
+                  <span className="text-[rgba(255,255,255,0.5)]">Experience:</span> {selectedMemberProfile.experience ?? "—"}
+                </div>
+                <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
+                  <span className="text-[rgba(255,255,255,0.5)]">Roles:</span>{" "}
+                  {Array.isArray(selectedMemberProfile.roles) && selectedMemberProfile.roles.length
+                    ? selectedMemberProfile.roles.join(", ")
+                    : "—"}
+                </div>
+              </div>
+
+              <div className="mt-3 rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
+                <span className="text-[rgba(255,255,255,0.5)]">Bio:</span>{" "}
+                {selectedMemberProfile.bio?.trim() || "—"}
+              </div>
+
+              <div className="mt-3 rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
+                <span className="text-[rgba(255,255,255,0.5)]">Interests:</span>{" "}
+                {Array.isArray(selectedMemberProfile.interests) && selectedMemberProfile.interests.length
+                  ? selectedMemberProfile.interests.join(", ")
+                  : "—"}
+              </div>
+
+              <div className="mt-4">
+                <p className="text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]">Raw Profil-Daten</p>
+                <pre className="mt-2 max-h-[220px] overflow-auto rounded-[10px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] p-3 text-[11px] text-[rgba(255,255,255,0.72)]">
+                  {JSON.stringify(selectedMemberProfile.profileData ?? {}, null, 2)}
+                </pre>
+              </div>
+            </div>
           </div>
         )}
         {selectedProject && (
@@ -6402,6 +6530,7 @@ function renderContent(
   members: MemberProfile[],
   membersLoading: boolean,
   membersError: string | null,
+  onOpenMemberProfile: (member: MemberProfile) => void,
   rolesList: AdminRoleItem[],
   rolesLoading: boolean,
   rolesError: string | null,
@@ -6429,6 +6558,9 @@ function renderContent(
   setAppSettings: (updater: (prev: AppSettings) => AppSettings) => void,
   onCheckForUpdates: (manual: boolean) => Promise<void>,
   updateCheckLoading: boolean,
+  onInstallUpdate: () => Promise<void>,
+  updateInstallLoading: boolean,
+  availableUpdateVersion: string | null,
   appVersion: string,
   user: User | null,
   userProjectIds: string[],
@@ -6937,7 +7069,12 @@ function renderContent(
         onCheckForUpdates={() => {
           void onCheckForUpdates(true);
         }}
+        onInstallUpdate={() => {
+          void onInstallUpdate();
+        }}
         updateCheckLoading={updateCheckLoading}
+        updateInstallLoading={updateInstallLoading}
+        availableUpdateVersion={availableUpdateVersion}
         appVersion={appVersion}
       />
     );
@@ -7018,7 +7155,7 @@ function renderContent(
   if (page === "editor") {
     const canShowProjects = permissionFlags.canAccessProjects;
     const canShowNews = permissionFlags.canAccessNews;
-    const canShowEvents = permissionFlags.canAccessCalendar;
+    const canShowEvents = permissionFlags.canAccessCalendar && SHOW_CALENDAR_UI;
     const canShowMedia = permissionFlags.canAccessMedia;
     return (
       <div className="space-y-6">
@@ -7098,7 +7235,7 @@ function renderContent(
             </button>
           )}
 
-          {/* Media Button - Cyan */}
+          {/* Media Button - Lila */}
           {canShowMedia && (
             <button
               type="button"
@@ -7110,7 +7247,7 @@ function renderContent(
                 className="rainbow-draw pointer-events-none absolute inset-0 rounded-[24px] blur-[2px]"
               />
               <div className="relative z-10 flex h-full w-full flex-col items-center justify-center rounded-[21px] bg-[#24262C] p-12">
-                <div className="flex h-32 w-32 items-center justify-center rounded-full bg-[rgba(45,212,255,0.2)] text-[#2DD4FF] transition-all">
+                <div className="flex h-32 w-32 items-center justify-center rounded-full bg-[rgba(138,91,255,0.2)] text-[#8A5BFF] transition-all">
                   <i className="fa-solid fa-photo-film text-[56px]" aria-hidden="true" />
                 </div>
                 <h3 className="mt-8 text-[24px] font-bold text-[rgba(255,255,255,0.92)]">
@@ -8277,10 +8414,11 @@ function renderContent(
             {members.map((member) => (
               <div
                 key={member.uid}
+                onClick={() => onOpenMemberProfile(member)}
                 className={`grid gap-4 px-4 py-3 text-[12px] text-[rgba(255,255,255,0.75)] ${showActions
                   ? "grid-cols-[1.6fr,1.3fr,1fr,1fr,0.7fr]"
                   : "grid-cols-[1.6fr,1.3fr,1fr,1fr]"
-                  }`}
+                  } cursor-pointer transition hover:bg-[rgba(255,255,255,0.03)]`}
               >
                 <div className="flex items-center gap-3">
                   {member.avatarUrl ? (
@@ -8324,7 +8462,10 @@ function renderContent(
                           {canManageUserRoles && roleId !== "admin" && (
                             <button
                               type="button"
-                              onClick={() => onOpenMemberRoleDialog(member, "remove", roleId)}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onOpenMemberRoleDialog(member, "remove", roleId);
+                              }}
                               className="text-[rgba(255,255,255,0.55)] transition hover:text-[#FF8A8A]"
                               aria-label={`Rolle ${roleId} entfernen`}
                               title={`Rolle ${roleId} entfernen`}
@@ -8340,7 +8481,10 @@ function renderContent(
                     {canManageUserRoles && (
                       <button
                         type="button"
-                        onClick={() => onOpenMemberRoleDialog(member, "add")}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onOpenMemberRoleDialog(member, "add");
+                        }}
                         className="inline-flex items-center rounded-[8px] border border-[rgba(43,254,113,0.35)] bg-[rgba(43,254,113,0.12)] px-2 py-0.5 text-[10px] font-semibold text-[#2BFE71] transition hover:bg-[rgba(43,254,113,0.22)]"
                         title="Rolle hinzufügen"
                         aria-label="Rolle hinzufügen"
@@ -8379,7 +8523,10 @@ function renderContent(
                     {canManageMemberProjects && (
                       <button
                         type="button"
-                        onClick={() => onOpenMemberProjectDialog(member)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onOpenMemberProjectDialog(member);
+                        }}
                         className="inline-flex items-center rounded-[8px] border border-[rgba(43,254,113,0.35)] bg-[rgba(43,254,113,0.12)] px-2 py-0.5 text-[10px] font-semibold text-[#2BFE71] transition hover:bg-[rgba(43,254,113,0.22)]"
                         title="Projekt hinzufügen"
                         aria-label="Projekt hinzufügen"
@@ -8397,7 +8544,10 @@ function renderContent(
                         className="flex h-8 w-8 items-center justify-center rounded-[6px] bg-[rgba(255,91,91,0.18)] text-[#FF8A8A] shadow-[0_0_0_1px_rgba(255,91,91,0.25)] transition hover:bg-[rgba(255,91,91,0.28)] hover:text-[#FF5B5B]"
                         title="Bannen"
                         aria-label="Bannen"
-                        onClick={() => onOpenBanDialog(member)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onOpenBanDialog(member);
+                        }}
                       >
                         <i className="fa-solid fa-ban" aria-hidden="true" />
                       </button>
@@ -8408,7 +8558,10 @@ function renderContent(
                         className="flex h-8 w-8 items-center justify-center rounded-[6px] bg-[rgba(255,209,102,0.18)] text-[#FFD166] shadow-[0_0_0_1px_rgba(255,209,102,0.25)] transition hover:bg-[rgba(255,209,102,0.28)] hover:text-[#FFC857]"
                         title="Warnen"
                         aria-label="Warnen"
-                        onClick={() => onOpenWarnDialog(member)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onOpenWarnDialog(member);
+                        }}
                       >
                         <i className="fa-solid fa-triangle-exclamation" aria-hidden="true" />
                       </button>
