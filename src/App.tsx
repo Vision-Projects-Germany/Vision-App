@@ -1443,6 +1443,8 @@ export default function App() {
   const connectivityProbeRunningRef = useRef(false);
   const updaterCheckedRef = useRef(false);
   const [updateCheckLoading, setUpdateCheckLoading] = useState(false);
+  const [updateInstallLoading, setUpdateInstallLoading] = useState(false);
+  const [availableUpdateVersion, setAvailableUpdateVersion] = useState<string | null>(null);
   const [mcVersions, setMcVersions] = useState<string[]>([]);
   const [mcVersionsLoading, setMcVersionsLoading] = useState(false);
   const [mcVersionsError, setMcVersionsError] = useState(false);
@@ -2530,20 +2532,16 @@ export default function App() {
     try {
       const update = await checkUpdate();
       if (!update) {
+        setAvailableUpdateVersion(null);
         if (manual) {
           showToast("Kein Update verfügbar.", "success");
         }
         return;
       }
 
+      setAvailableUpdateVersion(update.version);
       if (manual) {
-        showToast(`Update gefunden: v${update.version}`, "success");
-      }
-      await update.downloadAndInstall();
-      try {
-        await relaunch();
-      } catch {
-        showToast("Update installiert. Bitte App neu starten.", "success");
+        showToast(`Update gefunden: v${update.version}. Nutze 'App updaten'.`, "success");
       }
     } catch (error) {
       console.error("[updater] check/install failed", error);
@@ -2555,13 +2553,49 @@ export default function App() {
       setUpdateCheckLoading(false);
     }
   };
+
+  const handleInstallUpdate = async () => {
+    if (updateInstallLoading) {
+      return;
+    }
+    if (!(await isRunningInTauri())) {
+      showToast("Updater ist nur in der Desktop-App verfügbar.", "error");
+      return;
+    }
+
+    setUpdateInstallLoading(true);
+    try {
+      const update = await checkUpdate();
+      if (!update) {
+        setAvailableUpdateVersion(null);
+        showToast("Kein Update verfügbar.", "success");
+        return;
+      }
+
+      await update.downloadAndInstall();
+      setAvailableUpdateVersion(null);
+      try {
+        await relaunch();
+      } catch {
+        showToast("Update installiert. Bitte App neu starten.", "success");
+      }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      showToast(`Update-Installation fehlgeschlagen: ${reason}`, "error");
+    } finally {
+      setUpdateInstallLoading(false);
+    }
+  };
   useEffect(() => {
+    if (!user) {
+      return;
+    }
     if (updaterCheckedRef.current) {
       return;
     }
     updaterCheckedRef.current = true;
     void runUpdaterCheck(false);
-  }, []);
+  }, [user]);
 
   const submitBan = async (member: MemberProfile, reason: string) => {
     if (!user) {
@@ -4652,6 +4686,9 @@ export default function App() {
                     setAppSettings,
                     runUpdaterCheck,
                     updateCheckLoading,
+                    handleInstallUpdate,
+                    updateInstallLoading,
+                    availableUpdateVersion,
                     appVersion,
                     user,
                     userProjectIds,
@@ -6429,6 +6466,9 @@ function renderContent(
   setAppSettings: (updater: (prev: AppSettings) => AppSettings) => void,
   onCheckForUpdates: (manual: boolean) => Promise<void>,
   updateCheckLoading: boolean,
+  onInstallUpdate: () => Promise<void>,
+  updateInstallLoading: boolean,
+  availableUpdateVersion: string | null,
   appVersion: string,
   user: User | null,
   userProjectIds: string[],
@@ -6937,7 +6977,12 @@ function renderContent(
         onCheckForUpdates={() => {
           void onCheckForUpdates(true);
         }}
+        onInstallUpdate={() => {
+          void onInstallUpdate();
+        }}
         updateCheckLoading={updateCheckLoading}
+        updateInstallLoading={updateInstallLoading}
+        availableUpdateVersion={availableUpdateVersion}
         appVersion={appVersion}
       />
     );
