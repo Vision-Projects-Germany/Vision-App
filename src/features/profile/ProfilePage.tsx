@@ -31,13 +31,28 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
   const [editError, setEditError] = useState<string | null>(null);
   const [profileDocCollection, setProfileDocCollection] = useState<"users" | "members">("users");
   const [interestsInput, setInterestsInput] = useState("");
+  const normalizeProjectIds = (value: unknown): string[] => {
+    if (!Array.isArray(value)) return [];
+    const ids = value
+      .map((entry) => {
+        if (typeof entry === "string") return entry.trim();
+        if (entry && typeof entry === "object") {
+          const record = entry as Record<string, unknown>;
+          const candidate = record.id ?? record.projectId ?? record.project_id ?? null;
+          return typeof candidate === "string" ? candidate.trim() : "";
+        }
+        return "";
+      })
+      .filter((id): id is string => Boolean(id));
+    return Array.from(new Set(ids));
+  };
 
   const avatarUrlFromMediaId = (value: unknown): string | null => {
     if (typeof value !== "string") return null;
     const trimmed = value.trim();
     if (!trimmed) return null;
     const normalized = trimmed.replace(/-original$/i, "");
-    return `https://api.blizz-developments-official.de/media/${normalized}/thumb`;
+    return `https://api.vision-projects.eu/media/${normalized}/thumb`;
   };
 
   const toDateSafe = (value: unknown): Date | undefined => {
@@ -107,7 +122,7 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
             experience: data.experience || null,
             avatarMediaId: data.avatarMediaId || null,
             avatarUrl: data.avatarUrl || null,
-            projects: data.projects || [],
+            projects: normalizeProjectIds(data.projects),
             createdAt: toDateSafe(data.createdAt),
             updatedAt: toDateSafe(data.updatedAt),
           };
@@ -118,7 +133,7 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
           setInterestsInput(interests.join(", "));
 
           // Calculate stats
-          const projectCount = (data.projects || []).length;
+          const projectCount = normalizeProjectIds(data.projects).length;
           currentStats = {
             projectCount,
             totalCommits: data.totalCommits || 0,
@@ -340,7 +355,7 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
   };
 
   const handleSaveProfileModal = async () => {
-    if (!profile || !auth.currentUser) return;
+    if (!profile) return;
     setEditError(null);
     setIsSaving(true);
     try {
@@ -355,27 +370,6 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
         const userDocRef = doc(db, profileDocCollection, profile.uid);
         await updateDoc(userDocRef, { displayName: nextDisplayName });
         updateProfile({ displayName: nextDisplayName });
-      }
-
-      const token = await auth.currentUser.getIdToken();
-      const response = await fetch(
-        `https://api.blizz-developments-official.de/api/profile/${encodeURIComponent(profile.uid)}`,
-        {
-          method: "PATCH",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            bio: nextBio,
-            interests: nextInterests
-          })
-        }
-      );
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || `HTTP ${response.status}`);
       }
 
       const userDocRef = doc(db, profileDocCollection, profile.uid);

@@ -5,6 +5,8 @@
   toastEnabled: boolean;
 }
 
+import { openUrl } from "@tauri-apps/plugin-opener";
+
 interface SettingsPageProps {
   settings: AppSettings;
   onUpdate: (updater: (prev: AppSettings) => AppSettings) => void;
@@ -79,6 +81,13 @@ export function SettingsPage({
 }: SettingsPageProps) {
   const toggleSetting = (key: keyof AppSettings) => {
     onUpdate((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const openChangelog = () => {
+    const url = "https://github.com/Vision-Projects-Germany/Vision-App/releases";
+    openUrl(url).catch(() => {
+      window.open(url, "_blank", "noopener,noreferrer");
+    });
   };
 
   return (
@@ -210,6 +219,7 @@ export function SettingsPage({
           <div className="mt-8 flex flex-col md:flex-row gap-4">
             <button
               type="button"
+              onClick={openChangelog}
               className="flex-1 rounded-xl border border-white/10 bg-white/5 px-6 py-4 text-sm font-semibold text-white transition-all hover:bg-white/10 hover:border-white/20 active:scale-[0.99] flex justify-center items-center gap-2"
             >
               <i className="fas fa-list text-muted"></i>

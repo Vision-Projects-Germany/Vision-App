@@ -8,7 +8,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faChevronRight } from "@fortawesome/free-solid-svg-icons";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut, type User } from "firebase/auth";
-import { arrayUnion, doc, getDoc, updateDoc } from "firebase/firestore";
+import { arrayUnion, collection, doc, getDoc, getDocs, updateDoc } from "firebase/firestore";
 import { AppShell } from "./components/AppShell";
 import { MainCard } from "./components/MainCard";
 import { SideIcons } from "./components/SideIcons";
@@ -24,6 +24,12 @@ interface NewsItem {
   slug?: string;
   title: string;
   excerpt: string;
+  content?: string;
+  contentHtml?: string;
+  contentMarkdown?: string;
+  body?: string;
+  createdAt?: string;
+  publishedAt?: string;
   cover: { url: string } | null;
 }
 
@@ -144,19 +150,6 @@ interface HttpResponse {
   body: string;
 }
 
-type TicketStatus = "open" | "pending" | "closed";
-type TicketPriority = "low" | "medium" | "high";
-type TicketItem = {
-  id: string;
-  title: string;
-  requester: string;
-  status: TicketStatus;
-  priority: TicketPriority;
-  createdAt: string; // ISO
-  lastUpdateAt: string; // ISO
-  preview: string;
-};
-
 type ApplicationStatus = "new" | "reviewing" | "accepted" | "rejected";
 type ApplicationItem = {
   id: string;
@@ -192,16 +185,6 @@ type AppSettings = {
   toastEnabled: boolean;
 };
 
-const formatTicketShortDate = (iso: string) => {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleString("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "2-digit"
-  });
-};
-
 const applicationStatusActionLabel: Record<ApplicationStatus, string> = {
   new: "Neu",
   reviewing: "In Prüfung",
@@ -210,7 +193,7 @@ const applicationStatusActionLabel: Record<ApplicationStatus, string> = {
 };
 
 const fallbackProjectDescription =
-  "Projektbeschreibung folgt. Mehr Details kommen später, inklusive Features, Updates und Plattformen.";
+  "Projektbeschreibung folgt. Mehr Details kommen sp�ter, inklusive Features, Updates und Plattformen.";
 
 const modrinthTypeOrder = [
   "modpack",
@@ -258,22 +241,22 @@ const MEDIA_SECTIONS = [
   {
     key: "logos",
     label: "Logos",
-    endpoint: "https://api.blizz-developments-official.de/api/media/logos"
+    endpoint: "https://api.vision-projects.eu/api/media/logos"
   },
   {
     key: "banners",
     label: "Banner",
-    endpoint: "https://api.blizz-developments-official.de/api/media/banners"
+    endpoint: "https://api.vision-projects.eu/api/media/banners"
   },
   {
     key: "news-banners",
     label: "News Banner",
-    endpoint: "https://api.blizz-developments-official.de/api/media/news-banners"
+    endpoint: "https://api.vision-projects.eu/api/media/news-banners"
   },
   {
     key: "avatars",
     label: "Avatars",
-    endpoint: "https://api.blizz-developments-official.de/api/media/avatars"
+    endpoint: "https://api.vision-projects.eu/api/media/avatars"
   }
 ] as const;
 
@@ -360,7 +343,6 @@ const ROLE_PERMISSION_BASE = Array.from(
     "users.warn",
     "stats.read.admin",
     "profile.xp.normalize",
-    "mod.viewTickets",
     "mod.viewApplications"
   ])
 );
@@ -402,7 +384,6 @@ type PermissionFlags = {
   canAccessRoles: boolean;
   canBanUsers: boolean;
   canWarnUsers: boolean;
-  canViewTickets: boolean;
   canViewApplications: boolean;
   isModerator: boolean;
 };
@@ -437,7 +418,6 @@ const buildPermissionFlags = (
       canAccessRoles: true,
       canBanUsers: true,
       canWarnUsers: true,
-      canViewTickets: true,
       canViewApplications: true,
       isModerator: true
     };
@@ -463,7 +443,6 @@ const buildPermissionFlags = (
   const canAccessAdmin = hasAny(ADMIN_PERMISSIONS);
   const canBanUsers = has("users.ban");
   const canWarnUsers = has("users.warn");
-  const canViewTickets = has("mod.viewTickets");
   const canViewApplications = has("mod.viewApplications");
 
   return {
@@ -484,7 +463,6 @@ const buildPermissionFlags = (
     canAccessRoles,
     canBanUsers,
     canWarnUsers,
-    canViewTickets,
     canViewApplications,
     isModerator: hasModeratorRole
   };
@@ -516,8 +494,6 @@ const isPageAllowed = (pageId: string, flags: PermissionFlags) => {
       return flags.canAccessMembers || flags.isModerator;
     case "roles":
       return flags.canAccessRoles;
-    case "tickets":
-      return flags.canViewTickets;
     case "applications":
       return flags.canViewApplications;
     default:
@@ -650,7 +626,6 @@ function isPage(route: string) {
     "admin",
     "roles",
     "members",
-    "tickets",
     "applications"
   ].includes(route);
 }
@@ -766,6 +741,19 @@ function formatNewsDate(value?: string | null) {
   });
 }
 
+function getNewsDetailText(item: NewsItem): string {
+  const candidates = [item.content, item.contentMarkdown, item.body, item.excerpt];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+  if (typeof item.contentHtml === "string" && item.contentHtml.trim()) {
+    return stripHtml(item.contentHtml);
+  }
+  return "";
+}
+
 
 
 function mapNewsItems(items: unknown[]) {
@@ -787,88 +775,6 @@ function mapNewsItems(items: unknown[]) {
       } as NewsItem;
     })
     .filter((item) => item.id);
-}
-
-function mapTicketStatus(value: unknown): TicketStatus {
-  if (typeof value !== "string") {
-    return "open";
-  }
-  const normalized = value.trim().toLowerCase().replace(/[\s_-]+/g, "");
-  if (normalized === "open" || normalized === "new") {
-    return "open";
-  }
-  if (normalized === "pending" || normalized === "inprogress" || normalized === "progress") {
-    return "pending";
-  }
-  if (normalized === "closed" || normalized === "solved" || normalized === "done") {
-    return "closed";
-  }
-  return "open";
-}
-
-function mapTicketItems(items: unknown[]): TicketItem[] {
-  return items
-    .map((item) => {
-      const raw = item as Record<string, unknown>;
-      const id =
-        typeof raw.id === "string"
-          ? raw.id
-          : typeof raw.ticketId === "string"
-            ? raw.ticketId
-            : typeof raw.uid === "string"
-              ? raw.uid
-              : "";
-      const title =
-        typeof raw.title === "string"
-          ? raw.title
-          : typeof raw.subject === "string"
-            ? raw.subject
-            : "Untitled ticket";
-      const requester =
-        typeof raw.requester === "string"
-          ? raw.requester
-          : typeof raw.username === "string"
-            ? raw.username
-            : typeof raw.createdBy === "string"
-              ? raw.createdBy
-              : "Unknown";
-      const preview =
-        typeof raw.preview === "string"
-          ? raw.preview
-          : typeof raw.message === "string"
-            ? raw.message
-            : typeof raw.description === "string"
-              ? raw.description
-              : "";
-      const createdAt =
-        typeof raw.createdAt === "string"
-          ? raw.createdAt
-          : typeof raw.created_at === "string"
-            ? raw.created_at
-            : new Date().toISOString();
-      const updatedAt =
-        typeof raw.updatedAt === "string"
-          ? raw.updatedAt
-          : typeof raw.updated_at === "string"
-            ? raw.updated_at
-            : createdAt;
-      const priority =
-        typeof raw.priority === "string" && raw.priority.trim()
-          ? raw.priority
-          : "medium";
-
-      return {
-        id: id || `${title}-${createdAt}`,
-        title,
-        requester,
-        status: mapTicketStatus(raw.status),
-        priority,
-        createdAt,
-        lastUpdateAt: updatedAt,
-        preview
-      } as TicketItem;
-    })
-    .filter((ticket) => Boolean(ticket.id));
 }
 
 function mapApplicationStatus(value: unknown): ApplicationStatus {
@@ -927,10 +833,10 @@ function mapApplicationItems(items: unknown[]): ApplicationItem[] {
             ? raw.type
             : typeof raw.position === "string"
               ? raw.position
-              : "—";
+              : "�";
       const role = roleRaw
         ? roleRaw.charAt(0).toUpperCase() + roleRaw.slice(1)
-        : "—";
+        : "�";
       const experience =
         typeof raw.experience === "string"
           ? raw.experience
@@ -1120,30 +1026,16 @@ function isMcVersionAtLeast(value: string, min: string) {
   return parsed.patch >= minParsed.patch;
 }
 
-function normalizeMediaId(value?: string | null) {
-  if (!value) {
+function getFirestoreUserAvatarUrl(record: Record<string, unknown> | null | undefined) {
+  if (!record) {
     return null;
   }
-  let trimmed = value.trim();
-  if (!trimmed) {
-    return null;
-  }
-  const urlMatch = trimmed.match(/\/media\/([^/]+)/i);
-  if (urlMatch?.[1]) {
-    trimmed = urlMatch[1];
-  }
-  trimmed = trimmed.replace(/\/thumb$/i, "");
-  trimmed = trimmed.replace(/-original$/i, "");
-  trimmed = trimmed.replace(/-thumb$/i, "");
-  return trimmed || null;
-}
-
-function getAvatarThumbUrl(avatarMediaId?: string | null) {
-  const normalized = normalizeMediaId(avatarMediaId);
-  if (!normalized) {
-    return null;
-  }
-  return `https://api.blizz-developments-official.de/media/${normalized}/thumb`;
+  const discordAvatar =
+    (typeof record.discordAvatar === "string" && record.discordAvatar.trim()) ||
+    (typeof (record as any).discord_avatar === "string" &&
+      String((record as any).discord_avatar).trim()) ||
+    null;
+  return discordAvatar;
 }
 
 function toModrinthCard(project: ModrinthProject) {
@@ -1504,9 +1396,6 @@ export default function App() {
   const [applicationItems, setApplicationItems] = useState<ApplicationItem[]>([]);
   const [applicationsLoading, setApplicationsLoading] = useState(false);
   const [applicationsError, setApplicationsError] = useState<string | null>(null);
-  const [ticketItems, setTicketItems] = useState<TicketItem[]>([]);
-  const [ticketsLoading, setTicketsLoading] = useState(false);
-  const [ticketsError, setTicketsError] = useState<string | null>(null);
   const [applicationsRefreshTick, setApplicationsRefreshTick] = useState(0);
   const [pendingApplicationAction, setPendingApplicationAction] =
     useState<PendingApplicationAction | null>(null);
@@ -1808,7 +1697,7 @@ export default function App() {
       pendingApplicationAction.status === "rejected" &&
       !applicationRejectNotes.trim()
     ) {
-      setApplicationActionError("Bitte einen Grund für die Ablehnung eintragen.");
+      setApplicationActionError("Bitte einen Grund f�r die Ablehnung eintragen.");
       return;
     }
 
@@ -1819,7 +1708,7 @@ export default function App() {
       const id = encodeURIComponent(pendingApplicationAction.id);
       if (pendingApplicationAction.status === "accepted") {
         await requestText(
-          `https://api.blizz-developments-official.de/api/applications/${id}/approve`,
+          `https://api.vision-projects.eu/api/applications/${id}/approve`,
           {
             method: "POST",
             headers: {
@@ -1829,7 +1718,7 @@ export default function App() {
         );
       } else if (pendingApplicationAction.status === "rejected") {
         await requestText(
-          `https://api.blizz-developments-official.de/api/applications/${id}/reject`,
+          `https://api.vision-projects.eu/api/applications/${id}/reject`,
           {
             method: "POST",
             headers: {
@@ -1877,17 +1766,12 @@ export default function App() {
     permissionFlags.canAccessCalendar,
     permissionFlags.canAccessEditor
   ]);
-  const userAvatarUrl = useMemo(() => {
-    const record = userProfileData ?? {};
-    const avatarMediaId =
-      typeof (record as any).avatarMediaId === "string"
-        ? (record as any).avatarMediaId
-        : typeof (record as any).avatar_media_id === "string"
-          ? (record as any).avatar_media_id
-          : null;
-    return getAvatarThumbUrl(avatarMediaId);
-  }, [userProfileData]);
+  const userAvatarUrl = useMemo(
+    () => getFirestoreUserAvatarUrl(userProfileData ?? null),
+    [userProfileData]
+  );
   const [selectedProject, setSelectedProject] = useState<ProjectItem | null>(null);
+  const [selectedNewsItem, setSelectedNewsItem] = useState<NewsItem | null>(null);
   const [projectParticipants, setProjectParticipants] = useState<MemberProfile[]>([]);
   const [participantsLoading, setParticipantsLoading] = useState(false);
   const [participantsError, setParticipantsError] = useState<string | null>(null);
@@ -2038,7 +1922,7 @@ export default function App() {
       return;
     }
     if (!mediaUploadFile) {
-      setMediaUploadError("Bitte eine Datei auswählen.");
+      setMediaUploadError("Bitte eine Datei ausw�hlen.");
       return;
     }
     setMediaUploadLoading(true);
@@ -2048,8 +1932,8 @@ export default function App() {
       const token = await getApiToken();
       const uploadEndpoint =
         mediaUploadType === "news-banners"
-          ? "https://api.blizz-developments-official.de/api/admin/media/news-banners"
-          : `https://api.blizz-developments-official.de/api/admin/media?category=${mediaUploadType}`;
+          ? "https://api.vision-projects.eu/api/admin/media/news-banners"
+          : `https://api.vision-projects.eu/api/admin/media?category=${mediaUploadType}`;
       await uploadMediaFile({
         file: mediaUploadFile,
         token,
@@ -2105,7 +1989,7 @@ export default function App() {
         const formData = new FormData();
         formData.append("file", newsCoverFile);
         const response = await fetch(
-          "https://api.blizz-developments-official.de/api/admin/media/news-banners",
+          "https://api.vision-projects.eu/api/admin/media/news-banners",
           {
             method: "POST",
             headers: {
@@ -2152,7 +2036,7 @@ export default function App() {
       };
 
       console.info("[news] create payload", payload);
-      await requestText("https://api.blizz-developments-official.de/api/admin/news", {
+      await requestText("https://api.vision-projects.eu/api/admin/news", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -2184,8 +2068,8 @@ export default function App() {
 
   const reloadNewsItems = async (cacheBust = false) => {
     const url = cacheBust
-      ? `https://api.blizz-developments-official.de/api/news?page=1&limit=5&_ts=${Date.now()}`
-      : "https://api.blizz-developments-official.de/api/news?page=1&limit=5";
+      ? `https://api.vision-projects.eu/api/news?page=1&limit=5&_ts=${Date.now()}`
+      : "https://api.vision-projects.eu/api/news?page=1&limit=5";
     const data = await requestJson<{ items?: NewsItem[] }>(url);
     if (Array.isArray(data?.items)) {
       setNewsItems(mapNewsItems(data.items));
@@ -2234,7 +2118,7 @@ export default function App() {
       let resolvedId: string | null = null;
       try {
         const adminList = await requestJson<{ items?: any[] }>(
-          "https://api.blizz-developments-official.de/api/admin/news?page=1&limit=50",
+          "https://api.vision-projects.eu/api/admin/news?page=1&limit=50",
           { headers: { Authorization: `Bearer ${token}` } }
         );
         const adminItems = Array.isArray(adminList?.items) ? adminList.items : [];
@@ -2255,7 +2139,7 @@ export default function App() {
         throw new Error("News-ID konnte nicht aus dem Admin-Listing ermittelt werden.");
       }
       const response = await fetch(
-        `https://api.blizz-developments-official.de/api/admin/news/${finalId}`,
+        `https://api.vision-projects.eu/api/admin/news/${finalId}`,
         {
           method: "DELETE",
           headers: { Authorization: `Bearer ${token}` }
@@ -2275,13 +2159,13 @@ export default function App() {
       );
       setNewsDeleteCandidate(null);
       reloadNewsItems(true).catch(() => undefined);
-      showToast("News gelöscht.", "success");
+      showToast("News gel�scht.", "success");
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "News konnte nicht gelöscht werden.";
+        error instanceof Error ? error.message : "News konnte nicht gel�scht werden.";
       console.warn("[news] delete failed", message, error);
       setNewsDeleteError(message);
-      showToast("News konnte nicht gelöscht werden.", "error");
+      showToast("News konnte nicht gel�scht werden.", "error");
     } finally {
       setNewsDeleting(false);
     }
@@ -2305,7 +2189,7 @@ export default function App() {
     try {
       const token = await getApiToken();
       await requestText(
-        `https://api.blizz-developments-official.de/api/admin/media/${id}`,
+        `https://api.vision-projects.eu/api/admin/media/${id}`,
         {
           method: "DELETE",
           headers: { Authorization: `Bearer ${token}` }
@@ -2320,7 +2204,7 @@ export default function App() {
       setMediaError((prev) => ({
         ...prev,
         [section]:
-          error instanceof Error ? error.message : "Löschen fehlgeschlagen."
+          error instanceof Error ? error.message : "L�schen fehlgeschlagen."
       }));
     }
   };
@@ -2351,7 +2235,7 @@ export default function App() {
     try {
       const token = await getApiToken();
       const response = await requestText(
-        "https://api.blizz-developments-official.de/me/authz",
+        "https://api.vision-projects.eu/me/authz",
         {
           headers: { Authorization: `Bearer ${token}` }
         }
@@ -2488,7 +2372,7 @@ export default function App() {
       }
 
       try {
-        const response = await fetch("https://api.blizz-developments-official.de/api/health", {
+        const response = await fetch("https://api.vision-projects.eu/api/health", {
           method: "GET",
           cache: "no-store"
         });
@@ -2579,7 +2463,7 @@ export default function App() {
     }
     if (!(await isRunningInTauri())) {
       if (manual) {
-        showToast("Updater ist nur in der Desktop-App verfügbar.", "error");
+        showToast("Updater ist nur in der Desktop-App verf�gbar.", "error");
       }
       return;
     }
@@ -2590,7 +2474,7 @@ export default function App() {
       if (!update) {
         setAvailableUpdateVersion(null);
         if (manual) {
-          showToast("Kein Update verfügbar.", "success");
+          showToast("Kein Update verf�gbar.", "success");
         }
         return;
       }
@@ -2615,7 +2499,7 @@ export default function App() {
       return;
     }
     if (!(await isRunningInTauri())) {
-      showToast("Updater ist nur in der Desktop-App verfügbar.", "error");
+      showToast("Updater ist nur in der Desktop-App verf�gbar.", "error");
       return;
     }
 
@@ -2624,7 +2508,7 @@ export default function App() {
       const update = await checkUpdate();
       if (!update) {
         setAvailableUpdateVersion(null);
-        showToast("Kein Update verfügbar.", "success");
+        showToast("Kein Update verf�gbar.", "success");
         return;
       }
 
@@ -2680,7 +2564,7 @@ export default function App() {
     try {
       const token = await getApiToken();
       await requestText(
-        `https://api.blizz-developments-official.de/api/admin/users/${member.uid}/ban`,
+        `https://api.vision-projects.eu/api/admin/users/${member.uid}/ban`,
         {
           method: "POST",
           headers: {
@@ -2711,7 +2595,7 @@ export default function App() {
     try {
       const token = await getApiToken();
       await requestText(
-        `https://api.blizz-developments-official.de/api/admin/users/${member.uid}/warn`,
+        `https://api.vision-projects.eu/api/admin/users/${member.uid}/warn`,
         {
           method: "POST",
           headers: {
@@ -2822,7 +2706,7 @@ export default function App() {
     const loadNews = () => {
       console.info("[news] load start");
       requestJson<{ items?: NewsItem[] }>(
-        `https://api.blizz-developments-official.de/api/news?page=1&limit=5&_ts=${Date.now()}`,
+        `https://api.vision-projects.eu/api/news?page=1&limit=5&_ts=${Date.now()}`,
         { signal: controller.signal }
       )
         .then((data) => {
@@ -2925,44 +2809,18 @@ export default function App() {
 
   useEffect(() => {
     const controller = new AbortController();
-    const CACHE_KEY = "vision.projects.cache.v3";
-    // Drop older caches with wrong Modrinth flag handling
-    // localStorage.removeItem("vision.projects.cache");
 
     const loadProjects = async () => {
-      const cachedRaw = appSettings.projectCacheEnabled
-        ? localStorage.getItem(CACHE_KEY)
-        : null;
-      let cachedItems: ProjectItem[] | null = null;
-      if (cachedRaw) {
-        try {
-          const parsed = JSON.parse(cachedRaw) as ProjectItem[];
-          if (Array.isArray(parsed)) {
-            cachedItems = parsed.map(normalizeProjectMedia);
-            if (!controller.signal.aborted) {
-              setProjectItems(cachedItems);
-            }
-          }
-        } catch {
-          cachedItems = null;
-        }
-      }
-
       try {
         const data = await requestJson<{ items?: ProjectItem[] }>(
-          "https://api.blizz-developments-official.de/api/projects?page=1&limit=6",
+          "https://api.vision-projects.eu/api/projects?page=1&limit=6",
           { signal: controller.signal }
         );
-        if (!Array.isArray(data?.items)) {
-          setProjectItems([]);
-          return;
-        }
-
-        const items = (data.items as ProjectItem[]).map(normalizeProjectMedia);
+        const items = Array.isArray(data?.items)
+          ? (data.items as ProjectItem[]).map(normalizeProjectMedia)
+          : [];
         if (!controller.signal.aborted) {
-          if (!cachedItems) {
-            setProjectItems(items);
-          }
+          setProjectItems(items);
           setProjectError(false);
         }
         const enrichedItems = await Promise.all(
@@ -3008,18 +2866,11 @@ export default function App() {
         if (!controller.signal.aborted) {
           setProjectItems(enrichedItems);
           setProjectError(false);
-          if (appSettings.projectCacheEnabled) {
-            localStorage.setItem(CACHE_KEY, JSON.stringify(enrichedItems));
-          }
         }
       } catch (error) {
         if (error instanceof Error && error.name !== "AbortError") {
-          if (cachedItems) {
-            setProjectItems(cachedItems);
-            setProjectError(false);
-          } else {
-            setProjectError(true);
-          }
+          setProjectItems([]);
+          setProjectError(true);
         }
       } finally {
         if (!controller.signal.aborted) {
@@ -3039,7 +2890,7 @@ export default function App() {
       }
       controller.abort();
     };
-  }, [appSettings.autoRefreshEnabled, appSettings.projectCacheEnabled]);
+  }, [appSettings.autoRefreshEnabled]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -3289,34 +3140,31 @@ export default function App() {
     setParticipantsLoading(true);
     setParticipantsError(null);
 
-    const projectId = selectedProject.id;
-
     (async () => {
-      const collected: Record<string, unknown>[] = [];
-      let nextPageToken: string | null = null;
-      let pageCount = 0;
-
-      do {
-        const params = new URLSearchParams({
-          limit: "50",
-          project: projectId
-        });
-        if (nextPageToken) {
-          params.set("pageToken", nextPageToken);
-        }
-        const data = await requestJson<{
-          items?: Record<string, unknown>[];
-          nextPageToken?: string | null;
-        }>(`https://api.blizz-developments-official.de/api/users?${params.toString()}`);
-        const items = Array.isArray(data?.items) ? data.items : [];
-        collected.push(...items);
-        nextPageToken = typeof data?.nextPageToken === "string" ? data.nextPageToken : null;
-        pageCount += 1;
-      } while (nextPageToken && pageCount < 10);
-
-      const mapped = collected
-        .map((entry) => {
-          const record = entry as Record<string, unknown>;
+      const snapshot = await getDocs(collection(db, "users"));
+      const mapped = snapshot.docs
+        .map((docSnap) => {
+          const record = (docSnap.data() ?? {}) as Record<string, unknown>;
+          const uid = docSnap.id;
+          const projectsValue = normalizeProjectIds(record.projects);
+          if (
+            !isUserInProject(
+              {
+                id: selectedProject.id,
+                serverId: selectedProject.serverId ?? selectedProject.server_id ?? null,
+                server_id: selectedProject.server_id ?? selectedProject.serverId ?? null,
+                pterodactylId:
+                  selectedProject.pterodactylId ?? selectedProject.pterodactyl_id ?? null,
+                pterodactyl_id:
+                  selectedProject.pterodactyl_id ?? selectedProject.pterodactylId ?? null,
+                title: selectedProject.title,
+                cover: selectedProject.cover ?? null
+              },
+              projectsValue
+            )
+          ) {
+            return null;
+          }
           const avatarMediaId =
             typeof record.avatarMediaId === "string"
               ? record.avatarMediaId
@@ -3324,7 +3172,7 @@ export default function App() {
                 ? record.avatar_media_id
                 : null;
           return {
-            uid: typeof record.uid === "string" ? record.uid : "",
+            uid,
             username: typeof record.username === "string" ? record.username : null,
             email: typeof record.email === "string" ? record.email : null,
             roles: Array.isArray(record.roles) ? (record.roles as string[]) : [],
@@ -3333,10 +3181,10 @@ export default function App() {
             minecraftName:
               typeof record.minecraftName === "string" ? record.minecraftName : null,
             avatarMediaId,
-            avatarUrl: getAvatarThumbUrl(avatarMediaId)
+            avatarUrl: getFirestoreUserAvatarUrl(record)
           } as MemberProfile;
         })
-        .filter((entry) => entry.uid);
+        .filter((entry): entry is MemberProfile => Boolean(entry?.uid));
 
       setProjectParticipants(mapped);
     })()
@@ -3387,7 +3235,7 @@ export default function App() {
         roles?: string[];
         permissions?: string[];
         expiresIn?: number;
-      }>("https://api.blizz-developments-official.de/me/authz", {
+      }>("https://api.vision-projects.eu/me/authz", {
         headers: { Authorization: `Bearer ${token}` }
       });
       const permissions = Array.isArray(response?.permissions)
@@ -3508,11 +3356,11 @@ export default function App() {
     setExistingMediaLoading(true);
     const bannersEndpoint =
       editorModal === "news"
-        ? "https://api.blizz-developments-official.de/api/media/news-banners?page=1&limit=20"
-        : "https://api.blizz-developments-official.de/api/media/banners?page=1&limit=20";
+        ? "https://api.vision-projects.eu/api/media/news-banners?page=1&limit=20"
+        : "https://api.vision-projects.eu/api/media/banners?page=1&limit=20";
     const requests = [
       requestJson<{ items?: MediaItem[] }>(
-        "https://api.blizz-developments-official.de/api/media/logos?page=1&limit=20"
+        "https://api.vision-projects.eu/api/media/logos?page=1&limit=20"
       ),
       requestJson<{ items?: MediaItem[] }>(bannersEndpoint)
     ];
@@ -3558,25 +3406,18 @@ export default function App() {
     setMembersLoading(true);
     setMembersError(null);
     (async () => {
-      const token = await getApiToken();
-      const data = await requestJson<{
-        items?: Record<string, unknown>[];
-      }>("https://api.blizz-developments-official.de/api/admin/users?limit=200", {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const items = Array.isArray(data?.items) ? data.items : [];
-      const mapped = items.map((entry) => {
-        const record = entry as Record<string, unknown>;
+      const snapshot = await getDocs(collection(db, "users"));
+      const mapped = snapshot.docs.map((docSnap) => {
+        const record = (docSnap.data() ?? {}) as Record<string, unknown>;
         const avatarMediaId =
           typeof record.avatarMediaId === "string"
             ? record.avatarMediaId
             : typeof record.avatar_media_id === "string"
               ? record.avatar_media_id
               : null;
-        const projectsValue =
-          Array.isArray((record as any).projects) ? ((record as any).projects as string[]) : [];
+        const projectsValue = normalizeProjectIds(record.projects);
         return {
-          uid: typeof record.uid === "string" ? record.uid : "",
+          uid: docSnap.id,
           username: typeof record.username === "string" ? record.username : null,
           email: typeof record.email === "string" ? record.email : null,
           roles: Array.isArray(record.roles) ? (record.roles as string[]) : [],
@@ -3590,7 +3431,7 @@ export default function App() {
             ? (record.interests.filter((entry) => typeof entry === "string") as string[])
             : null,
           avatarMediaId,
-          avatarUrl: getAvatarThumbUrl(avatarMediaId),
+          avatarUrl: getFirestoreUserAvatarUrl(record),
           projects: projectsValue,
           profileData: record
         } as MemberProfile;
@@ -3643,7 +3484,7 @@ export default function App() {
         const data = await requestJson<
           | { items?: Record<string, unknown>[] }
           | Record<string, unknown>[]
-        >(`https://api.blizz-developments-official.de/api/admin/roles?page=${page}&limit=${limit}`, {
+        >(`https://api.vision-projects.eu/api/admin/roles?page=${page}&limit=${limit}`, {
           headers: { Authorization: `Bearer ${token}` }
         });
 
@@ -3719,46 +3560,6 @@ export default function App() {
   }, [activePage, permissionFlags.canAccessRoles, rolesRefreshTick, user]);
 
   useEffect(() => {
-    if (activePage !== "tickets") {
-      return;
-    }
-    if (!permissionFlags.canViewTickets) {
-      return;
-    }
-    if (!user) {
-      setTicketItems([]);
-      setTicketsLoading(false);
-      setTicketsError("Bitte zuerst anmelden.");
-      return;
-    }
-
-    setTicketsLoading(true);
-    setTicketsError(null);
-    setTicketItems([]);
-
-    (async () => {
-      const token = await getApiToken();
-      const data = await requestJson<{ items?: unknown[] }>(
-        "https://api.blizz-developments-official.de/api/tickets?page=1&limit=50",
-        {
-          headers: { Authorization: `Bearer ${token}` }
-        }
-      );
-      const rawItems = Array.isArray(data.items) ? data.items : [];
-      setTicketItems(mapTicketItems(rawItems));
-    })()
-      .catch((error) => {
-        const message = error instanceof Error ? error.message : "Unbekannter Fehler.";
-        console.error("Failed to load tickets", error);
-        setTicketsError(`Tickets konnten nicht geladen werden. (${message})`);
-        showToast("Tickets konnten nicht geladen werden.", "error");
-      })
-      .finally(() => {
-        setTicketsLoading(false);
-      });
-  }, [activePage, permissionFlags.canViewTickets, user]);
-
-  useEffect(() => {
     if (activePage !== "applications") {
       return;
     }
@@ -3777,7 +3578,7 @@ export default function App() {
     setApplicationItems([]);
 
     (async () => {
-      const endpoint = "https://api.blizz-developments-official.de/api/applications?page=1&limit=50";
+      const endpoint = "https://api.vision-projects.eu/api/applications?page=1&limit=50";
       let data: Record<string, unknown> | unknown[];
 
       try {
@@ -3875,7 +3676,7 @@ export default function App() {
           end
         });
         const data = await requestJson<{ items?: unknown[] }>(
-          `https://api.blizz-developments-official.de/api/calendar?${params.toString()}`,
+          `https://api.vision-projects.eu/api/calendar?${params.toString()}`,
           {
             signal: controller.signal,
             headers: { Authorization: `Bearer ${token}` }
@@ -3930,40 +3731,9 @@ export default function App() {
     throw new Error("Du musst eingeloggt sein.");
   };
 
-  const getFreshUuid = async () => {
-    const currentUser = auth.currentUser;
-    if (!currentUser) {
-      throw new Error("Du musst eingeloggt sein.");
-    }
-    await currentUser.reload();
-    const uuid = auth.currentUser?.uid ?? currentUser.uid;
-    if (!uuid) {
-      throw new Error("UUID konnte nicht geladen werden.");
-    }
-    return uuid;
-  };
-
-  const getFreshServerId = async (projectId: string) => {
-    const data = await requestJson<{ items?: ProjectItem[] }>(
-      "https://api.blizz-developments-official.de/api/projects?page=1&limit=100"
-    );
-    const items = Array.isArray(data?.items) ? data.items : [];
-    const project = items.find((entry) => entry.id === projectId);
-    const serverId =
-      project?.pterodactyl_id ??
-      project?.pterodactylId ??
-      project?.serverId ??
-      project?.server_id ??
-      null;
-    if (!serverId || typeof serverId !== "string" || !serverId.trim()) {
-      throw new Error("Server-ID konnte nicht geladen werden.");
-    }
-    return serverId.trim();
-  };
-
   const handleReadFirebaseProfile = async () => {
     if (!user) {
-      showToast("Nur mit Firebase-Login verfügbar.", "error");
+      showToast("Nur mit Firebase-Login verf�gbar.", "error");
       return;
     }
 
@@ -4014,26 +3784,15 @@ export default function App() {
     setProfileSaving(true);
     setProfileSaveError(null);
     try {
-      const token = await getApiToken();
       const interests = profileInterestsInput
         .split(",")
         .map((value) => value.trim())
         .filter(Boolean);
 
-      await requestJson<unknown>(
-        `https://api.blizz-developments-official.de/api/profile/${encodeURIComponent(user.uid)}`,
-        {
-          method: "PATCH",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            bio: profileBio.trim(),
-            interests
-          })
-        }
-      );
+      await updateDoc(doc(db, "users", user.uid), {
+        bio: profileBio.trim(),
+        interests
+      });
 
       setUserProfileData((prev) => ({
         ...(prev ?? {}),
@@ -4080,7 +3839,7 @@ export default function App() {
       return;
     }
     if (!roleId) {
-      setRoleCreateError("Ungültiger Rollenname.");
+      setRoleCreateError("Ung�ltiger Rollenname.");
       return;
     }
     if (!roleCreatePermissions.length) {
@@ -4092,7 +3851,7 @@ export default function App() {
     setRoleCreateError(null);
     try {
       const token = await getApiToken();
-      await requestJson<unknown>("https://api.blizz-developments-official.de/api/admin/roles", {
+      await requestJson<unknown>("https://api.vision-projects.eu/api/admin/roles", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -4128,7 +3887,7 @@ export default function App() {
     try {
       const token = await getApiToken();
       await requestJson<unknown>(
-        `https://api.blizz-developments-official.de/api/admin/roles/${encodeURIComponent(roleEditCandidate.id)}`,
+        `https://api.vision-projects.eu/api/admin/roles/${encodeURIComponent(roleEditCandidate.id)}`,
         {
           method: "PATCH",
           headers: {
@@ -4160,7 +3919,7 @@ export default function App() {
     try {
       const token = await getApiToken();
       await requestJson<unknown>(
-        `https://api.blizz-developments-official.de/api/admin/roles/${encodeURIComponent(roleDeleteCandidate.id)}`,
+        `https://api.vision-projects.eu/api/admin/roles/${encodeURIComponent(roleDeleteCandidate.id)}`,
         {
           method: "DELETE",
           headers: {
@@ -4171,12 +3930,12 @@ export default function App() {
 
       setExpandedRoleIds((prev) => prev.filter((id) => id !== roleDeleteCandidate.id));
       setRolesRefreshTick((prev) => prev + 1);
-      showToast(`Rolle "${roleDeleteCandidate.id}" gelöscht.`, "success");
+      showToast(`Rolle "${roleDeleteCandidate.id}" gel�scht.`, "success");
       setRoleDeleteCandidate(null);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unbekannter Fehler.";
       setRoleDeleteError(message);
-      showToast("Rolle konnte nicht gelöscht werden.", "error");
+      showToast("Rolle konnte nicht gel�scht werden.", "error");
     } finally {
       setRoleDeleteSaving(false);
     }
@@ -4199,7 +3958,7 @@ export default function App() {
           ? "roles/add"
           : "roles/remove";
       await requestJson<unknown>(
-        `https://api.blizz-developments-official.de/api/admin/users/${encodeURIComponent(memberRoleDialog.member.uid)}/${endpoint}`,
+        `https://api.vision-projects.eu/api/admin/users/${encodeURIComponent(memberRoleDialog.member.uid)}/${endpoint}`,
         {
           method: "POST",
           headers: {
@@ -4226,7 +3985,7 @@ export default function App() {
       );
       showToast(
         memberRoleDialog.mode === "add"
-          ? `Rolle "${memberRoleTarget}" hinzugefügt.`
+          ? `Rolle "${memberRoleTarget}" hinzugef�gt.`
           : `Rolle "${memberRoleTarget}" entfernt.`,
         "success"
       );
@@ -4235,7 +3994,7 @@ export default function App() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unbekannter Fehler.";
       setMemberRoleError(message);
-      showToast("Rollenänderung fehlgeschlagen.", "error");
+      showToast("Rollen�nderung fehlgeschlagen.", "error");
     } finally {
       setMemberRoleSaving(false);
     }
@@ -4255,7 +4014,7 @@ export default function App() {
       let addedViaApi = false;
       try {
         await requestJson<unknown>(
-          `https://api.blizz-developments-official.de/api/admin/users/${encodeURIComponent(targetUid)}/projects/add`,
+          `https://api.vision-projects.eu/api/admin/users/${encodeURIComponent(targetUid)}/projects/add`,
           {
             method: "POST",
             headers: {
@@ -4292,7 +4051,7 @@ export default function App() {
       }
 
       showToast(
-        addedViaApi ? "Projekt hinzugefügt." : "Projekt hinzugefügt (Fallback).",
+        addedViaApi ? "Projekt hinzugef�gt." : "Projekt hinzugef�gt (Fallback).",
         "success"
       );
       setMemberProjectDialog(null);
@@ -4300,7 +4059,7 @@ export default function App() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unbekannter Fehler.";
       setMemberProjectError(message);
-      showToast("Projekt konnte nicht hinzugefügt werden.", "error");
+      showToast("Projekt konnte nicht hinzugef�gt werden.", "error");
     } finally {
       setMemberProjectSaving(false);
     }
@@ -4317,7 +4076,7 @@ export default function App() {
       return;
     }
     if (projectSource !== "modrinth" && (!projectLoader || !projectVersion)) {
-      setProjectSaveError("Bitte Loader und Version auswählen.");
+      setProjectSaveError("Bitte Loader und Version ausw�hlen.");
       showToast("Loader und Version fehlen.", "error");
       return;
     }
@@ -4360,7 +4119,7 @@ export default function App() {
             file: projectLogoFile,
             token,
             endpoint:
-              "https://api.blizz-developments-official.de/api/admin/media?category=logos"
+              "https://api.vision-projects.eu/api/admin/media?category=logos"
           });
         }
 
@@ -4369,7 +4128,7 @@ export default function App() {
             file: projectBannerFile,
             token,
             endpoint:
-              "https://api.blizz-developments-official.de/api/admin/media?category=banners"
+              "https://api.vision-projects.eu/api/admin/media?category=banners"
           });
         }
 
@@ -4397,7 +4156,7 @@ export default function App() {
       }
 
       await requestText(
-        "https://api.blizz-developments-official.de/api/admin/projects",
+        "https://api.vision-projects.eu/api/admin/projects",
         {
           method: "POST",
           headers: {
@@ -4503,7 +4262,7 @@ export default function App() {
           file: projectLogoFile,
           token,
           endpoint:
-            "https://api.blizz-developments-official.de/api/admin/media?category=logos"
+            "https://api.vision-projects.eu/api/admin/media?category=logos"
         });
       }
 
@@ -4512,7 +4271,7 @@ export default function App() {
           file: projectBannerFile,
           token,
           endpoint:
-            "https://api.blizz-developments-official.de/api/admin/media?category=banners"
+            "https://api.vision-projects.eu/api/admin/media?category=banners"
         });
       }
 
@@ -4541,7 +4300,7 @@ export default function App() {
       payload.srcModrinth = projectSource === "modrinth";
 
       await requestText(
-        `https://api.blizz-developments-official.de/api/admin/projects/${editingProjectId}`,
+        `https://api.vision-projects.eu/api/admin/projects/${editingProjectId}`,
         {
           method: "PATCH",
           headers: {
@@ -4593,7 +4352,7 @@ export default function App() {
     try {
       const token = await getApiToken();
       await requestText(
-        `https://api.blizz-developments-official.de/api/admin/projects/${projectId}`,
+        `https://api.vision-projects.eu/api/admin/projects/${projectId}`,
         {
           method: "DELETE",
           headers: { Authorization: `Bearer ${token}` }
@@ -4602,7 +4361,7 @@ export default function App() {
       setProjectItems((prev) => prev.filter((project) => project.id !== projectId));
     } catch (error) {
       setProjectDeleteError(
-        error instanceof Error ? error.message : "Projekt konnte nicht gelöscht werden."
+        error instanceof Error ? error.message : "Projekt konnte nicht gel�scht werden."
       );
     }
   };
@@ -4625,32 +4384,25 @@ export default function App() {
       showToast("Bitte zuerst anmelden.", "error");
       return;
     }
-    const projectId = project.id;
     const membershipKeys = getProjectMembershipKeys(project);
-
-    // Optimistic UI: mark project as joined immediately on click.
-    setUserProjectIds((prev) => Array.from(new Set([...prev, ...membershipKeys])));
+    const projectId = project.id;
 
     try {
-      const [token, uuid, serverId] = await Promise.all([
-        getApiToken(),
-        getFreshUuid(),
-        getFreshServerId(projectId)
-      ]);
-      await requestJson<unknown>("https://api.blizz-developments-official.de/api/projects/join", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          serverId,
-          uuid
-        })
-      });
+      const token = await getApiToken();
+      await requestText(
+        "https://api.vision-projects.eu/api/projects/join",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ projectId })
+        }
+      );
+
+      setUserProjectIds((prev) => Array.from(new Set([...prev, ...membershipKeys])));
     } catch (error) {
-      // Roll back optimistic update when API join fails.
-      setUserProjectIds((prev) => prev.filter((id) => !membershipKeys.includes(id)));
       showToast(formatToastError(error) || "Projektbeitritt fehlgeschlagen.", "error");
       return;
     }
@@ -4660,26 +4412,23 @@ export default function App() {
     if (!user) {
       return;
     }
-    const projectId = project.id;
     const membershipKeys = getProjectMembershipKeys(project);
+    const projectId = project.id;
 
     try {
-      const [token, uuid, serverId] = await Promise.all([
-        getApiToken(),
-        getFreshUuid(),
-        getFreshServerId(projectId)
-      ]);
-      await requestJson<unknown>("https://api.blizz-developments-official.de/api/projects/leave", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          serverId,
-          uuid
-        })
-      });
+      const token = await getApiToken();
+      await requestText(
+        "https://api.vision-projects.eu/api/projects/leave",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ projectId })
+        }
+      );
+
       setUserProjectIds((prev) => prev.filter((id) => !membershipKeys.includes(id)));
     } catch (error) {
       showToast(formatToastError(error) || "Projekt verlassen fehlgeschlagen.", "error");
@@ -4828,9 +4577,6 @@ export default function App() {
                     authzFetchError,
                     userProfileData,
                     redirectSeconds,
-                    ticketItems,
-                    ticketsLoading,
-                    ticketsError,
                     members,
                     membersLoading,
                     membersError,
@@ -4884,7 +4630,12 @@ export default function App() {
           </div>
           <div className="px-4 space-y-6 overflow-auto">
             {newsItems.map((item) => (
-              <div key={item.id} className="w-full">
+              <button
+                type="button"
+                key={item.id}
+                onClick={() => setSelectedNewsItem(item)}
+                className="group w-full text-left transition hover:opacity-95"
+              >
                 <div className="w-full overflow-hidden rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#0D0E12]">
                   {item.cover?.url ? (
                     <div
@@ -4896,7 +4647,7 @@ export default function App() {
                   )}
                 </div>
                 <div className="px-1 pt-3">
-                  <p className="text-[16px] font-semibold text-[rgba(255,255,255,0.96)]">
+                  <p className="text-[16px] font-semibold text-[rgba(255,255,255,0.96)] transition-colors group-hover:text-[#2BFE71]">
                     {item.title}
                   </p>
                   <p className="mt-2 text-[12px] leading-[18px] text-[rgba(255,255,255,0.62)]">
@@ -4908,7 +4659,7 @@ export default function App() {
                     </p>
                   )}
                 </div>
-              </div>
+              </button>
             ))}
 
             {!newsItems.length && !newsError && (
@@ -5001,7 +4752,7 @@ export default function App() {
                     className="mt-2 flex w-full items-center justify-between rounded-[10px] border border-[rgba(255,255,255,0.10)] bg-[#0F1116] px-3 py-2 text-left text-[12px] text-[rgba(255,255,255,0.8)] transition hover:border-[rgba(255,255,255,0.22)]"
                   >
                     <span>
-                      {rolePermissionPickerOpen ? "Permission-Liste schließen" : "Permission-Liste öffnen"}
+                      {rolePermissionPickerOpen ? "Permission-Liste schlie�en" : "Permission-Liste �ffnen"}
                     </span>
                     <i
                       className={`fa-solid fa-chevron-${rolePermissionPickerOpen ? "up" : "down"} text-[10px] text-[rgba(255,255,255,0.55)]`}
@@ -5022,7 +4773,7 @@ export default function App() {
                           onClick={handleAddCustomRolePermission}
                           className="mt-2 rounded-[8px] border border-[rgba(255,255,255,0.14)] bg-[#171A21] px-3 py-1.5 text-[11px] font-semibold text-[rgba(255,255,255,0.78)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
                         >
-                          "{customRolePermissionCandidate}" hinzufügen
+                          "{customRolePermissionCandidate}" hinzuf�gen
                         </button>
                       )}
                       <div className="mt-3 max-h-[220px] overflow-auto">
@@ -5055,7 +4806,7 @@ export default function App() {
                     </div>
                   )}
                   <p className="mt-2 text-[11px] text-[rgba(255,255,255,0.5)]">
-                    Ausgewählt: {roleCreatePermissions.length}
+                    Ausgew�hlt: {roleCreatePermissions.length}
                   </p>
                 </div>
               </div>
@@ -5116,7 +4867,7 @@ export default function App() {
                   className="mt-2 flex w-full items-center justify-between rounded-[10px] border border-[rgba(255,255,255,0.10)] bg-[#0F1116] px-3 py-2 text-left text-[12px] text-[rgba(255,255,255,0.8)] transition hover:border-[rgba(255,255,255,0.22)]"
                 >
                   <span>
-                    {roleEditPickerOpen ? "Permission-Liste schließen" : "Permission-Liste öffnen"}
+                    {roleEditPickerOpen ? "Permission-Liste schlie�en" : "Permission-Liste �ffnen"}
                   </span>
                   <i
                     className={`fa-solid fa-chevron-${roleEditPickerOpen ? "up" : "down"} text-[10px] text-[rgba(255,255,255,0.55)]`}
@@ -5137,7 +4888,7 @@ export default function App() {
                         onClick={handleAddCustomRoleEditPermission}
                         className="mt-2 rounded-[8px] border border-[rgba(255,255,255,0.14)] bg-[#171A21] px-3 py-1.5 text-[11px] font-semibold text-[rgba(255,255,255,0.78)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
                       >
-                        "{customRoleEditPermissionCandidate}" hinzufügen
+                        "{customRoleEditPermissionCandidate}" hinzuf�gen
                       </button>
                     )}
                     <div className="mt-3 max-h-[220px] overflow-auto">
@@ -5170,7 +4921,7 @@ export default function App() {
                   </div>
                 )}
                 <p className="mt-2 text-[11px] text-[rgba(255,255,255,0.5)]">
-                  Ausgewählt: {roleEditPermissions.length}
+                  Ausgew�hlt: {roleEditPermissions.length}
                 </p>
               </div>
               {roleEditError && (
@@ -5210,7 +4961,7 @@ export default function App() {
                 </div>
                 <div className="min-w-0">
                   <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
-                    Status wirklich ändern?
+                    Status wirklich �ndern?
                   </h3>
                   <p className="mt-2 text-[13px] leading-[20px] text-[rgba(255,255,255,0.65)]">
                     Bewerbung von{" "}
@@ -5270,7 +5021,7 @@ export default function App() {
                       !applicationRejectNotes.trim())
                   }
                 >
-                  {applicationActionLoading ? "Sende..." : "Bestätigen"}
+                  {applicationActionLoading ? "Sende..." : "Best�tigen"}
                 </button>
               </div>
             </div>
@@ -5280,14 +5031,14 @@ export default function App() {
           <div className="fixed inset-0 z-[79] flex items-center justify-center bg-black/70 px-4">
             <div className="w-full max-w-[460px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
               <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
-                Rolle löschen
+                Rolle l�schen
               </h3>
               <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.65)]">
                 Rolle{" "}
                 <span className="font-semibold text-[rgba(255,255,255,0.92)]">
                   {roleDeleteCandidate.id}
                 </span>{" "}
-                wirklich löschen?
+                wirklich l�schen?
               </p>
               {roleDeleteError && (
                 <div className="mt-3 rounded-[10px] border border-[rgba(255,100,100,0.25)] bg-[rgba(255,100,100,0.08)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.8)]">
@@ -5311,7 +5062,7 @@ export default function App() {
                   disabled={roleDeleteSaving}
                   className="rounded-[10px] border border-[#C74646] bg-[#FF5B5B] px-4 py-2 text-[12px] font-semibold text-[#0D0E12] shadow-[0_4px_0_#C74646] transition active:translate-y-[2px] active:shadow-[0_2px_0_#C74646] disabled:opacity-60"
                 >
-                  {roleDeleteSaving ? "Lösche..." : "Löschen"}
+                  {roleDeleteSaving ? "L�sche..." : "L�schen"}
                 </button>
               </div>
             </div>
@@ -5321,7 +5072,7 @@ export default function App() {
           <div className="fixed inset-0 z-[79] flex items-center justify-center bg-black/70 px-4">
             <div className="w-full max-w-[460px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
               <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
-                {memberRoleDialog.mode === "add" ? "Rolle hinzufügen" : "Rolle entfernen"}
+                {memberRoleDialog.mode === "add" ? "Rolle hinzuf�gen" : "Rolle entfernen"}
               </h3>
               <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.65)]">
                 User:{" "}
@@ -5340,7 +5091,7 @@ export default function App() {
                     className="mt-2 w-full rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[#0F1116] px-3 py-2 text-[13px] text-[rgba(255,255,255,0.85)] outline-none focus:border-[#2BFE71]"
                     disabled={memberRoleSaving || memberRoleOptions.length === 0}
                   >
-                    {!memberRoleOptions.length && <option value="">Keine Rollen verfügbar</option>}
+                    {!memberRoleOptions.length && <option value="">Keine Rollen verf�gbar</option>}
                     {memberRoleOptions.map((roleId) => (
                       <option key={roleId} value={roleId}>
                         {roleId}
@@ -5352,7 +5103,7 @@ export default function App() {
                 <p className="mt-4 text-[13px] text-[rgba(255,255,255,0.72)]">
                   Rolle{" "}
                   <span className="font-semibold text-[rgba(255,255,255,0.92)]">
-                    {memberRoleTarget || memberRoleDialog.presetRoleId || "—"}
+                    {memberRoleTarget || memberRoleDialog.presetRoleId || "�"}
                   </span>{" "}
                   wirklich entfernen?
                 </p>
@@ -5379,7 +5130,7 @@ export default function App() {
                   disabled={memberRoleSaving || !memberRoleTarget}
                   className="cta-primary px-4 py-2 text-[12px] disabled:opacity-60"
                 >
-                  {memberRoleSaving ? "Speichere..." : "Bestätigen"}
+                  {memberRoleSaving ? "Speichere..." : "Best�tigen"}
                 </button>
               </div>
             </div>
@@ -5389,7 +5140,7 @@ export default function App() {
           <div className="fixed inset-0 z-[79] flex items-center justify-center bg-black/70 px-4">
             <div className="w-full max-w-[460px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
               <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
-                Projekt hinzufügen
+                Projekt hinzuf�gen
               </h3>
               <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.65)]">
                 User:{" "}
@@ -5407,7 +5158,7 @@ export default function App() {
                   className="mt-2 w-full rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[#0F1116] px-3 py-2 text-[13px] text-[rgba(255,255,255,0.85)] outline-none focus:border-[#2BFE71]"
                   disabled={memberProjectSaving || memberProjectOptions.length === 0}
                 >
-                  {!memberProjectOptions.length && <option value="">Keine Projekte verfügbar</option>}
+                  {!memberProjectOptions.length && <option value="">Keine Projekte verf�gbar</option>}
                   {memberProjectOptions.map((projectOption) => (
                     <option key={projectOption.id} value={projectOption.id}>
                       {projectOption.label}
@@ -5437,7 +5188,7 @@ export default function App() {
                   disabled={memberProjectSaving || !memberProjectTarget}
                   className="cta-primary px-4 py-2 text-[12px] disabled:opacity-60"
                 >
-                  {memberProjectSaving ? "Speichere..." : "Hinzufügen"}
+                  {memberProjectSaving ? "Speichere..." : "Hinzuf�gen"}
                 </button>
               </div>
             </div>
@@ -5477,7 +5228,7 @@ export default function App() {
                   value={banReason}
                   onChange={(event) => setBanReason(event.target.value)}
                   className="w-full rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[#0F1116] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.8)] outline-none focus:border-[#FF5B5B]"
-                  placeholder="Grund für den Bann"
+                  placeholder="Grund f�r den Bann"
                 />
               </div>
               {banError && (
@@ -5647,38 +5398,38 @@ export default function App() {
 
               <div className="mt-4 grid gap-2 sm:grid-cols-2">
                 <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
-                  <span className="text-[rgba(255,255,255,0.5)]">Email:</span> {selectedMemberProfile.email ?? "—"}
+                  <span className="text-[rgba(255,255,255,0.5)]">Email:</span> {selectedMemberProfile.email ?? "�"}
                 </div>
                 <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
-                  <span className="text-[rgba(255,255,255,0.5)]">Minecraft:</span> {selectedMemberProfile.minecraftName ?? "—"}
+                  <span className="text-[rgba(255,255,255,0.5)]">Minecraft:</span> {selectedMemberProfile.minecraftName ?? "�"}
                 </div>
                 <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
-                  <span className="text-[rgba(255,255,255,0.5)]">Age:</span> {selectedMemberProfile.age ?? "—"}
+                  <span className="text-[rgba(255,255,255,0.5)]">Age:</span> {selectedMemberProfile.age ?? "�"}
                 </div>
                 <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
-                  <span className="text-[rgba(255,255,255,0.5)]">Level:</span> {selectedMemberProfile.level ?? "—"}
+                  <span className="text-[rgba(255,255,255,0.5)]">Level:</span> {selectedMemberProfile.level ?? "�"}
                 </div>
                 <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
-                  <span className="text-[rgba(255,255,255,0.5)]">Experience:</span> {selectedMemberProfile.experience ?? "—"}
+                  <span className="text-[rgba(255,255,255,0.5)]">Experience:</span> {selectedMemberProfile.experience ?? "�"}
                 </div>
                 <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
                   <span className="text-[rgba(255,255,255,0.5)]">Roles:</span>{" "}
                   {Array.isArray(selectedMemberProfile.roles) && selectedMemberProfile.roles.length
                     ? selectedMemberProfile.roles.join(", ")
-                    : "—"}
+                    : "�"}
                 </div>
               </div>
 
               <div className="mt-3 rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
                 <span className="text-[rgba(255,255,255,0.5)]">Bio:</span>{" "}
-                {selectedMemberProfile.bio?.trim() || "—"}
+                {selectedMemberProfile.bio?.trim() || "�"}
               </div>
 
               <div className="mt-3 rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
                 <span className="text-[rgba(255,255,255,0.5)]">Interests:</span>{" "}
                 {Array.isArray(selectedMemberProfile.interests) && selectedMemberProfile.interests.length
                   ? selectedMemberProfile.interests.join(", ")
-                  : "—"}
+                  : "�"}
               </div>
 
               <div className="mt-4">
@@ -5711,20 +5462,20 @@ export default function App() {
                   type="button"
                   onClick={() => setShowTeamApplyPopup(false)}
                   className="flex h-8 w-8 items-center justify-center rounded-[8px] border border-[rgba(255,255,255,0.14)] bg-[#171A21] text-[rgba(255,255,255,0.78)] transition hover:border-[rgba(255,255,255,0.28)]"
-                  aria-label="Popup schließen"
+                  aria-label="Popup schlie�en"
                 >
                   <i className="fa-solid fa-xmark" aria-hidden="true" />
                 </button>
               </div>
 
               <p className="mt-4 text-[13px] leading-[20px] text-[rgba(255,255,255,0.72)]">
-                Wir suchen Unterstützung für Moderation, Entwicklung, Design und mehr.
+                Wir suchen Unterst�tzung f�r Moderation, Entwicklung, Design und mehr.
                 Klick auf <span className="font-semibold text-[rgba(255,255,255,0.9)]">Jetzt bewerben</span> und sende deine Bewerbung.
               </p>
 
               <div className="mt-4 overflow-hidden rounded-[12px] border border-[rgba(255,255,255,0.1)] bg-[#0F1116]">
                 <img
-                  src="https://api.blizz-developments-official.de/public/banners/apply-now-ad.png"
+                  src="https://api.vision-projects.eu/public/banners/apply-now-ad.png"
                   alt="Team Bewerbung Banner"
                   className="h-auto w-full object-contain"
                   loading="lazy"
@@ -5737,7 +5488,7 @@ export default function App() {
                   onClick={() => setShowTeamApplyPopup(false)}
                   className="cta-secondary px-4 py-2 text-[12px]"
                 >
-                  Später
+                  Sp�ter
                 </button>
                 <button
                   type="button"
@@ -5892,6 +5643,46 @@ export default function App() {
                     )}
                   </div>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+        {selectedNewsItem && (
+          <div className="fixed inset-0 z-[61] flex items-center justify-center bg-black/60 px-4">
+            <div className="relative w-full max-w-[760px] overflow-hidden rounded-[24px] border border-[rgba(255,255,255,0.12)] bg-[#24262C] shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
+              <button
+                type="button"
+                onClick={() => setSelectedNewsItem(null)}
+                className="absolute right-4 top-4 z-10 flex h-9 w-9 items-center justify-center rounded-[10px] border border-[rgba(255,255,255,0.18)] bg-[rgba(13,14,18,0.65)] text-[rgba(255,255,255,0.85)] transition hover:border-[rgba(255,255,255,0.35)] hover:bg-[rgba(13,14,18,0.9)]"
+                aria-label="News schliessen"
+              >
+                <i className="fa-solid fa-xmark text-[13px]" aria-hidden="true" />
+              </button>
+              {selectedNewsItem.cover?.url ? (
+                <img
+                  src={selectedNewsItem.cover.url}
+                  alt={selectedNewsItem.title}
+                  className="h-[260px] w-full bg-[#0D0E12] object-cover"
+                />
+              ) : (
+                <div className="h-[260px] w-full bg-[#0D0E12]" />
+              )}
+              <div className="max-h-[65vh] overflow-auto px-5 pb-6 pt-4">
+                <p className="text-[22px] font-semibold text-[rgba(255,255,255,0.95)]">
+                  {selectedNewsItem.title}
+                </p>
+                {formatNewsDate(
+                  selectedNewsItem.publishedAt ?? selectedNewsItem.createdAt ?? null
+                ) && (
+                  <p className="mt-2 text-[12px] text-[rgba(255,255,255,0.5)]">
+                    {formatNewsDate(
+                      selectedNewsItem.publishedAt ?? selectedNewsItem.createdAt ?? null
+                    )}
+                  </p>
+                )}
+                <p className="mt-4 whitespace-pre-line text-[14px] leading-[22px] text-[rgba(255,255,255,0.78)]">
+                  {getNewsDetailText(selectedNewsItem)}
+                </p>
               </div>
             </div>
           </div>
@@ -6107,7 +5898,7 @@ export default function App() {
                               className={`fa-solid fa-chevron-${showExistingLogos ? "up" : "down"} text-[10px]`}
                               aria-hidden="true"
                             />
-                            Aus Medienbibliothek wählen
+                            Aus Medienbibliothek w�hlen
                           </button>
                           {showExistingLogos && (
                             <>
@@ -6177,7 +5968,7 @@ export default function App() {
                               className={`fa-solid fa-chevron-${showExistingBanners ? "up" : "down"} text-[10px]`}
                               aria-hidden="true"
                             />
-                            Aus Medienbibliothek wählen
+                            Aus Medienbibliothek w�hlen
                           </button>
                           {showExistingBanners && (
                             <>
@@ -6255,7 +6046,7 @@ export default function App() {
                           }
                           className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71]"
                         >
-                          <option value="">Loader auswählen...</option>
+                          <option value="">Loader ausw�hlen...</option>
                           <option value="Fabric">Fabric</option>
                           <option value="Forge">Forge</option>
                           <option value="Vanilla">Vanilla</option>
@@ -6282,7 +6073,7 @@ export default function App() {
                             className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71] disabled:opacity-60"
                           >
                             <option value="">
-                              {mcVersionsLoading ? "Lade Versionen..." : "Version auswählen..."}
+                              {mcVersionsLoading ? "Lade Versionen..." : "Version ausw�hlen..."}
                             </option>
                             {mcVersions.map((version) => (
                               <option key={version} value={version}>
@@ -6293,18 +6084,18 @@ export default function App() {
                         )}
                         {mcVersionsError && (
                           <p className="text-[11px] text-[rgba(255,255,255,0.55)]">
-                            Versionsliste nicht verfügbar. Gib die Version manuell ein.
+                            Versionsliste nicht verf�gbar. Gib die Version manuell ein.
                           </p>
                         )}
                       </div>
                       <div className="space-y-2">
                         <label className="flex items-center gap-2 text-[12px] font-semibold text-[rgba(255,255,255,0.82)]">
                           <i className="fa-solid fa-cloud-arrow-up text-[13px] text-[#2BFE71]" aria-hidden="true" />
-                          Modrinth-Verknüpfung (optional)
+                          Modrinth-Verkn�pfung (optional)
                         </label>
                         <input
                           type="text"
-                          placeholder="Verknüpfe mit einem Modrinth-Projekt für zusätzliche Infos"
+                          placeholder="Verkn�pfe mit einem Modrinth-Projekt f�r zus�tzliche Infos"
                           value={projectModrinthId}
                           onChange={(event) => setProjectModrinthId(event.target.value)}
                           className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71]"
@@ -6514,7 +6305,7 @@ export default function App() {
                     />
                     {newsCoverFile && (
                       <p className="mt-2 text-[11px] text-[rgba(255,255,255,0.55)]">
-                        Datei ausgewählt: {newsCoverFile.name}
+                        Datei ausgew�hlt: {newsCoverFile.name}
                       </p>
                     )}
                   </div>
@@ -6639,10 +6430,10 @@ export default function App() {
           <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/70 px-4">
             <div className="w-full max-w-[460px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
               <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
-                Projekt löschen?
+                Projekt l�schen?
               </h3>
               <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.65)]">
-                {projectDeleteCandidate.title} wird dauerhaft gelöscht.
+                {projectDeleteCandidate.title} wird dauerhaft gel�scht.
               </p>
               <div className="mt-5 flex items-center justify-end gap-3">
                 <button
@@ -6667,10 +6458,10 @@ export default function App() {
           <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/70 px-4">
             <div className="w-full max-w-[460px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
               <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
-                News löschen?
+                News l�schen?
               </h3>
               <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.65)]">
-                {newsDeleteCandidate.title} wird dauerhaft gelöscht.
+                {newsDeleteCandidate.title} wird dauerhaft gel�scht.
               </p>
               {newsDeleteError && (
                 <div className="mt-3 rounded-[10px] border border-[rgba(255,100,100,0.25)] bg-[rgba(255,100,100,0.08)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.8)]">
@@ -6692,7 +6483,7 @@ export default function App() {
                   className="rounded-[10px] border border-[#C74646] bg-[#FF5B5B] px-4 py-2 text-[12px] font-semibold text-[#0D0E12] shadow-[0_4px_0_#C74646] transition active:translate-y-[2px] active:shadow-[0_2px_0_#C74646] disabled:opacity-60"
                   disabled={newsDeleting}
                 >
-                  {newsDeleting ? "Löschen..." : "Löschen"}
+                  {newsDeleting ? "L�schen..." : "L�schen"}
                 </button>
               </div>
             </div>
@@ -6773,9 +6564,6 @@ function renderContent(
   authzFetchError: string | null,
   userProfileData: Record<string, unknown> | null,
   redirectSeconds: number | null,
-  ticketItems: TicketItem[],
-  ticketsLoading: boolean,
-  ticketsError: string | null,
   members: MemberProfile[],
   membersLoading: boolean,
   membersError: string | null,
@@ -6857,7 +6645,7 @@ function renderContent(
             Keine Berechtigung
           </h2>
           <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.60)]">
-            Diese Seite ist für dein Profil nicht freigeschaltet.
+            Diese Seite ist f�r dein Profil nicht freigeschaltet.
           </p>
           <p className="mt-4 text-[12px] text-[rgba(255,255,255,0.55)]">
             Weiterleitung zu Home in{" "}
@@ -6886,7 +6674,7 @@ function renderContent(
           className="text-[28px] font-bold text-[rgba(255,255,255,0.92)]"
           style={{ fontFamily: "Inter, sans-serif" }}
         >
-          Willkommen zurück!
+          Willkommen zur�ck!
         </p>
         <h1 className="mt-[8px] text-[18px] font-semibold text-[#B0BAC5]">
           Meine Projekte
@@ -7065,16 +6853,16 @@ function renderContent(
     }
     return (
       <div className="space-y-8">
-        {/* Header mit Zurück-Button */}
+        {/* Header mit Zur�ck-Button */}
         <div className="flex items-center justify-between">
           <button
             type="button"
             onClick={() => onNavigate("editor")}
             className="cta-secondary flex items-center gap-2 px-4 py-3 text-[14px]"
-            aria-label="Zurück"
+            aria-label="Zur�ck"
           >
             <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
-            Zurück
+            Zur�ck
           </button>
           {permissionFlags.canCreateProject && (
             <button
@@ -7341,7 +7129,7 @@ function renderContent(
             onClick={() => onNavigate("settings")}
             className="rounded-[10px] border border-[rgba(255,255,255,0.12)] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.75)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
           >
-            Zurück
+            Zur�ck
           </button>
         </div>
         <div className="rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] p-4">
@@ -7409,7 +7197,7 @@ function renderContent(
     return (
       <div className="space-y-6">
         <div className="grid gap-8 lg:grid-cols-3">
-          {/* Projekte Button - Grün */}
+          {/* Projekte Button - Gr�n */}
           {canShowProjects && (
             <button
               type="button"
@@ -7533,10 +7321,10 @@ function renderContent(
             type="button"
             onClick={() => onNavigate("editor")}
             className="cta-secondary flex items-center gap-2 px-4 py-3 text-[14px]"
-            aria-label="Zurück"
+            aria-label="Zur�ck"
           >
             <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
-            Zurück
+            Zur�ck
           </button>
           <button
             type="button"
@@ -7597,7 +7385,7 @@ function renderContent(
                             type="button"
                             onClick={() => requestDeleteNews(item)}
                             className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-[rgba(255,91,91,0.18)] text-[#FF8A8A] shadow-[0_0_0_1px_rgba(255,91,91,0.25)] transition hover:bg-[rgba(255,91,91,0.28)] hover:text-[#FF5B5B]"
-                            aria-label="News löschen"
+                            aria-label="News l�schen"
                           >
                             <i className="fa-solid fa-trash" aria-hidden="true" />
                           </button>
@@ -7629,10 +7417,10 @@ function renderContent(
             type="button"
             onClick={() => onNavigate("editor")}
             className="cta-secondary flex items-center gap-2 px-4 py-3 text-[14px]"
-            aria-label="Zurück"
+            aria-label="Zur�ck"
           >
             <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
-            Zurück
+            Zur�ck
           </button>
           {canUploadMedia && (
             <button
@@ -7677,7 +7465,7 @@ function renderContent(
         {canDeleteMedia && selectedMediaIds.length > 0 && (
           <div className="flex items-center justify-between rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#111319] px-4 py-3 animate-[slideDown_0.3s_ease-out]">
             <p className="text-[12px] font-semibold text-[rgba(255,255,255,0.8)] transition-all duration-300">
-              {selectedMediaIds.length} ausgewählt
+              {selectedMediaIds.length} ausgew�hlt
             </p>
             <button
               type="button"
@@ -7685,7 +7473,7 @@ function renderContent(
               className="flex items-center gap-2 rounded-[8px] border border-[rgba(255,255,255,0.14)] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.75)] transition-all duration-300 hover:border-[#FF5B5B] hover:text-[#FF5B5B] hover:bg-[rgba(255,91,91,0.1)]"
             >
               <i className="fa-solid fa-trash-can" aria-hidden="true" />
-              Löschen
+              L�schen
             </button>
           </div>
         )}
@@ -7793,7 +7581,7 @@ function renderContent(
                                     ? "border-[#2BFE71] bg-[#2BFE71] text-[#0D0E12] shadow-[0_0_15px_rgba(43,254,113,0.5)]"
                                     : "border-[rgba(255,255,255,0.35)] bg-black/40 backdrop-blur-sm text-white hover:border-[#2BFE71] hover:bg-[rgba(43,254,113,0.2)]"
                                     }`}
-                                  aria-label="Auswählen"
+                                  aria-label="Ausw�hlen"
                                 >
                                   <i className="fa-solid fa-check" aria-hidden="true" />
                                 </button>
@@ -7801,7 +7589,7 @@ function renderContent(
                                   type="button"
                                   onClick={() => handleDeleteMedia(section.key, item.id!)}
                                   className="flex h-8 w-8 items-center justify-center rounded-[8px] border border-[rgba(255,255,255,0.35)] bg-black/40 backdrop-blur-sm text-[12px] text-white transition-all duration-300 hover:border-[#FF5B5B] hover:text-[#FF5B5B] hover:bg-[rgba(255,91,91,0.2)]"
-                                  aria-label="Löschen"
+                                  aria-label="L�schen"
                                 >
                                   <i className="fa-solid fa-trash-can" aria-hidden="true" />
                                 </button>
@@ -7832,7 +7620,7 @@ function renderContent(
                     {loading && (
                       <i className="fa-solid fa-spinner fa-spin text-[#2BFE71]" aria-hidden="true" />
                     )}
-                    {loading ? "Lade..." : hasMore ? "Weitere verfügbar" : (
+                    {loading ? "Lade..." : hasMore ? "Weitere verf�gbar" : (
                       <span className="flex items-center gap-2">
                         <i className="fa-solid fa-check text-[#2BFE71]" aria-hidden="true" />
                         Alles geladen
@@ -7937,7 +7725,7 @@ function renderContent(
               <button
                 type="button"
                 className="flex h-8 w-8 items-center justify-center rounded-full border border-[rgba(255,255,255,0.08)] text-[rgba(255,255,255,0.75)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
-                aria-label="Nächster Monat"
+                aria-label="N�chster Monat"
               >
                 <i className="fa-solid fa-chevron-right text-[12px]" aria-hidden="true" />
               </button>
@@ -8026,14 +7814,9 @@ function renderContent(
     const canShowMembers =
       permissionFlags.canAccessMembers || permissionFlags.isModerator;
     const canShowRoles = permissionFlags.canAccessRoles;
-    const canShowTickets = permissionFlags.canViewTickets;
     const canShowApplications = permissionFlags.canViewApplications;
-
-    // Debug helper: if something shows up unexpectedly, this reveals which authz data enabled it.
-    // (Safe: logs only booleans + role names, not tokens.)
-    if (canShowTickets || canShowApplications) {
+    if (canShowApplications) {
       console.info("[admin] module visibility", {
-        canShowTickets,
         canShowApplications
       });
     }
@@ -8090,31 +7873,6 @@ function renderContent(
             </button>
           )}
 
-          {/* Tickets Button - Blue */}
-          {canShowTickets && (
-            <button
-              type="button"
-              onClick={() => onNavigate("tickets")}
-              className="group relative flex flex-col items-center justify-center rounded-[24px] p-[3px] transition-all"
-            >
-              <span
-                aria-hidden="true"
-                className="rainbow-draw pointer-events-none absolute inset-0 rounded-[24px] blur-[2px]"
-              />
-              <div className="relative z-10 flex h-full w-full flex-col items-center justify-center rounded-[21px] bg-[#24262C] p-12">
-                <div className="flex h-32 w-32 items-center justify-center rounded-full bg-[rgba(43,217,255,0.18)] text-[#2BD9FF] transition-all">
-                  <i className="fa-solid fa-ticket text-[56px]" aria-hidden="true" />
-                </div>
-                <h3 className="mt-8 text-[24px] font-bold text-[rgba(255,255,255,0.92)]">
-                  Tickets
-                </h3>
-                <p className="mt-3 text-center text-[15px] text-[rgba(255,255,255,0.65)]">
-                  Support-Anfragen bearbeiten
-                </p>
-              </div>
-            </button>
-          )}
-
           {/* Applications Button - Green */}
           {canShowApplications && (
             <button
@@ -8140,207 +7898,11 @@ function renderContent(
             </button>
           )}
         </div>
-        {!canShowMembers && !canShowRoles && !canShowTickets && !canShowApplications && (
+        {!canShowMembers && !canShowRoles && !canShowApplications && (
           <p className="text-[13px] text-[rgba(255,255,255,0.60)]">
             Keine Module freigeschaltet.
           </p>
         )}
-      </div>
-    );
-  }
-
-  if (page === "tickets") {
-    if (!permissionFlags.canViewTickets) {
-      return (
-        <p className="text-[13px] text-[rgba(255,255,255,0.60)]">
-          Keine Berechtigung.
-        </p>
-      );
-    }
-
-    const tickets = [...ticketItems].sort((a, b) =>
-      a.lastUpdateAt < b.lastUpdateAt ? 1 : -1
-    );
-    const statusLabel: Record<TicketStatus, "Open" | "In progress" | "Solved"> = {
-      open: "Open",
-      pending: "In progress",
-      closed: "Solved"
-    };
-    const statusClass: Record<TicketStatus, string> = {
-      open: "bg-[#2BFE71] text-[#0D0E12]",
-      pending: "bg-[#FFD166] text-[#0D0E12]",
-      closed: "bg-[rgba(255,255,255,0.16)] text-[rgba(255,255,255,0.82)]"
-    };
-    const ticketStats = {
-      total: tickets.length,
-      open: tickets.filter((ticket) => ticket.status === "open").length,
-      pending: tickets.filter((ticket) => ticket.status === "pending").length,
-      closed: tickets.filter((ticket) => ticket.status === "closed").length
-    };
-    return (
-      <div className="space-y-8">
-        <div className="flex items-center justify-between">
-          <button
-            type="button"
-            onClick={() => onNavigate("admin")}
-            className="cta-secondary group flex items-center gap-2 px-4 py-3 text-[14px] active:scale-95"
-            aria-label="Zurück"
-          >
-            <i className="fa-solid fa-arrow-left text-[14px] transition-transform group-hover:-translate-x-1" aria-hidden="true" />
-            Zurück
-          </button>
-          <div className="flex items-center gap-2 rounded-[10px] border border-[rgba(255,255,255,0.08)] bg-[#101218] px-3 py-1.5">
-            <span className="flex h-2 w-2 rounded-full bg-[#2BD9FF] animate-pulse" />
-            <span className="text-[12px] font-medium text-[rgba(255,255,255,0.65)]">Live Updates</span>
-          </div>
-        </div>
-
-        {ticketsError && (
-          <div className="rounded-[12px] border border-[rgba(255,100,100,0.25)] bg-[rgba(255,100,100,0.08)] px-4 py-3 text-[12px] text-[rgba(255,255,255,0.75)]">
-            {ticketsError}
-          </div>
-        )}
-
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          <div className="rounded-[16px] border border-[rgba(255,255,255,0.08)] bg-[#14161A] p-5 transition hover:border-[rgba(255,255,255,0.15)]">
-            <div className="mb-2 flex items-center justify-between">
-              <p className="text-[11px] font-bold uppercase tracking-wider text-[rgba(255,255,255,0.4)]">Gesamt</p>
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[rgba(255,255,255,0.05)] text-[rgba(255,255,255,0.4)]">
-                <i className="fa-solid fa-layer-group text-[12px]" aria-hidden="true" />
-              </div>
-            </div>
-            <p className="text-[28px] font-bold tracking-tight text-white">{ticketStats.total}</p>
-          </div>
-
-          <div className="rounded-[16px] border border-[rgba(43,254,113,0.15)] bg-[linear-gradient(135deg,rgba(43,254,113,0.05),rgba(20,22,26,0.5))] p-5 transition hover:border-[#2BFE71] hover:shadow-[0_0_20px_rgba(43,254,113,0.15)]">
-            <div className="mb-2 flex items-center justify-between">
-              <p className="text-[11px] font-bold uppercase tracking-wider text-[#2BFE71]">Open</p>
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[rgba(43,254,113,0.1)] text-[#2BFE71]">
-                <i className="fa-solid fa-circle text-[10px]" aria-hidden="true" />
-              </div>
-            </div>
-            <p className="text-[28px] font-bold tracking-tight text-white">{ticketStats.open}</p>
-          </div>
-
-          <div className="rounded-[16px] border border-[rgba(255,209,102,0.15)] bg-[linear-gradient(135deg,rgba(255,209,102,0.05),rgba(20,22,26,0.5))] p-5 transition hover:border-[#FFD166] hover:shadow-[0_0_20px_rgba(255,209,102,0.15)]">
-            <div className="mb-2 flex items-center justify-between">
-              <p className="text-[11px] font-bold uppercase tracking-wider text-[#FFD166]">In Progress</p>
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[rgba(255,209,102,0.1)] text-[#FFD166]">
-                <i className="fa-solid fa-clock text-[12px]" aria-hidden="true" />
-              </div>
-            </div>
-            <p className="text-[28px] font-bold tracking-tight text-white">{ticketStats.pending}</p>
-          </div>
-
-          <div className="rounded-[16px] border border-[rgba(43,217,255,0.15)] bg-[linear-gradient(135deg,rgba(43,217,255,0.05),rgba(20,22,26,0.5))] p-5 transition hover:border-[#2BD9FF] hover:shadow-[0_0_20px_rgba(43,217,255,0.15)]">
-            <div className="mb-2 flex items-center justify-between">
-              <p className="text-[11px] font-bold uppercase tracking-wider text-[#2BD9FF]">Gelöst</p>
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[rgba(43,217,255,0.1)] text-[#2BD9FF]">
-                <i className="fa-solid fa-circle-check text-[12px]" aria-hidden="true" />
-              </div>
-            </div>
-            <p className="text-[28px] font-bold tracking-tight text-white">{ticketStats.closed}</p>
-          </div>
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {ticketsLoading ? (
-            <div className="col-span-full rounded-[24px] border border-[rgba(255,255,255,0.08)] bg-[#101218] p-16 text-center">
-              <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.05)]">
-                <i className="fa-solid fa-spinner fa-spin text-[28px] text-[rgba(255,255,255,0.35)]" aria-hidden="true" />
-              </div>
-              <h3 className="text-[18px] font-bold text-[rgba(255,255,255,0.92)]">Tickets laden...</h3>
-            </div>
-          ) : tickets.length === 0 ? (
-            <div className="col-span-full rounded-[24px] border border-[rgba(255,255,255,0.08)] bg-[#101218] p-16 text-center">
-              <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.05)]">
-                <i className="fa-solid fa-ticket text-[32px] text-[rgba(255,255,255,0.2)]" aria-hidden="true" />
-              </div>
-              <h3 className="text-[18px] font-bold text-[rgba(255,255,255,0.92)]">Keine Tickets</h3>
-              <p className="mt-2 text-[14px] text-[rgba(255,255,255,0.5)]">
-                Aktuell sind keine offenen Tickets vorhanden.
-              </p>
-            </div>
-          ) : (
-            tickets.map((ticket) => {
-              const requester = ticket.requester.trim();
-              const requesterMatch = members.find((member) => {
-                const username = (member.username ?? "").trim();
-                if (!username) return false;
-                return username.toLowerCase() === requester.toLowerCase();
-              });
-              const requesterAvatarUrl =
-                typeof requesterMatch?.avatarUrl === "string"
-                  ? requesterMatch.avatarUrl
-                  : null;
-
-              return (
-                <details
-                  key={ticket.id}
-                  className="group relative flex flex-col rounded-[20px] p-[3px] transition-transform duration-300 hover:-translate-y-1"
-                >
-                  <span
-                    aria-hidden="true"
-                    className="rainbow-draw pointer-events-none absolute inset-0 rounded-[20px] blur-[2px] opacity-0 transition-opacity duration-500 group-hover:opacity-100"
-                  />
-                  <div className="relative z-10 flex h-full w-full flex-col rounded-[17px] bg-[#14161A] border border-[rgba(255,255,255,0.08)] p-5 shadow-lg">
-                    <summary className="flex cursor-pointer list-none items-start justify-between gap-3 [&::-webkit-details-marker]:hidden">
-                      <div className="min-w-0">
-                        <p className="truncate text-[15px] font-semibold text-[rgba(255,255,255,0.92)]">
-                          {ticket.title}
-                        </p>
-                        <div className="mt-2 flex items-center gap-2 text-[12px] text-[rgba(255,255,255,0.50)]">
-                          {requesterAvatarUrl ? (
-                            <img
-                              src={requesterAvatarUrl}
-                              alt=""
-                              className="h-6 w-6 rounded-full object-cover border border-[rgba(255,255,255,0.12)]"
-                              loading="lazy"
-                              draggable={false}
-                            />
-                          ) : (
-                            <div className="h-6 w-6 rounded-full bg-[rgba(255,255,255,0.10)]" />
-                          )}
-                          <span className="truncate">{ticket.requester}</span>
-                        </div>
-                      </div>
-                      <span
-                        className={[
-                          "flex-shrink-0 rounded-[10px] px-3 py-1 text-[11px] font-semibold",
-                          statusClass[ticket.status]
-                        ].join(" ")}
-                      >
-                        {statusLabel[ticket.status]}
-                      </span>
-                    </summary>
-
-                    <div className="mt-4 border-t border-[rgba(255,255,255,0.08)] pt-4 text-[12px]">
-                      <p className="leading-relaxed text-[rgba(255,255,255,0.62)]">{ticket.preview}</p>
-                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                        <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[rgba(255,255,255,0.55)]">
-                          <span className="font-semibold text-[rgba(255,255,255,0.75)]">Ticket ID</span>
-                          <span className="ml-2">{ticket.id}</span>
-                        </div>
-                        <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[rgba(255,255,255,0.55)]">
-                          <span className="font-semibold text-[rgba(255,255,255,0.75)]">Priority</span>
-                          <span className="ml-2">{ticket.priority}</span>
-                        </div>
-                        <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[rgba(255,255,255,0.55)]">
-                          <span className="font-semibold text-[rgba(255,255,255,0.75)]">Created</span>
-                          <span className="ml-2">{formatTicketShortDate(ticket.createdAt)}</span>
-                        </div>
-                        <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[rgba(255,255,255,0.55)]">
-                          <span className="font-semibold text-[rgba(255,255,255,0.75)]">Updated</span>
-                          <span className="ml-2">{formatTicketShortDate(ticket.lastUpdateAt)}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </details>
-              );
-            })
-          )}
-        </div>
       </div>
     );
   }
@@ -8378,10 +7940,10 @@ function renderContent(
             type="button"
             onClick={() => onNavigate("admin")}
             className="cta-secondary group flex items-center gap-2 px-4 py-3 text-[14px] active:scale-95"
-            aria-label="Zurück"
+            aria-label="Zur�ck"
           >
             <i className="fa-solid fa-arrow-left text-[14px] transition-transform group-hover:-translate-x-1" aria-hidden="true" />
-            Zurück
+            Zur�ck
           </button>
           <div className="flex items-center gap-2 rounded-[10px] border border-[rgba(255,255,255,0.08)] bg-[#101218] px-3 py-1.5">
             <span className="flex h-2 w-2 rounded-full bg-[#2BFE71] animate-pulse" />
@@ -8413,7 +7975,7 @@ function renderContent(
 
           <div className="rounded-[16px] border border-[rgba(255,209,102,0.15)] bg-[linear-gradient(135deg,rgba(255,209,102,0.05),rgba(20,22,26,0.5))] p-5 transition hover:border-[#FFD166] hover:shadow-[0_0_20px_rgba(255,209,102,0.15)]">
             <div className="flex items-center justify-between mb-2">
-              <p className="text-[11px] font-bold uppercase tracking-wider text-[#FFD166]">Prüfung</p>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-[#FFD166]">Pr�fung</p>
               <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[rgba(255,209,102,0.1)] text-[#FFD166]">
                 <i className="fa-solid fa-magnifying-glass text-[12px]" aria-hidden="true" />
               </div>
@@ -8594,7 +8156,7 @@ function renderContent(
                             ? 'bg-[#FFD166] text-[#0D0E12] shadow-[0_0_10px_rgba(255,209,102,0.4)]'
                             : 'bg-[rgba(255,255,255,0.05)] text-[rgba(255,255,255,0.5)] hover:bg-[rgba(255,209,102,0.2)] hover:text-[#FFD166]'
                             }`}
-                          title="Prüfen"
+                          title="Pr�fen"
                         >
                           <i className="fa-solid fa-magnifying-glass text-[12px]" />
                         </button>
@@ -8630,10 +8192,10 @@ function renderContent(
             type="button"
             onClick={() => onNavigate("admin")}
             className="cta-secondary flex items-center gap-2 px-4 py-3 text-[14px]"
-            aria-label="Zurück"
+            aria-label="Zur�ck"
           >
             <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
-            Zurück
+            Zur�ck
           </button>
           <p className="text-[13px] text-[rgba(255,255,255,0.55)]">
             {membersLoading ? "Lade..." : `${members.length} Mitglieder`}
@@ -8725,7 +8287,7 @@ function renderContent(
                         </span>
                       ))
                     ) : (
-                      <span>—</span>
+                      <span>�</span>
                     )}
                     {canManageUserRoles && (
                       <button
@@ -8735,8 +8297,8 @@ function renderContent(
                           onOpenMemberRoleDialog(member, "add");
                         }}
                         className="inline-flex items-center rounded-[8px] border border-[rgba(43,254,113,0.35)] bg-[rgba(43,254,113,0.12)] px-2 py-0.5 text-[10px] font-semibold text-[#2BFE71] transition hover:bg-[rgba(43,254,113,0.22)]"
-                        title="Rolle hinzufügen"
-                        aria-label="Rolle hinzufügen"
+                        title="Rolle hinzuf�gen"
+                        aria-label="Rolle hinzuf�gen"
                       >
                         Add
                       </button>
@@ -8744,9 +8306,9 @@ function renderContent(
                   </div>
                 </div>
                 <div className="text-[11px] text-[rgba(255,255,255,0.6)]">
-                  {member.minecraftName ? `MC: ${member.minecraftName}` : "—"}
-                  {typeof member.level === "number" ? ` · Lvl ${member.level}` : ""}
-                  {member.experience ? ` · ${member.experience}` : ""}
+                  {member.minecraftName ? `MC: ${member.minecraftName}` : "�"}
+                  {typeof member.level === "number" ? ` � Lvl ${member.level}` : ""}
+                  {member.experience ? ` � ${member.experience}` : ""}
                   <div className="mt-1 flex flex-wrap gap-1">
                     {Array.isArray(member.projects) && member.projects.length > 0 ? (
                       <>
@@ -8777,8 +8339,8 @@ function renderContent(
                           onOpenMemberProjectDialog(member);
                         }}
                         className="inline-flex items-center rounded-[8px] border border-[rgba(43,254,113,0.35)] bg-[rgba(43,254,113,0.12)] px-2 py-0.5 text-[10px] font-semibold text-[#2BFE71] transition hover:bg-[rgba(43,254,113,0.22)]"
-                        title="Projekt hinzufügen"
-                        aria-label="Projekt hinzufügen"
+                        title="Projekt hinzuf�gen"
+                        aria-label="Projekt hinzuf�gen"
                       >
                         + Projekt
                       </button>
@@ -8845,10 +8407,10 @@ function renderContent(
             type="button"
             onClick={() => onNavigate("admin")}
             className="cta-secondary flex items-center gap-2 px-4 py-3 text-[14px]"
-            aria-label="Zurück"
+            aria-label="Zur�ck"
           >
             <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
-            Zurück
+            Zur�ck
           </button>
           <div className="flex items-center gap-3">
             <button
@@ -8916,8 +8478,8 @@ function renderContent(
                       onOpenRoleDelete(role);
                     }}
                     className="mr-1 flex h-8 w-8 items-center justify-center rounded-[6px] bg-[rgba(255,91,91,0.18)] text-[#FF8A8A] shadow-[0_0_0_1px_rgba(255,91,91,0.25)] transition hover:bg-[rgba(255,91,91,0.28)] hover:text-[#FF5B5B]"
-                    title="Rolle löschen"
-                    aria-label={`Rolle ${role.id} löschen`}
+                    title="Rolle l�schen"
+                    aria-label={`Rolle ${role.id} l�schen`}
                   >
                     <i className="fa-solid fa-trash" aria-hidden="true" />
                   </button>
@@ -8977,3 +8539,4 @@ function renderContent(
 
   return null;
 }
+

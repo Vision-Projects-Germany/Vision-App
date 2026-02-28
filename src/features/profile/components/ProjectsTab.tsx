@@ -12,9 +12,17 @@ interface ProjectMedia {
 
 interface ApiProjectItem {
     id: string;
+    serverId?: string | null;
+    server_id?: string | null;
+    pterodactylId?: string | null;
+    pterodactyl_id?: string | null;
     title?: string | null;
     descriptionHtml?: string | null;
+    descriptionMarkdown?: string | null;
+    description_markdown?: string | null;
     banner?: ProjectMedia | null;
+    cover?: ProjectMedia | null;
+    logoIcon?: ProjectMedia | null;
     logo?: ProjectMedia | null;
     activityStatus?: string | null;
 }
@@ -24,10 +32,39 @@ export const ProjectsTab: React.FC<ProjectsTabProps> = ({ profile }) => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
+    const getProjectMembershipKeys = (project: ApiProjectItem): string[] => {
+        const keys = [
+            project.id,
+            project.serverId,
+            project.server_id,
+            project.pterodactylId,
+            project.pterodactyl_id
+        ]
+            .map((value) => (typeof value === "string" ? value.trim() : ""))
+            .filter(Boolean);
+        return Array.from(new Set(keys));
+    };
+
+    const normalizeMembershipIds = (value: unknown): string[] => {
+        if (!Array.isArray(value)) return [];
+        const ids = value
+            .map((entry) => {
+                if (typeof entry === "string") return entry.trim();
+                if (entry && typeof entry === "object") {
+                    const record = entry as Record<string, unknown>;
+                    const candidate = record.id ?? record.projectId ?? record.project_id ?? null;
+                    return typeof candidate === "string" ? candidate.trim() : "";
+                }
+                return "";
+            })
+            .filter((id): id is string => Boolean(id));
+        return Array.from(new Set(ids));
+    };
+
     useEffect(() => {
         const loadProjects = async () => {
-            const projectIds = profile?.projects ?? [];
-            if (!projectIds.length) {
+            const membershipIds = normalizeMembershipIds(profile?.projects ?? []);
+            if (!membershipIds.length) {
                 setProjects([]);
                 return;
             }
@@ -35,14 +72,18 @@ export const ProjectsTab: React.FC<ProjectsTabProps> = ({ profile }) => {
             setLoading(true);
             setError(null);
             try {
-                const response = await fetch("https://api.blizz-developments-official.de/api/projects?page=1&limit=200");
+                const response = await fetch("https://api.vision-projects.eu/api/projects?page=1&limit=200");
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}`);
                 }
                 const payload = await response.json();
                 const apiItems: ApiProjectItem[] = Array.isArray(payload?.items) ? payload.items : [];
-                const wantedIds = new Set(projectIds);
-                setProjects(apiItems.filter((item) => wantedIds.has(item.id)));
+                const membershipSet = new Set(membershipIds);
+                setProjects(
+                    apiItems.filter((item) =>
+                        getProjectMembershipKeys(item).some((key) => membershipSet.has(key))
+                    )
+                );
             } catch (e) {
                 const message = e instanceof Error ? e.message : "Fehler beim Laden der Projekte.";
                 setError(message);
@@ -69,8 +110,10 @@ export const ProjectsTab: React.FC<ProjectsTabProps> = ({ profile }) => {
         });
     }, [projects]);
 
-    const plainDescription = (value: string | null | undefined) =>
-        (value ?? "").replace(/<[^>]*>/g, "").trim();
+    const plainDescription = (project: ApiProjectItem) =>
+        (project.descriptionHtml ?? project.descriptionMarkdown ?? project.description_markdown ?? "")
+            .replace(/<[^>]*>/g, "")
+            .trim();
 
     const getBadgeClass = (status: string | null | undefined) => {
         const normalized = (status ?? "").toLowerCase();
@@ -95,10 +138,10 @@ export const ProjectsTab: React.FC<ProjectsTabProps> = ({ profile }) => {
                     />
                     <div className="relative z-10 flex h-full w-full overflow-hidden rounded-[15px] bg-[#24262C]">
                         <div className="flex w-full flex-col">
-                            {project.banner?.url ? (
+                            {(project.banner?.url || project.cover?.url) ? (
                                 <div className="relative h-[180px] w-full overflow-hidden">
                                     <img
-                                        src={project.banner.url}
+                                        src={project.banner?.url ?? project.cover?.url ?? ""}
                                         alt={`${project.title ?? "Project"} hero`}
                                         className="h-full w-full bg-[#0D0E12] object-cover transition duration-200 group-hover:brightness-90"
                                     />
@@ -115,10 +158,10 @@ export const ProjectsTab: React.FC<ProjectsTabProps> = ({ profile }) => {
                             )}
                             <div className="px-[16px] pb-[18px] pt-[14px]">
                                 <div className="flex items-center gap-[12px]">
-                                    {project.logo?.url ? (
+                                    {(project.logo?.url || project.logoIcon?.url) ? (
                                         <div className="h-[48px] w-[48px] overflow-hidden rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[#1B1D22]">
                                             <img
-                                                src={project.logo.url}
+                                                src={project.logo?.url ?? project.logoIcon?.url ?? ""}
                                                 alt={`${project.title ?? "Project"} logo`}
                                                 className="h-full w-full object-cover"
                                             />
@@ -131,7 +174,7 @@ export const ProjectsTab: React.FC<ProjectsTabProps> = ({ profile }) => {
                                     </p>
                                 </div>
                                 <p className="mt-[12px] text-[12px] leading-[18px] text-[rgba(255,255,255,0.70)] line-clamp-3">
-                                    {plainDescription(project.descriptionHtml) || "Keine Beschreibung vorhanden."}
+                                    {plainDescription(project) || "Keine Beschreibung vorhanden."}
                                 </p>
                             </div>
                         </div>
