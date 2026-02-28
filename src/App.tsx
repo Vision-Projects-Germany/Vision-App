@@ -8,7 +8,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faChevronRight } from "@fortawesome/free-solid-svg-icons";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut, type User } from "firebase/auth";
-import { arrayRemove, arrayUnion, doc, getDoc, updateDoc } from "firebase/firestore";
+import { arrayUnion, doc, getDoc, updateDoc } from "firebase/firestore";
 import { AppShell } from "./components/AppShell";
 import { MainCard } from "./components/MainCard";
 import { SideIcons } from "./components/SideIcons";
@@ -31,6 +31,10 @@ interface ProjectItem {
   id: string;
   title: string;
   slug?: string;
+  serverId?: string | null;
+  server_id?: string | null;
+  pterodactylId?: string | null;
+  pterodactyl_id?: string | null;
   description?: string | null;
   descriptionHtml?: string | null;
   descriptionMarkdown?: string | null;
@@ -705,6 +709,48 @@ function normalizeRoleId(value: string) {
     .replace(/^-+|-+$/g, "");
 }
 
+function normalizeProjectIds(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const ids = value
+    .map((entry) => {
+      if (typeof entry === "string") {
+        return entry.trim();
+      }
+      if (entry && typeof entry === "object") {
+        const record = entry as Record<string, unknown>;
+        const candidate = record.id ?? record.projectId ?? record.project_id ?? null;
+        return typeof candidate === "string" ? candidate.trim() : "";
+      }
+      return "";
+    })
+    .filter((id): id is string => Boolean(id));
+  return Array.from(new Set(ids));
+}
+
+function getProjectMembershipKeys(project: ProjectItem | null | undefined): string[] {
+  if (!project) {
+    return [];
+  }
+  const keys = [
+    project.id,
+    project.serverId,
+    project.server_id,
+    project.pterodactylId,
+    project.pterodactyl_id
+  ]
+    .map((value) => (typeof value === "string" ? value.trim() : ""))
+    .filter(Boolean);
+  return Array.from(new Set(keys));
+}
+
+function isUserInProject(project: ProjectItem | null | undefined, userProjectIds: string[]): boolean {
+  const membershipSet = new Set(userProjectIds.map((id) => id.trim()).filter(Boolean));
+  const keys = getProjectMembershipKeys(project);
+  return keys.some((key) => membershipSet.has(key));
+}
+
 function formatNewsDate(value?: string | null) {
   if (!value) {
     return null;
@@ -1317,6 +1363,7 @@ export default function App() {
   >("Active");
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [projectModrinthId, setProjectModrinthId] = useState("");
+  const [projectPterodactylId, setProjectPterodactylId] = useState("");
   const [projectSource, setProjectSource] = useState<"manual" | "modrinth">("manual");
   const [modrinthAutoLoading, setModrinthAutoLoading] = useState(false);
   const [modrinthAutoError, setModrinthAutoError] = useState<string | null>(null);
@@ -1467,6 +1514,8 @@ export default function App() {
   const [applicationActionLoading, setApplicationActionLoading] = useState(false);
   const [applicationActionError, setApplicationActionError] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState<string>("Unbekannt");
+  const [showTeamApplyPopup, setShowTeamApplyPopup] = useState(false);
+  const teamApplyPopupShownRef = useRef(false);
   const [showClippy, setShowClippy] = useState(false);
   const [appSettings, setAppSettings] = useState<AppSettings>(() => {
     const defaults: AppSettings = {
@@ -1844,16 +1893,17 @@ export default function App() {
   const [participantsError, setParticipantsError] = useState<string | null>(null);
   const isSelectedProjectEnded =
     selectedProject?.activityStatus === "Ended";
+  const isSelectedProjectJoined = isUserInProject(selectedProject, userProjectIds);
   const canJoinSelectedProject = Boolean(
     user &&
     selectedProject &&
-    !userProjectIds.includes(selectedProject.id) &&
+    !isSelectedProjectJoined &&
     !isSelectedProjectEnded
   );
   const canLeaveSelectedProject = Boolean(
     user &&
     selectedProject &&
-    userProjectIds.includes(selectedProject.id) &&
+    isSelectedProjectJoined &&
     !isSelectedProjectEnded
   );
 
@@ -2603,6 +2653,23 @@ export default function App() {
     void runUpdaterCheck(false);
   }, [user]);
 
+  useEffect(() => {
+    if (teamApplyPopupShownRef.current) {
+      return;
+    }
+    if (!bootDelayDone || !user || !newsReady || !projectsReady || authzFetchLoading) {
+      return;
+    }
+    const isAdmin = authzRoles.some((role) => role.trim().toLowerCase() === "admin");
+    if (isAdmin) {
+      teamApplyPopupShownRef.current = true;
+      setShowTeamApplyPopup(false);
+      return;
+    }
+    teamApplyPopupShownRef.current = true;
+    setShowTeamApplyPopup(true);
+  }, [bootDelayDone, newsReady, projectsReady, user, authzFetchLoading, authzRoles]);
+
   const submitBan = async (member: MemberProfile, reason: string) => {
     if (!user) {
       setBanError("Bitte zuerst anmelden.");
@@ -3202,7 +3269,7 @@ export default function App() {
         const value = snapshot.exists() ? snapshot.get("username") : null;
         setUsername(typeof value === "string" ? value : null);
         const projectsValue = snapshot.exists() ? snapshot.get("projects") : null;
-        setUserProjectIds(Array.isArray(projectsValue) ? projectsValue : []);
+        setUserProjectIds(normalizeProjectIds(projectsValue));
       })
       .catch(() => {
         setUsername(null);
@@ -3863,6 +3930,37 @@ export default function App() {
     throw new Error("Du musst eingeloggt sein.");
   };
 
+  const getFreshUuid = async () => {
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      throw new Error("Du musst eingeloggt sein.");
+    }
+    await currentUser.reload();
+    const uuid = auth.currentUser?.uid ?? currentUser.uid;
+    if (!uuid) {
+      throw new Error("UUID konnte nicht geladen werden.");
+    }
+    return uuid;
+  };
+
+  const getFreshServerId = async (projectId: string) => {
+    const data = await requestJson<{ items?: ProjectItem[] }>(
+      "https://api.blizz-developments-official.de/api/projects?page=1&limit=100"
+    );
+    const items = Array.isArray(data?.items) ? data.items : [];
+    const project = items.find((entry) => entry.id === projectId);
+    const serverId =
+      project?.pterodactyl_id ??
+      project?.pterodactylId ??
+      project?.serverId ??
+      project?.server_id ??
+      null;
+    if (!serverId || typeof serverId !== "string" || !serverId.trim()) {
+      throw new Error("Server-ID konnte nicht geladen werden.");
+    }
+    return serverId.trim();
+  };
+
   const handleReadFirebaseProfile = async () => {
     if (!user) {
       showToast("Nur mit Firebase-Login verfügbar.", "error");
@@ -3884,7 +3982,7 @@ export default function App() {
       setUsername(typeof usernameValue === "string" ? usernameValue : null);
 
       const projectsValue = snapshot.exists() ? snapshot.get("projects") : null;
-      setUserProjectIds(Array.isArray(projectsValue) ? projectsValue : []);
+      setUserProjectIds(normalizeProjectIds(projectsValue));
 
       showToast("Firebase Profil aktualisiert.", "success");
     } catch (error) {
@@ -4213,6 +4311,11 @@ export default function App() {
       setProjectSaveError("Du musst eingeloggt sein.");
       return;
     }
+    if (!projectPterodactylId.trim()) {
+      setProjectSaveError("Bitte Pterodactyl ID eingeben.");
+      showToast("Pterodactyl ID fehlt.", "error");
+      return;
+    }
     if (projectSource !== "modrinth" && (!projectLoader || !projectVersion)) {
       setProjectSaveError("Bitte Loader und Version auswählen.");
       showToast("Loader und Version fehlen.", "error");
@@ -4226,6 +4329,7 @@ export default function App() {
     try {
       const token = await getApiToken();
       const trimmedModrinthId = projectModrinthId.trim();
+      const trimmedPterodactylId = projectPterodactylId.trim();
       const hasModrinth = Boolean(trimmedModrinthId);
 
       let logoMediaId: string | null = projectLogoMediaId || null;
@@ -4243,6 +4347,8 @@ export default function App() {
           // @ts-ignore backend might accept snake_case
           src_modrinth: true,
           modrinthId: trimmedModrinthId,
+          // @ts-ignore backend expects snake_case
+          pterodactyl_id: trimmedPterodactylId,
           activityStatus: projectActivityStatus,
           // @ts-ignore backend might accept snake_case
           activity_status: projectActivityStatus,
@@ -4276,6 +4382,8 @@ export default function App() {
           logoMediaId,
           loader: projectLoader,
           version: projectVersion,
+          // @ts-ignore backend expects snake_case
+          pterodactyl_id: trimmedPterodactylId,
           activityStatus: projectActivityStatus,
           // @ts-ignore backend might accept snake_case
           activity_status: projectActivityStatus,
@@ -4331,6 +4439,13 @@ export default function App() {
     setProjectActivityStatus(project.activityStatus ?? "Active");
     setProjectSource(isTruthyFlag(project.srcModrinth ?? (project as any).src_modrinth) ? "modrinth" : "manual");
     setProjectModrinthId(project.modrinthId ?? project.modrinth_id ?? "");
+    setProjectPterodactylId(
+      project.pterodactyl_id ??
+      project.pterodactylId ??
+      project.server_id ??
+      project.serverId ??
+      ""
+    );
     setProjectLogoFile(null);
     setProjectBannerFile(null);
     setProjectLogoMediaId("");
@@ -4352,6 +4467,7 @@ export default function App() {
     setProjectActivityStatus("Active");
     setProjectSource("manual");
     setProjectModrinthId("");
+    setProjectPterodactylId("");
     setProjectLogoFile(null);
     setProjectBannerFile(null);
     setProjectLogoMediaId("");
@@ -4376,6 +4492,7 @@ export default function App() {
     try {
       const token = await getApiToken();
       const trimmedModrinthId = projectModrinthId.trim();
+      const trimmedPterodactylId = projectPterodactylId.trim();
       const hasModrinth = Boolean(trimmedModrinthId);
 
       let logoMediaId: string | null = projectLogoMediaId || null;
@@ -4417,6 +4534,10 @@ export default function App() {
       if (hasModrinth) {
         payload.modrinthId = trimmedModrinthId;
       }
+      if (trimmedPterodactylId) {
+        // @ts-ignore backend expects snake_case
+        payload.pterodactyl_id = trimmedPterodactylId;
+      }
       payload.srcModrinth = projectSource === "modrinth";
 
       await requestText(
@@ -4442,7 +4563,9 @@ export default function App() {
               loader: projectLoader || project.loader || null,
               version: projectVersion || project.version || null,
               activityStatus: projectActivityStatus,
-              srcModrinth: hasModrinth
+              srcModrinth: projectSource === "modrinth",
+              src_modrinth: projectSource === "modrinth",
+              pterodactyl_id: trimmedPterodactylId || project.pterodactyl_id || null
             })
             : project
         )
@@ -4497,33 +4620,69 @@ export default function App() {
     await handleDeleteProject(id);
   };
 
-  const handleJoinProject = async (projectId: string) => {
+  const handleJoinProject = async (project: ProjectItem) => {
     if (!user) {
       showToast("Bitte zuerst anmelden.", "error");
       return;
     }
+    const projectId = project.id;
+    const membershipKeys = getProjectMembershipKeys(project);
+
+    // Optimistic UI: mark project as joined immediately on click.
+    setUserProjectIds((prev) => Array.from(new Set([...prev, ...membershipKeys])));
 
     try {
-      await updateDoc(doc(db, "users", user.uid), {
-        projects: arrayUnion(projectId)
+      const [token, uuid, serverId] = await Promise.all([
+        getApiToken(),
+        getFreshUuid(),
+        getFreshServerId(projectId)
+      ]);
+      await requestJson<unknown>("https://api.blizz-developments-official.de/api/projects/join", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          serverId,
+          uuid
+        })
       });
-      setUserProjectIds((prev) => (prev.includes(projectId) ? prev : [...prev, projectId]));
-    } catch {
+    } catch (error) {
+      // Roll back optimistic update when API join fails.
+      setUserProjectIds((prev) => prev.filter((id) => !membershipKeys.includes(id)));
+      showToast(formatToastError(error) || "Projektbeitritt fehlgeschlagen.", "error");
       return;
     }
   };
 
-  const handleLeaveProject = async (projectId: string) => {
+  const handleLeaveProject = async (project: ProjectItem) => {
     if (!user) {
       return;
     }
+    const projectId = project.id;
+    const membershipKeys = getProjectMembershipKeys(project);
 
     try {
-      await updateDoc(doc(db, "users", user.uid), {
-        projects: arrayRemove(projectId)
+      const [token, uuid, serverId] = await Promise.all([
+        getApiToken(),
+        getFreshUuid(),
+        getFreshServerId(projectId)
+      ]);
+      await requestJson<unknown>("https://api.blizz-developments-official.de/api/projects/leave", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          serverId,
+          uuid
+        })
       });
-      setUserProjectIds((prev) => prev.filter((id) => id !== projectId));
-    } catch {
+      setUserProjectIds((prev) => prev.filter((id) => !membershipKeys.includes(id)));
+    } catch (error) {
+      showToast(formatToastError(error) || "Projekt verlassen fehlgeschlagen.", "error");
       return;
     }
   };
@@ -5531,6 +5690,71 @@ export default function App() {
             </div>
           </div>
         )}
+        {showTeamApplyPopup && (
+          <div className="fixed inset-0 z-[63] flex items-center justify-center bg-black/70 px-4">
+            <div className="w-full max-w-[760px] rounded-[20px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-6 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-[rgba(43,254,113,0.16)] text-[#2BFE71]">
+                    <i className="fa-solid fa-user-plus" aria-hidden="true" />
+                  </div>
+                  <div>
+                    <p className="text-[16px] font-semibold text-[rgba(255,255,255,0.95)]">
+                      Jetzt Teammitglied werden
+                    </p>
+                    <p className="text-[12px] text-[rgba(255,255,255,0.55)]">
+                      Bewirb dich direkt bei Vision Projects.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowTeamApplyPopup(false)}
+                  className="flex h-8 w-8 items-center justify-center rounded-[8px] border border-[rgba(255,255,255,0.14)] bg-[#171A21] text-[rgba(255,255,255,0.78)] transition hover:border-[rgba(255,255,255,0.28)]"
+                  aria-label="Popup schließen"
+                >
+                  <i className="fa-solid fa-xmark" aria-hidden="true" />
+                </button>
+              </div>
+
+              <p className="mt-4 text-[13px] leading-[20px] text-[rgba(255,255,255,0.72)]">
+                Wir suchen Unterstützung für Moderation, Entwicklung, Design und mehr.
+                Klick auf <span className="font-semibold text-[rgba(255,255,255,0.9)]">Jetzt bewerben</span> und sende deine Bewerbung.
+              </p>
+
+              <div className="mt-4 overflow-hidden rounded-[12px] border border-[rgba(255,255,255,0.1)] bg-[#0F1116]">
+                <img
+                  src="https://api.blizz-developments-official.de/public/banners/apply-now-ad.png"
+                  alt="Team Bewerbung Banner"
+                  className="h-auto w-full object-contain"
+                  loading="lazy"
+                />
+              </div>
+
+              <div className="mt-5 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowTeamApplyPopup(false)}
+                  className="cta-secondary px-4 py-2 text-[12px]"
+                >
+                  Später
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    openUrl(TEAM_APPLICATION_URL).catch(() => {
+                      window.open(TEAM_APPLICATION_URL, "_blank", "noopener,noreferrer");
+                    });
+                    setShowTeamApplyPopup(false);
+                  }}
+                  className="cta-primary px-4 py-2 text-[12px]"
+                >
+                  Jetzt bewerben
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {selectedProject && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 px-4">
             <div className="relative w-full max-w-[720px] overflow-hidden rounded-[24px] border border-[rgba(255,255,255,0.12)] bg-[#24262C] shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
@@ -5651,7 +5875,7 @@ export default function App() {
                     {canJoinSelectedProject && (
                       <button
                         type="button"
-                        onClick={() => handleJoinProject(selectedProject.id)}
+                        onClick={() => handleJoinProject(selectedProject)}
                         className="rounded-[10px] bg-[#2BFE71] px-4 py-2 text-[13px] font-semibold text-[#0D0E12] transition hover:brightness-95"
                       >
                         Beitreten
@@ -5660,7 +5884,7 @@ export default function App() {
                     {canLeaveSelectedProject && (
                       <button
                         type="button"
-                        onClick={() => handleLeaveProject(selectedProject.id)}
+                        onClick={() => handleLeaveProject(selectedProject)}
                         className="rounded-[10px] bg-[#E24C4C] px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-[#F06060]"
                       >
                         Verlassen
@@ -5706,26 +5930,20 @@ export default function App() {
                           setProjectSource("manual");
                           setProjectModrinthId("");
                         }}
-                        disabled={Boolean(editingProjectId) && projectSource === "modrinth"}
                         className={`px-4 py-2 text-[12px] font-semibold transition ${projectSource === "manual"
                           ? "bg-[#2BFE71] text-[#0D0E12]"
                           : "text-[rgba(255,255,255,0.70)] hover:text-white"
-                          } ${Boolean(editingProjectId) && projectSource === "modrinth"
-                            ? "opacity-40 cursor-not-allowed"
-                            : ""}`}
+                          }`}
                       >
                         Manuell
                       </button>
                       <button
                         type="button"
                         onClick={() => setProjectSource("modrinth")}
-                        disabled={Boolean(editingProjectId) && projectSource === "manual"}
                         className={`px-4 py-2 text-[12px] font-semibold transition ${projectSource === "modrinth"
                           ? "bg-[#2BFE71] text-[#0D0E12]"
                           : "text-[rgba(255,255,255,0.70)] hover:text-white"
-                          } ${Boolean(editingProjectId) && projectSource === "manual"
-                            ? "opacity-40 cursor-not-allowed"
-                            : ""}`}
+                          }`}
                       >
                         Modrinth
                       </button>
@@ -5780,6 +5998,19 @@ export default function App() {
                           <option value="Ended">Ended</option>
                         </select>
                       </div>
+                      <div className="space-y-2">
+                        <label className="flex items-center gap-2 text-[12px] font-semibold text-[rgba(255,255,255,0.82)]">
+                          <i className="fa-solid fa-server text-[13px] text-[#2BFE71]" aria-hidden="true" />
+                          Pterodactyl ID (beim Erstellen erforderlich)
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="Server-ID aus Pterodactyl"
+                          value={projectPterodactylId}
+                          onChange={(event) => setProjectPterodactylId(event.target.value)}
+                          className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71]"
+                        />
+                      </div>
                       <div className="mt-2 flex items-center justify-between">
                         <div className="text-[12px] text-[rgba(255,255,255,0.65)]">
                           {projectSaveError && (
@@ -5796,7 +6027,11 @@ export default function App() {
                         <button
                           type="button"
                           onClick={editingProjectId ? handleUpdateProject : handleCreateProject}
-                          disabled={projectSaving || !projectModrinthId.trim()}
+                          disabled={
+                            projectSaving ||
+                            !projectModrinthId.trim() ||
+                            (!editingProjectId && !projectPterodactylId.trim())
+                          }
                           className="cta-primary px-4 py-2 text-[12px] disabled:opacity-60"
                         >
                           {projectSaving
@@ -6075,6 +6310,19 @@ export default function App() {
                           className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71]"
                         />
                       </div>
+                      <div className="space-y-2">
+                        <label className="flex items-center gap-2 text-[12px] font-semibold text-[rgba(255,255,255,0.82)]">
+                          <i className="fa-solid fa-server text-[13px] text-[#2BFE71]" aria-hidden="true" />
+                          Pterodactyl ID (beim Erstellen erforderlich)
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="Server-ID aus Pterodactyl"
+                          value={projectPterodactylId}
+                          onChange={(event) => setProjectPterodactylId(event.target.value)}
+                          className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71]"
+                        />
+                      </div>
                       <div className="md:col-span-2 mt-2 flex items-center justify-between">
                         <div className="text-[12px] text-[rgba(255,255,255,0.65)]">
                           {projectSaveError && (
@@ -6093,7 +6341,8 @@ export default function App() {
                           onClick={editingProjectId ? handleUpdateProject : handleCreateProject}
                           disabled={
                             projectSaving ||
-                            (!editingProjectId && (!projectLoader || !projectVersion))
+                            (!editingProjectId &&
+                              (!projectLoader || !projectVersion || !projectPterodactylId.trim()))
                           }
                           className="cta-primary px-4 py-2 text-[12px] disabled:opacity-60"
                         >
@@ -6579,7 +6828,7 @@ function renderContent(
   const modrinthCards = modrinthProjects.map(toModrinthCard);
   const groupedModrinth = groupModrinthCards(modrinthCards);
   const myProjects = sortProjectsByActivity(
-    projects.filter((item) => userProjectIds.includes(item.id))
+    projects.filter((item) => isUserInProject(item, userProjectIds))
   );
   const sortedProjects = sortProjectsByActivity(projects);
   const projectTitleById = new Map(projects.map((item) => [item.id, item.title ?? item.id]));
