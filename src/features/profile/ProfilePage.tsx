@@ -120,6 +120,10 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
             roles: data.roles || [],
             level: data.level || 1,
             experience: data.experience || null,
+            xpDisplay:
+              (typeof data.xp_display === "string" && data.xp_display) ||
+              (typeof data.xpDisplay === "string" && data.xpDisplay) ||
+              null,
             avatarMediaId: data.avatarMediaId || null,
             avatarUrl: data.avatarUrl || null,
             projects: normalizeProjectIds(data.projects),
@@ -167,6 +171,7 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
             roles: [],
             level: 1,
             experience: null,
+            xpDisplay: null,
             avatarMediaId: null,
             avatarUrl: null,
             projects: [],
@@ -331,20 +336,6 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
     }
   };
 
-  const handleUpdateBio = async (newBio: string) => {
-    if (!profile) return;
-    try {
-      setIsSaving(true);
-      updateProfile({ bio: newBio });
-      const userDocRef = doc(db, profileDocCollection, profile.uid);
-      await updateDoc(userDocRef, { bio: newBio });
-    } catch (error) {
-      console.error("Error updating bio:", error);
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
   const openEditModal = () => {
     if (!profile) return;
     setEditDisplayName(profile.displayName || profile.username || "");
@@ -415,7 +406,6 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
                 isEditable={true}
                 onAvatarUpload={handleAvatarUpload}
                 onUpdateDisplayName={handleUpdateDisplayName}
-                onUpdateBio={handleUpdateBio}
               />
               <div className="flex flex-col gap-2 md:flex-row md:items-center">
                 <button
@@ -423,11 +413,11 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
                   className="cta-secondary flex items-center gap-2 px-5 py-2.5 text-[13px]"
                 >
                   <i className="fas fa-pen mr-2"></i>
-                  Edit Profile
+                  Edit
                 </button>
                 <button
                   onClick={() => void onLogout?.()}
-                  className="cta-secondary flex items-center gap-2 px-5 py-2.5 text-[13px]"
+                  className="cta-secondary flex items-center gap-2 px-5 py-2.5 text-[13px] hover:border-red-400/70 hover:bg-red-500/15 hover:text-red-200"
                 >
                   <i className="fas fa-sign-out-alt mr-2"></i>
                   Logout

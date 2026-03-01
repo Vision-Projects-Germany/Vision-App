@@ -9,6 +9,7 @@ export interface UserProfile {
   roles: string[];
   level: number;
   experience: string | null;
+  xpDisplay: string | null;
   avatarMediaId: string | null;
   avatarUrl: string | null;
   projects: string[];
