@@ -193,7 +193,7 @@ const applicationStatusActionLabel: Record<ApplicationStatus, string> = {
 };
 
 const fallbackProjectDescription =
-  "Projektbeschreibung folgt. Mehr Details kommen sp�ter, inklusive Features, Updates und Plattformen.";
+  "Projektbeschreibung folgt. Mehr Details kommen später, inklusive Features, Updates und Plattformen.";
 
 const modrinthTypeOrder = [
   "modpack",
@@ -833,10 +833,10 @@ function mapApplicationItems(items: unknown[]): ApplicationItem[] {
             ? raw.type
             : typeof raw.position === "string"
               ? raw.position
-              : "�";
+              : "—";
       const role = roleRaw
         ? roleRaw.charAt(0).toUpperCase() + roleRaw.slice(1)
-        : "�";
+        : "—";
       const experience =
         typeof raw.experience === "string"
           ? raw.experience
@@ -1697,7 +1697,7 @@ export default function App() {
       pendingApplicationAction.status === "rejected" &&
       !applicationRejectNotes.trim()
     ) {
-      setApplicationActionError("Bitte einen Grund f�r die Ablehnung eintragen.");
+      setApplicationActionError("Bitte einen Grund für die Ablehnung eintragen.");
       return;
     }
 
@@ -1922,7 +1922,7 @@ export default function App() {
       return;
     }
     if (!mediaUploadFile) {
-      setMediaUploadError("Bitte eine Datei ausw�hlen.");
+      setMediaUploadError("Bitte eine Datei auswählen.");
       return;
     }
     setMediaUploadLoading(true);
@@ -2159,13 +2159,13 @@ export default function App() {
       );
       setNewsDeleteCandidate(null);
       reloadNewsItems(true).catch(() => undefined);
-      showToast("News gel�scht.", "success");
+      showToast("News gelöscht.", "success");
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "News konnte nicht gel�scht werden.";
+        error instanceof Error ? error.message : "News konnte nicht gelöscht werden.";
       console.warn("[news] delete failed", message, error);
       setNewsDeleteError(message);
-      showToast("News konnte nicht gel�scht werden.", "error");
+      showToast("News konnte nicht gelöscht werden.", "error");
     } finally {
       setNewsDeleting(false);
     }
@@ -2204,7 +2204,7 @@ export default function App() {
       setMediaError((prev) => ({
         ...prev,
         [section]:
-          error instanceof Error ? error.message : "L�schen fehlgeschlagen."
+          error instanceof Error ? error.message : "Löschen fehlgeschlagen."
       }));
     }
   };
@@ -2463,7 +2463,7 @@ export default function App() {
     }
     if (!(await isRunningInTauri())) {
       if (manual) {
-        showToast("Updater ist nur in der Desktop-App verf�gbar.", "error");
+        showToast("Updater ist nur in der Desktop-App verfügbar.", "error");
       }
       return;
     }
@@ -2474,7 +2474,7 @@ export default function App() {
       if (!update) {
         setAvailableUpdateVersion(null);
         if (manual) {
-          showToast("Kein Update verf�gbar.", "success");
+          showToast("Kein Update verfügbar.", "success");
         }
         return;
       }
@@ -2499,7 +2499,7 @@ export default function App() {
       return;
     }
     if (!(await isRunningInTauri())) {
-      showToast("Updater ist nur in der Desktop-App verf�gbar.", "error");
+      showToast("Updater ist nur in der Desktop-App verfügbar.", "error");
       return;
     }
 
@@ -2508,7 +2508,7 @@ export default function App() {
       const update = await checkUpdate();
       if (!update) {
         setAvailableUpdateVersion(null);
-        showToast("Kein Update verf�gbar.", "success");
+        showToast("Kein Update verfügbar.", "success");
         return;
       }
 
@@ -3733,7 +3733,7 @@ export default function App() {
 
   const handleReadFirebaseProfile = async () => {
     if (!user) {
-      showToast("Nur mit Firebase-Login verf�gbar.", "error");
+      showToast("Nur mit Firebase-Login verfügbar.", "error");
       return;
     }
 
@@ -3839,7 +3839,7 @@ export default function App() {
       return;
     }
     if (!roleId) {
-      setRoleCreateError("Ung�ltiger Rollenname.");
+      setRoleCreateError("Ungültiger Rollenname.");
       return;
     }
     if (!roleCreatePermissions.length) {
@@ -3930,12 +3930,12 @@ export default function App() {
 
       setExpandedRoleIds((prev) => prev.filter((id) => id !== roleDeleteCandidate.id));
       setRolesRefreshTick((prev) => prev + 1);
-      showToast(`Rolle "${roleDeleteCandidate.id}" gel�scht.`, "success");
+      showToast(`Rolle "${roleDeleteCandidate.id}" gelöscht.`, "success");
       setRoleDeleteCandidate(null);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unbekannter Fehler.";
       setRoleDeleteError(message);
-      showToast("Rolle konnte nicht gel�scht werden.", "error");
+      showToast("Rolle konnte nicht gelöscht werden.", "error");
     } finally {
       setRoleDeleteSaving(false);
     }
@@ -3985,7 +3985,7 @@ export default function App() {
       );
       showToast(
         memberRoleDialog.mode === "add"
-          ? `Rolle "${memberRoleTarget}" hinzugef�gt.`
+          ? `Rolle "${memberRoleTarget}" hinzugefügt.`
           : `Rolle "${memberRoleTarget}" entfernt.`,
         "success"
       );
@@ -3994,7 +3994,7 @@ export default function App() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unbekannter Fehler.";
       setMemberRoleError(message);
-      showToast("Rollen�nderung fehlgeschlagen.", "error");
+      showToast("Rollenänderung fehlgeschlagen.", "error");
     } finally {
       setMemberRoleSaving(false);
     }
@@ -4051,7 +4051,7 @@ export default function App() {
       }
 
       showToast(
-        addedViaApi ? "Projekt hinzugef�gt." : "Projekt hinzugef�gt (Fallback).",
+        addedViaApi ? "Projekt hinzugefügt." : "Projekt hinzugefügt (Fallback).",
         "success"
       );
       setMemberProjectDialog(null);
@@ -4059,7 +4059,7 @@ export default function App() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unbekannter Fehler.";
       setMemberProjectError(message);
-      showToast("Projekt konnte nicht hinzugef�gt werden.", "error");
+      showToast("Projekt konnte nicht hinzugefügt werden.", "error");
     } finally {
       setMemberProjectSaving(false);
     }
@@ -4076,7 +4076,7 @@ export default function App() {
       return;
     }
     if (projectSource !== "modrinth" && (!projectLoader || !projectVersion)) {
-      setProjectSaveError("Bitte Loader und Version ausw�hlen.");
+      setProjectSaveError("Bitte Loader und Version auswählen.");
       showToast("Loader und Version fehlen.", "error");
       return;
     }
@@ -4361,7 +4361,7 @@ export default function App() {
       setProjectItems((prev) => prev.filter((project) => project.id !== projectId));
     } catch (error) {
       setProjectDeleteError(
-        error instanceof Error ? error.message : "Projekt konnte nicht gel�scht werden."
+        error instanceof Error ? error.message : "Projekt konnte nicht gelöscht werden."
       );
     }
   };
@@ -4752,7 +4752,7 @@ export default function App() {
                     className="mt-2 flex w-full items-center justify-between rounded-[10px] border border-[rgba(255,255,255,0.10)] bg-[#0F1116] px-3 py-2 text-left text-[12px] text-[rgba(255,255,255,0.8)] transition hover:border-[rgba(255,255,255,0.22)]"
                   >
                     <span>
-                      {rolePermissionPickerOpen ? "Permission-Liste schlie�en" : "Permission-Liste �ffnen"}
+                      {rolePermissionPickerOpen ? "Permission-Liste schließen" : "Permission-Liste öffnen"}
                     </span>
                     <i
                       className={`fa-solid fa-chevron-${rolePermissionPickerOpen ? "up" : "down"} text-[10px] text-[rgba(255,255,255,0.55)]`}
@@ -4773,7 +4773,7 @@ export default function App() {
                           onClick={handleAddCustomRolePermission}
                           className="mt-2 rounded-[8px] border border-[rgba(255,255,255,0.14)] bg-[#171A21] px-3 py-1.5 text-[11px] font-semibold text-[rgba(255,255,255,0.78)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
                         >
-                          "{customRolePermissionCandidate}" hinzuf�gen
+                          "{customRolePermissionCandidate}" hinzufügen
                         </button>
                       )}
                       <div className="mt-3 max-h-[220px] overflow-auto">
@@ -4806,7 +4806,7 @@ export default function App() {
                     </div>
                   )}
                   <p className="mt-2 text-[11px] text-[rgba(255,255,255,0.5)]">
-                    Ausgew�hlt: {roleCreatePermissions.length}
+                    Ausgewählt: {roleCreatePermissions.length}
                   </p>
                 </div>
               </div>
@@ -4867,7 +4867,7 @@ export default function App() {
                   className="mt-2 flex w-full items-center justify-between rounded-[10px] border border-[rgba(255,255,255,0.10)] bg-[#0F1116] px-3 py-2 text-left text-[12px] text-[rgba(255,255,255,0.8)] transition hover:border-[rgba(255,255,255,0.22)]"
                 >
                   <span>
-                    {roleEditPickerOpen ? "Permission-Liste schlie�en" : "Permission-Liste �ffnen"}
+                    {roleEditPickerOpen ? "Permission-Liste schließen" : "Permission-Liste öffnen"}
                   </span>
                   <i
                     className={`fa-solid fa-chevron-${roleEditPickerOpen ? "up" : "down"} text-[10px] text-[rgba(255,255,255,0.55)]`}
@@ -4888,7 +4888,7 @@ export default function App() {
                         onClick={handleAddCustomRoleEditPermission}
                         className="mt-2 rounded-[8px] border border-[rgba(255,255,255,0.14)] bg-[#171A21] px-3 py-1.5 text-[11px] font-semibold text-[rgba(255,255,255,0.78)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
                       >
-                        "{customRoleEditPermissionCandidate}" hinzuf�gen
+                        "{customRoleEditPermissionCandidate}" hinzufügen
                       </button>
                     )}
                     <div className="mt-3 max-h-[220px] overflow-auto">
@@ -4921,7 +4921,7 @@ export default function App() {
                   </div>
                 )}
                 <p className="mt-2 text-[11px] text-[rgba(255,255,255,0.5)]">
-                  Ausgew�hlt: {roleEditPermissions.length}
+                  Ausgewählt: {roleEditPermissions.length}
                 </p>
               </div>
               {roleEditError && (
@@ -4961,7 +4961,7 @@ export default function App() {
                 </div>
                 <div className="min-w-0">
                   <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
-                    Status wirklich �ndern?
+                    Status wirklich ändern?
                   </h3>
                   <p className="mt-2 text-[13px] leading-[20px] text-[rgba(255,255,255,0.65)]">
                     Bewerbung von{" "}
@@ -5021,7 +5021,7 @@ export default function App() {
                       !applicationRejectNotes.trim())
                   }
                 >
-                  {applicationActionLoading ? "Sende..." : "Best�tigen"}
+                  {applicationActionLoading ? "Sende..." : "Bestätigen"}
                 </button>
               </div>
             </div>
@@ -5031,14 +5031,14 @@ export default function App() {
           <div className="fixed inset-0 z-[79] flex items-center justify-center bg-black/70 px-4">
             <div className="w-full max-w-[460px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
               <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
-                Rolle l�schen
+                Rolle löschen
               </h3>
               <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.65)]">
                 Rolle{" "}
                 <span className="font-semibold text-[rgba(255,255,255,0.92)]">
                   {roleDeleteCandidate.id}
                 </span>{" "}
-                wirklich l�schen?
+                wirklich löschen?
               </p>
               {roleDeleteError && (
                 <div className="mt-3 rounded-[10px] border border-[rgba(255,100,100,0.25)] bg-[rgba(255,100,100,0.08)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.8)]">
@@ -5062,7 +5062,7 @@ export default function App() {
                   disabled={roleDeleteSaving}
                   className="rounded-[10px] border border-[#C74646] bg-[#FF5B5B] px-4 py-2 text-[12px] font-semibold text-[#0D0E12] shadow-[0_4px_0_#C74646] transition active:translate-y-[2px] active:shadow-[0_2px_0_#C74646] disabled:opacity-60"
                 >
-                  {roleDeleteSaving ? "L�sche..." : "L�schen"}
+                  {roleDeleteSaving ? "Lösche..." : "Löschen"}
                 </button>
               </div>
             </div>
@@ -5072,7 +5072,7 @@ export default function App() {
           <div className="fixed inset-0 z-[79] flex items-center justify-center bg-black/70 px-4">
             <div className="w-full max-w-[460px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
               <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
-                {memberRoleDialog.mode === "add" ? "Rolle hinzuf�gen" : "Rolle entfernen"}
+                {memberRoleDialog.mode === "add" ? "Rolle hinzufügen" : "Rolle entfernen"}
               </h3>
               <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.65)]">
                 User:{" "}
@@ -5091,7 +5091,7 @@ export default function App() {
                     className="mt-2 w-full rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[#0F1116] px-3 py-2 text-[13px] text-[rgba(255,255,255,0.85)] outline-none focus:border-[#2BFE71]"
                     disabled={memberRoleSaving || memberRoleOptions.length === 0}
                   >
-                    {!memberRoleOptions.length && <option value="">Keine Rollen verf�gbar</option>}
+                    {!memberRoleOptions.length && <option value="">Keine Rollen verfügbar</option>}
                     {memberRoleOptions.map((roleId) => (
                       <option key={roleId} value={roleId}>
                         {roleId}
@@ -5103,7 +5103,7 @@ export default function App() {
                 <p className="mt-4 text-[13px] text-[rgba(255,255,255,0.72)]">
                   Rolle{" "}
                   <span className="font-semibold text-[rgba(255,255,255,0.92)]">
-                    {memberRoleTarget || memberRoleDialog.presetRoleId || "�"}
+                    {memberRoleTarget || memberRoleDialog.presetRoleId || "—"}
                   </span>{" "}
                   wirklich entfernen?
                 </p>
@@ -5130,7 +5130,7 @@ export default function App() {
                   disabled={memberRoleSaving || !memberRoleTarget}
                   className="cta-primary px-4 py-2 text-[12px] disabled:opacity-60"
                 >
-                  {memberRoleSaving ? "Speichere..." : "Best�tigen"}
+                  {memberRoleSaving ? "Speichere..." : "Bestätigen"}
                 </button>
               </div>
             </div>
@@ -5140,7 +5140,7 @@ export default function App() {
           <div className="fixed inset-0 z-[79] flex items-center justify-center bg-black/70 px-4">
             <div className="w-full max-w-[460px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
               <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
-                Projekt hinzuf�gen
+                Projekt hinzufügen
               </h3>
               <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.65)]">
                 User:{" "}
@@ -5158,7 +5158,7 @@ export default function App() {
                   className="mt-2 w-full rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[#0F1116] px-3 py-2 text-[13px] text-[rgba(255,255,255,0.85)] outline-none focus:border-[#2BFE71]"
                   disabled={memberProjectSaving || memberProjectOptions.length === 0}
                 >
-                  {!memberProjectOptions.length && <option value="">Keine Projekte verf�gbar</option>}
+                  {!memberProjectOptions.length && <option value="">Keine Projekte verfügbar</option>}
                   {memberProjectOptions.map((projectOption) => (
                     <option key={projectOption.id} value={projectOption.id}>
                       {projectOption.label}
@@ -5188,7 +5188,7 @@ export default function App() {
                   disabled={memberProjectSaving || !memberProjectTarget}
                   className="cta-primary px-4 py-2 text-[12px] disabled:opacity-60"
                 >
-                  {memberProjectSaving ? "Speichere..." : "Hinzuf�gen"}
+                  {memberProjectSaving ? "Speichere..." : "Hinzufügen"}
                 </button>
               </div>
             </div>
@@ -5228,7 +5228,7 @@ export default function App() {
                   value={banReason}
                   onChange={(event) => setBanReason(event.target.value)}
                   className="w-full rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[#0F1116] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.8)] outline-none focus:border-[#FF5B5B]"
-                  placeholder="Grund f�r den Bann"
+                  placeholder="Grund für den Bann"
                 />
               </div>
               {banError && (
@@ -5398,38 +5398,38 @@ export default function App() {
 
               <div className="mt-4 grid gap-2 sm:grid-cols-2">
                 <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
-                  <span className="text-[rgba(255,255,255,0.5)]">Email:</span> {selectedMemberProfile.email ?? "�"}
+                  <span className="text-[rgba(255,255,255,0.5)]">Email:</span> {selectedMemberProfile.email ?? "—"}
                 </div>
                 <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
-                  <span className="text-[rgba(255,255,255,0.5)]">Minecraft:</span> {selectedMemberProfile.minecraftName ?? "�"}
+                  <span className="text-[rgba(255,255,255,0.5)]">Minecraft:</span> {selectedMemberProfile.minecraftName ?? "—"}
                 </div>
                 <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
-                  <span className="text-[rgba(255,255,255,0.5)]">Age:</span> {selectedMemberProfile.age ?? "�"}
+                  <span className="text-[rgba(255,255,255,0.5)]">Age:</span> {selectedMemberProfile.age ?? "—"}
                 </div>
                 <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
-                  <span className="text-[rgba(255,255,255,0.5)]">Level:</span> {selectedMemberProfile.level ?? "�"}
+                  <span className="text-[rgba(255,255,255,0.5)]">Level:</span> {selectedMemberProfile.level ?? "—"}
                 </div>
                 <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
-                  <span className="text-[rgba(255,255,255,0.5)]">Experience:</span> {selectedMemberProfile.experience ?? "�"}
+                  <span className="text-[rgba(255,255,255,0.5)]">Experience:</span> {selectedMemberProfile.experience ?? "—"}
                 </div>
                 <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
                   <span className="text-[rgba(255,255,255,0.5)]">Roles:</span>{" "}
                   {Array.isArray(selectedMemberProfile.roles) && selectedMemberProfile.roles.length
                     ? selectedMemberProfile.roles.join(", ")
-                    : "�"}
+                    : "—"}
                 </div>
               </div>
 
               <div className="mt-3 rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
                 <span className="text-[rgba(255,255,255,0.5)]">Bio:</span>{" "}
-                {selectedMemberProfile.bio?.trim() || "�"}
+                {selectedMemberProfile.bio?.trim() || "—"}
               </div>
 
               <div className="mt-3 rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
                 <span className="text-[rgba(255,255,255,0.5)]">Interests:</span>{" "}
                 {Array.isArray(selectedMemberProfile.interests) && selectedMemberProfile.interests.length
                   ? selectedMemberProfile.interests.join(", ")
-                  : "�"}
+                  : "—"}
               </div>
 
               <div className="mt-4">
@@ -5462,14 +5462,14 @@ export default function App() {
                   type="button"
                   onClick={() => setShowTeamApplyPopup(false)}
                   className="flex h-8 w-8 items-center justify-center rounded-[8px] border border-[rgba(255,255,255,0.14)] bg-[#171A21] text-[rgba(255,255,255,0.78)] transition hover:border-[rgba(255,255,255,0.28)]"
-                  aria-label="Popup schlie�en"
+                  aria-label="Popup schließen"
                 >
                   <i className="fa-solid fa-xmark" aria-hidden="true" />
                 </button>
               </div>
 
               <p className="mt-4 text-[13px] leading-[20px] text-[rgba(255,255,255,0.72)]">
-                Wir suchen Unterst�tzung f�r Moderation, Entwicklung, Design und mehr.
+                Wir suchen Unterstützung für Moderation, Entwicklung, Design und mehr.
                 Klick auf <span className="font-semibold text-[rgba(255,255,255,0.9)]">Jetzt bewerben</span> und sende deine Bewerbung.
               </p>
 
@@ -5488,7 +5488,7 @@ export default function App() {
                   onClick={() => setShowTeamApplyPopup(false)}
                   className="cta-secondary px-4 py-2 text-[12px]"
                 >
-                  Sp�ter
+                  Später
                 </button>
                 <button
                   type="button"
@@ -5898,7 +5898,7 @@ export default function App() {
                               className={`fa-solid fa-chevron-${showExistingLogos ? "up" : "down"} text-[10px]`}
                               aria-hidden="true"
                             />
-                            Aus Medienbibliothek w�hlen
+                            Aus Medienbibliothek wählen
                           </button>
                           {showExistingLogos && (
                             <>
@@ -5968,7 +5968,7 @@ export default function App() {
                               className={`fa-solid fa-chevron-${showExistingBanners ? "up" : "down"} text-[10px]`}
                               aria-hidden="true"
                             />
-                            Aus Medienbibliothek w�hlen
+                            Aus Medienbibliothek wählen
                           </button>
                           {showExistingBanners && (
                             <>
@@ -6046,7 +6046,7 @@ export default function App() {
                           }
                           className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71]"
                         >
-                          <option value="">Loader ausw�hlen...</option>
+                          <option value="">Loader auswählen...</option>
                           <option value="Fabric">Fabric</option>
                           <option value="Forge">Forge</option>
                           <option value="Vanilla">Vanilla</option>
@@ -6073,7 +6073,7 @@ export default function App() {
                             className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71] disabled:opacity-60"
                           >
                             <option value="">
-                              {mcVersionsLoading ? "Lade Versionen..." : "Version ausw�hlen..."}
+                              {mcVersionsLoading ? "Lade Versionen..." : "Version auswählen..."}
                             </option>
                             {mcVersions.map((version) => (
                               <option key={version} value={version}>
@@ -6084,18 +6084,18 @@ export default function App() {
                         )}
                         {mcVersionsError && (
                           <p className="text-[11px] text-[rgba(255,255,255,0.55)]">
-                            Versionsliste nicht verf�gbar. Gib die Version manuell ein.
+                            Versionsliste nicht verfügbar. Gib die Version manuell ein.
                           </p>
                         )}
                       </div>
                       <div className="space-y-2">
                         <label className="flex items-center gap-2 text-[12px] font-semibold text-[rgba(255,255,255,0.82)]">
                           <i className="fa-solid fa-cloud-arrow-up text-[13px] text-[#2BFE71]" aria-hidden="true" />
-                          Modrinth-Verkn�pfung (optional)
+                          Modrinth-Verknüpfung (optional)
                         </label>
                         <input
                           type="text"
-                          placeholder="Verkn�pfe mit einem Modrinth-Projekt f�r zus�tzliche Infos"
+                          placeholder="Verknüpfe mit einem Modrinth-Projekt für zusätzliche Infos"
                           value={projectModrinthId}
                           onChange={(event) => setProjectModrinthId(event.target.value)}
                           className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71]"
@@ -6305,7 +6305,7 @@ export default function App() {
                     />
                     {newsCoverFile && (
                       <p className="mt-2 text-[11px] text-[rgba(255,255,255,0.55)]">
-                        Datei ausgew�hlt: {newsCoverFile.name}
+                        Datei ausgewählt: {newsCoverFile.name}
                       </p>
                     )}
                   </div>
@@ -6430,10 +6430,10 @@ export default function App() {
           <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/70 px-4">
             <div className="w-full max-w-[460px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
               <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
-                Projekt l�schen?
+                Projekt löschen?
               </h3>
               <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.65)]">
-                {projectDeleteCandidate.title} wird dauerhaft gel�scht.
+                {projectDeleteCandidate.title} wird dauerhaft gelöscht.
               </p>
               <div className="mt-5 flex items-center justify-end gap-3">
                 <button
@@ -6458,10 +6458,10 @@ export default function App() {
           <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/70 px-4">
             <div className="w-full max-w-[460px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
               <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
-                News l�schen?
+                News löschen?
               </h3>
               <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.65)]">
-                {newsDeleteCandidate.title} wird dauerhaft gel�scht.
+                {newsDeleteCandidate.title} wird dauerhaft gelöscht.
               </p>
               {newsDeleteError && (
                 <div className="mt-3 rounded-[10px] border border-[rgba(255,100,100,0.25)] bg-[rgba(255,100,100,0.08)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.8)]">
@@ -6483,7 +6483,7 @@ export default function App() {
                   className="rounded-[10px] border border-[#C74646] bg-[#FF5B5B] px-4 py-2 text-[12px] font-semibold text-[#0D0E12] shadow-[0_4px_0_#C74646] transition active:translate-y-[2px] active:shadow-[0_2px_0_#C74646] disabled:opacity-60"
                   disabled={newsDeleting}
                 >
-                  {newsDeleting ? "L�schen..." : "L�schen"}
+                  {newsDeleting ? "Löschen..." : "Löschen"}
                 </button>
               </div>
             </div>
@@ -6645,7 +6645,7 @@ function renderContent(
             Keine Berechtigung
           </h2>
           <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.60)]">
-            Diese Seite ist f�r dein Profil nicht freigeschaltet.
+            Diese Seite ist für dein Profil nicht freigeschaltet.
           </p>
           <p className="mt-4 text-[12px] text-[rgba(255,255,255,0.55)]">
             Weiterleitung zu Home in{" "}
@@ -6674,7 +6674,7 @@ function renderContent(
           className="text-[28px] font-bold text-[rgba(255,255,255,0.92)]"
           style={{ fontFamily: "Inter, sans-serif" }}
         >
-          Willkommen zur�ck!
+          Willkommen zurück!
         </p>
         <h1 className="mt-[8px] text-[18px] font-semibold text-[#B0BAC5]">
           Meine Projekte
@@ -6853,16 +6853,16 @@ function renderContent(
     }
     return (
       <div className="space-y-8">
-        {/* Header mit Zur�ck-Button */}
+        {/* Header mit Zurück-Button */}
         <div className="flex items-center justify-between">
           <button
             type="button"
             onClick={() => onNavigate("editor")}
             className="cta-secondary flex items-center gap-2 px-4 py-3 text-[14px]"
-            aria-label="Zur�ck"
+            aria-label="Zurück"
           >
             <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
-            Zur�ck
+            Zurück
           </button>
           {permissionFlags.canCreateProject && (
             <button
@@ -7129,7 +7129,7 @@ function renderContent(
             onClick={() => onNavigate("settings")}
             className="rounded-[10px] border border-[rgba(255,255,255,0.12)] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.75)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
           >
-            Zur�ck
+            Zurück
           </button>
         </div>
         <div className="rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] p-4">
@@ -7197,7 +7197,7 @@ function renderContent(
     return (
       <div className="space-y-6">
         <div className="grid gap-8 lg:grid-cols-3">
-          {/* Projekte Button - Gr�n */}
+          {/* Projekte Button - Grün */}
           {canShowProjects && (
             <button
               type="button"
@@ -7321,10 +7321,10 @@ function renderContent(
             type="button"
             onClick={() => onNavigate("editor")}
             className="cta-secondary flex items-center gap-2 px-4 py-3 text-[14px]"
-            aria-label="Zur�ck"
+            aria-label="Zurück"
           >
             <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
-            Zur�ck
+            Zurück
           </button>
           <button
             type="button"
@@ -7385,7 +7385,7 @@ function renderContent(
                             type="button"
                             onClick={() => requestDeleteNews(item)}
                             className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-[rgba(255,91,91,0.18)] text-[#FF8A8A] shadow-[0_0_0_1px_rgba(255,91,91,0.25)] transition hover:bg-[rgba(255,91,91,0.28)] hover:text-[#FF5B5B]"
-                            aria-label="News l�schen"
+                            aria-label="News löschen"
                           >
                             <i className="fa-solid fa-trash" aria-hidden="true" />
                           </button>
@@ -7417,10 +7417,10 @@ function renderContent(
             type="button"
             onClick={() => onNavigate("editor")}
             className="cta-secondary flex items-center gap-2 px-4 py-3 text-[14px]"
-            aria-label="Zur�ck"
+            aria-label="Zurück"
           >
             <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
-            Zur�ck
+            Zurück
           </button>
           {canUploadMedia && (
             <button
@@ -7465,7 +7465,7 @@ function renderContent(
         {canDeleteMedia && selectedMediaIds.length > 0 && (
           <div className="flex items-center justify-between rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#111319] px-4 py-3 animate-[slideDown_0.3s_ease-out]">
             <p className="text-[12px] font-semibold text-[rgba(255,255,255,0.8)] transition-all duration-300">
-              {selectedMediaIds.length} ausgew�hlt
+              {selectedMediaIds.length} ausgewählt
             </p>
             <button
               type="button"
@@ -7473,7 +7473,7 @@ function renderContent(
               className="flex items-center gap-2 rounded-[8px] border border-[rgba(255,255,255,0.14)] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.75)] transition-all duration-300 hover:border-[#FF5B5B] hover:text-[#FF5B5B] hover:bg-[rgba(255,91,91,0.1)]"
             >
               <i className="fa-solid fa-trash-can" aria-hidden="true" />
-              L�schen
+              Löschen
             </button>
           </div>
         )}
@@ -7581,7 +7581,7 @@ function renderContent(
                                     ? "border-[#2BFE71] bg-[#2BFE71] text-[#0D0E12] shadow-[0_0_15px_rgba(43,254,113,0.5)]"
                                     : "border-[rgba(255,255,255,0.35)] bg-black/40 backdrop-blur-sm text-white hover:border-[#2BFE71] hover:bg-[rgba(43,254,113,0.2)]"
                                     }`}
-                                  aria-label="Ausw�hlen"
+                                  aria-label="Auswählen"
                                 >
                                   <i className="fa-solid fa-check" aria-hidden="true" />
                                 </button>
@@ -7589,7 +7589,7 @@ function renderContent(
                                   type="button"
                                   onClick={() => handleDeleteMedia(section.key, item.id!)}
                                   className="flex h-8 w-8 items-center justify-center rounded-[8px] border border-[rgba(255,255,255,0.35)] bg-black/40 backdrop-blur-sm text-[12px] text-white transition-all duration-300 hover:border-[#FF5B5B] hover:text-[#FF5B5B] hover:bg-[rgba(255,91,91,0.2)]"
-                                  aria-label="L�schen"
+                                  aria-label="Löschen"
                                 >
                                   <i className="fa-solid fa-trash-can" aria-hidden="true" />
                                 </button>
@@ -7620,7 +7620,7 @@ function renderContent(
                     {loading && (
                       <i className="fa-solid fa-spinner fa-spin text-[#2BFE71]" aria-hidden="true" />
                     )}
-                    {loading ? "Lade..." : hasMore ? "Weitere verf�gbar" : (
+                    {loading ? "Lade..." : hasMore ? "Weitere verfügbar" : (
                       <span className="flex items-center gap-2">
                         <i className="fa-solid fa-check text-[#2BFE71]" aria-hidden="true" />
                         Alles geladen
@@ -7725,7 +7725,7 @@ function renderContent(
               <button
                 type="button"
                 className="flex h-8 w-8 items-center justify-center rounded-full border border-[rgba(255,255,255,0.08)] text-[rgba(255,255,255,0.75)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
-                aria-label="N�chster Monat"
+                aria-label="Nächster Monat"
               >
                 <i className="fa-solid fa-chevron-right text-[12px]" aria-hidden="true" />
               </button>
@@ -7940,10 +7940,10 @@ function renderContent(
             type="button"
             onClick={() => onNavigate("admin")}
             className="cta-secondary group flex items-center gap-2 px-4 py-3 text-[14px] active:scale-95"
-            aria-label="Zur�ck"
+            aria-label="Zurück"
           >
             <i className="fa-solid fa-arrow-left text-[14px] transition-transform group-hover:-translate-x-1" aria-hidden="true" />
-            Zur�ck
+            Zurück
           </button>
           <div className="flex items-center gap-2 rounded-[10px] border border-[rgba(255,255,255,0.08)] bg-[#101218] px-3 py-1.5">
             <span className="flex h-2 w-2 rounded-full bg-[#2BFE71] animate-pulse" />
@@ -7975,7 +7975,7 @@ function renderContent(
 
           <div className="rounded-[16px] border border-[rgba(255,209,102,0.15)] bg-[linear-gradient(135deg,rgba(255,209,102,0.05),rgba(20,22,26,0.5))] p-5 transition hover:border-[#FFD166] hover:shadow-[0_0_20px_rgba(255,209,102,0.15)]">
             <div className="flex items-center justify-between mb-2">
-              <p className="text-[11px] font-bold uppercase tracking-wider text-[#FFD166]">Pr�fung</p>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-[#FFD166]">Prüfung</p>
               <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[rgba(255,209,102,0.1)] text-[#FFD166]">
                 <i className="fa-solid fa-magnifying-glass text-[12px]" aria-hidden="true" />
               </div>
@@ -8156,7 +8156,7 @@ function renderContent(
                             ? 'bg-[#FFD166] text-[#0D0E12] shadow-[0_0_10px_rgba(255,209,102,0.4)]'
                             : 'bg-[rgba(255,255,255,0.05)] text-[rgba(255,255,255,0.5)] hover:bg-[rgba(255,209,102,0.2)] hover:text-[#FFD166]'
                             }`}
-                          title="Pr�fen"
+                          title="Prüfen"
                         >
                           <i className="fa-solid fa-magnifying-glass text-[12px]" />
                         </button>
@@ -8192,10 +8192,10 @@ function renderContent(
             type="button"
             onClick={() => onNavigate("admin")}
             className="cta-secondary flex items-center gap-2 px-4 py-3 text-[14px]"
-            aria-label="Zur�ck"
+            aria-label="Zurück"
           >
             <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
-            Zur�ck
+            Zurück
           </button>
           <p className="text-[13px] text-[rgba(255,255,255,0.55)]">
             {membersLoading ? "Lade..." : `${members.length} Mitglieder`}
@@ -8287,7 +8287,7 @@ function renderContent(
                         </span>
                       ))
                     ) : (
-                      <span>�</span>
+                      <span>—</span>
                     )}
                     {canManageUserRoles && (
                       <button
@@ -8297,8 +8297,8 @@ function renderContent(
                           onOpenMemberRoleDialog(member, "add");
                         }}
                         className="inline-flex items-center rounded-[8px] border border-[rgba(43,254,113,0.35)] bg-[rgba(43,254,113,0.12)] px-2 py-0.5 text-[10px] font-semibold text-[#2BFE71] transition hover:bg-[rgba(43,254,113,0.22)]"
-                        title="Rolle hinzuf�gen"
-                        aria-label="Rolle hinzuf�gen"
+                        title="Rolle hinzufügen"
+                        aria-label="Rolle hinzufügen"
                       >
                         Add
                       </button>
@@ -8306,9 +8306,9 @@ function renderContent(
                   </div>
                 </div>
                 <div className="text-[11px] text-[rgba(255,255,255,0.6)]">
-                  {member.minecraftName ? `MC: ${member.minecraftName}` : "�"}
-                  {typeof member.level === "number" ? ` � Lvl ${member.level}` : ""}
-                  {member.experience ? ` � ${member.experience}` : ""}
+                  {member.minecraftName ? `MC: ${member.minecraftName}` : "—"}
+                  {typeof member.level === "number" ? ` • Lvl ${member.level}` : ""}
+                  {member.experience ? ` • ${member.experience}` : ""}
                   <div className="mt-1 flex flex-wrap gap-1">
                     {Array.isArray(member.projects) && member.projects.length > 0 ? (
                       <>
@@ -8339,8 +8339,8 @@ function renderContent(
                           onOpenMemberProjectDialog(member);
                         }}
                         className="inline-flex items-center rounded-[8px] border border-[rgba(43,254,113,0.35)] bg-[rgba(43,254,113,0.12)] px-2 py-0.5 text-[10px] font-semibold text-[#2BFE71] transition hover:bg-[rgba(43,254,113,0.22)]"
-                        title="Projekt hinzuf�gen"
-                        aria-label="Projekt hinzuf�gen"
+                        title="Projekt hinzufügen"
+                        aria-label="Projekt hinzufügen"
                       >
                         + Projekt
                       </button>
@@ -8407,10 +8407,10 @@ function renderContent(
             type="button"
             onClick={() => onNavigate("admin")}
             className="cta-secondary flex items-center gap-2 px-4 py-3 text-[14px]"
-            aria-label="Zur�ck"
+            aria-label="Zurück"
           >
             <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
-            Zur�ck
+            Zurück
           </button>
           <div className="flex items-center gap-3">
             <button
@@ -8478,8 +8478,8 @@ function renderContent(
                       onOpenRoleDelete(role);
                     }}
                     className="mr-1 flex h-8 w-8 items-center justify-center rounded-[6px] bg-[rgba(255,91,91,0.18)] text-[#FF8A8A] shadow-[0_0_0_1px_rgba(255,91,91,0.25)] transition hover:bg-[rgba(255,91,91,0.28)] hover:text-[#FF5B5B]"
-                    title="Rolle l�schen"
-                    aria-label={`Rolle ${role.id} l�schen`}
+                    title="Rolle löschen"
+                    aria-label={`Rolle ${role.id} löschen`}
                   >
                     <i className="fa-solid fa-trash" aria-hidden="true" />
                   </button>
