@@ -18,7 +18,7 @@
 ## 1) Version erhöhen
 In `src-tauri/tauri.conf.json`:
 ```json
-"version": "0.1.4"
+"version": "0.1.5"
 ```
 
 ---
@@ -26,7 +26,7 @@ In `src-tauri/tauri.conf.json`:
 ## 2) Commit + Push
 ```bash
 git add .
-git commit -m "release: v0.1.4"
+git commit -m "release: v0.1.5"
 git push
 ```
 
