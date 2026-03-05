@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import type { SocialLinks as SocialLinksType } from '../types';
+import { openExternalUrl } from '../../../shared/utils/external';
 
 interface SocialLinksProps {
   socialLinks: SocialLinksType;
@@ -122,13 +123,20 @@ export const SocialLinks: React.FC<SocialLinksProps> = ({
             if (!link) return null;
 
             const isUrl = link.startsWith('http://') || link.startsWith('https://');
+            const href = isUrl ? link : `https://${link}`;
 
             return (
               <a
                 key={platform.key}
-                href={isUrl ? link : `https://${link}`}
+                href={href}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={(event) => {
+                  event.preventDefault();
+                  void openExternalUrl(href).catch(() => {
+                    console.error(`Failed to open ${platform.name} link`);
+                  });
+                }}
                 className="flex items-center gap-3 p-3 bg-surface-2/60 border border-border rounded-xl hover:border-accent/30 hover:-translate-y-0.5 transition-all group"
               >
                 <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${platform.color} group-hover:scale-110 transition-transform`}>

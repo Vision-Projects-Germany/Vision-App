@@ -5,7 +5,7 @@
   toastEnabled: boolean;
 }
 
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openExternalUrl } from "../../shared/utils/external";
 
 interface SettingsPageProps {
   settings: AppSettings;
@@ -85,8 +85,8 @@ export function SettingsPage({
 
   const openChangelog = () => {
     const url = "https://github.com/Vision-Projects-Germany/Vision-App/releases";
-    openUrl(url).catch(() => {
-      window.open(url, "_blank", "noopener,noreferrer");
+    void openExternalUrl(url).catch(() => {
+      console.error("Failed to open changelog URL");
     });
   };
 

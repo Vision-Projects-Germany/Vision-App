@@ -1,8 +1,7 @@
 ﻿import { useEffect, useState, type DragEvent } from "react";
 import { useMemo, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { invoke, isTauri } from "@tauri-apps/api/core";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { invoke } from "@tauri-apps/api/core";
 import { check as checkUpdate } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
@@ -16,6 +15,7 @@ import { LoginView } from "./components/LoginView";
 import { auth, db } from "./firebase";
 import { ProfilePage } from "./features/profile/ProfilePage";
 import { SettingsPage } from "./features/settings/SettingsPage";
+import { isRunningInTauri, openExternalUrl } from "./shared/utils/external";
 import clippyImage from "./assets/clippy/Clippy.png";
 
 interface NewsItem {
@@ -217,6 +217,9 @@ const MIN_MC_VERSION = "1.20";
 const TEAM_APPLICATION_URL =
   (import.meta.env.VITE_TEAM_APPLICATION_URL as string | undefined) ??
   "https://vision-projects.eu/apply";
+const PROJECT_ACCESS_API_BASE_URL = "http://vision-projects.eu:3000";
+const PROJECT_ACCESS_API_TOKEN =
+  "e904d01ff3e93267939908d20564e5e92e5e59f6dbf65f7ba798d9a02fcd8cc5";
 const APP_SETTINGS_KEY = "vision.desktop.settings.v1";
 const SHOW_CALENDAR_UI = false;
 
@@ -501,15 +504,6 @@ const isPageAllowed = (pageId: string, flags: PermissionFlags) => {
   }
 };
 
-let tauriDetection: Promise<boolean> | null = null;
-
-async function isRunningInTauri() {
-  if (!tauriDetection) {
-    tauriDetection = Promise.resolve(isTauri());
-  }
-  return tauriDetection;
-}
-
 function createAbortError() {
   const error = new Error("AbortError");
   (error as Error & { name: string }).name = "AbortError";
@@ -595,19 +589,7 @@ async function requestJson<T>(
 }
 
 function getContributorIds() {
-  const raw = (import.meta.env.VITE_PROJECT_CONTRIBUTORS_ID as string | undefined) ?? "";
-  const parsed = raw
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-
-  // Fallback to Vision Projects organization members (Modrinth user IDs) if env is not set.
-  // This keeps Explore working in production builds where .env values might be missing.
-  if (!parsed.length) {
-    return ["1VC27ZvS", "G5M35WYk", "WuT9u35Z"];
-  }
-
-  return parsed;
+  return ["1VC27ZvS", "G5M35WYk", "WuT9u35Z"];
 }
 
 function isPage(route: string) {
@@ -803,9 +785,20 @@ function mapApplicationStatus(value: unknown): ApplicationStatus {
 }
 
 function mapApplicationItems(items: unknown[]): ApplicationItem[] {
+  const statusOrder: Record<ApplicationStatus, number> = {
+    new: 0,
+    reviewing: 1,
+    accepted: 2,
+    rejected: 3
+  };
+
   return items
     .map((item) => {
       const raw = item as Record<string, unknown>;
+      const application =
+        raw.application && typeof raw.application === "object"
+          ? (raw.application as Record<string, unknown>)
+          : null;
       const id =
         typeof raw.id === "string"
           ? raw.id
@@ -827,8 +820,12 @@ function mapApplicationItems(items: unknown[]): ApplicationItem[] {
                 ? raw.submittedBy
               : "Unknown";
       const roleRaw =
-        typeof raw.role === "string"
-          ? raw.role
+        typeof application?.role === "string"
+          ? application.role
+          : typeof application?.customRole === "string"
+            ? application.customRole
+          : typeof raw.role === "string"
+            ? raw.role
           : typeof raw.type === "string"
             ? raw.type
             : typeof raw.position === "string"
@@ -838,17 +835,21 @@ function mapApplicationItems(items: unknown[]): ApplicationItem[] {
         ? roleRaw.charAt(0).toUpperCase() + roleRaw.slice(1)
         : "—";
       const experience =
-        typeof raw.experience === "string"
-          ? raw.experience
+        typeof application?.experience === "string"
+          ? application.experience
+          : typeof application?.motivation === "string"
+            ? application.motivation
+          : typeof raw.experience === "string"
+            ? raw.experience
           : typeof raw.description === "string"
             ? raw.description
             : typeof raw.notes === "string"
               ? raw.notes
-          : typeof raw.message === "string"
-            ? raw.message
-            : typeof raw.text === "string"
-              ? raw.text
-              : "";
+              : typeof raw.message === "string"
+                ? raw.message
+                : typeof raw.text === "string"
+                  ? raw.text
+                  : "";
       const createdAt =
         typeof raw.createdAt === "string"
           ? raw.createdAt
@@ -876,7 +877,15 @@ function mapApplicationItems(items: unknown[]): ApplicationItem[] {
         apiApplicationStatus
       } as ApplicationItem;
     })
-    .filter((application) => Boolean(application.id));
+    .filter((application) => Boolean(application.id))
+    .sort((a, b) => {
+      const orderDifference = statusOrder[a.status] - statusOrder[b.status];
+      if (orderDifference !== 0) {
+        return orderDifference;
+      }
+
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
 }
 
 function looksLikeUuid(value: string) {
@@ -1120,11 +1129,7 @@ async function openModrinth(url: string | null) {
   }
 
   try {
-    if (await isRunningInTauri()) {
-      await openUrl(url);
-    } else {
-      window.open(url, "_blank", "noopener,noreferrer");
-    }
+    await openExternalUrl(url);
   } catch (error) {
     console.error("Failed to open Modrinth URL", error);
   }
@@ -1682,10 +1687,6 @@ export default function App() {
     if (status !== "rejected") {
       setApplicationRejectNotes("");
     }
-    if (status === "reviewing") {
-      setApplicationStatus(id, status);
-      return;
-    }
     setPendingApplicationAction({ id, username, status });
   };
   const confirmApplicationStatusChange = async () => {
@@ -1706,18 +1707,45 @@ export default function App() {
       setApplicationActionError(null);
       const token = await getApiToken();
       const id = encodeURIComponent(pendingApplicationAction.id);
+      let result:
+        | {
+          success?: boolean;
+          error?: string;
+        }
+        | null = null;
       if (pendingApplicationAction.status === "accepted") {
-        await requestText(
+        result = await requestJson<{
+          success?: boolean;
+          error?: string;
+        }>(
           `https://api.vision-projects.eu/api/applications/${id}/approve`,
           {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${token}`
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json"
+            }
+          }
+        );
+      } else if (pendingApplicationAction.status === "reviewing") {
+        result = await requestJson<{
+          success?: boolean;
+          error?: string;
+        }>(
+          `https://api.vision-projects.eu/api/applications/${id}/reopen`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json"
             }
           }
         );
       } else if (pendingApplicationAction.status === "rejected") {
-        await requestText(
+        result = await requestJson<{
+          success?: boolean;
+          error?: string;
+        }>(
           `https://api.vision-projects.eu/api/applications/${id}/reject`,
           {
             method: "POST",
@@ -1728,6 +1756,10 @@ export default function App() {
             body: JSON.stringify({ notes: applicationRejectNotes.trim() })
           }
         );
+      }
+
+      if (result && result.success === false) {
+        throw new Error(result.error || "Bewerbungsaktion wurde vom Server abgelehnt.");
       }
 
       setApplicationStatus(pendingApplicationAction.id, pendingApplicationAction.status);
@@ -4009,30 +4041,9 @@ export default function App() {
     try {
       const targetUid = memberProjectDialog.member.uid;
       const projectId = memberProjectTarget;
-      const token = await getApiToken();
-
-      let addedViaApi = false;
-      try {
-        await requestJson<unknown>(
-          `https://api.vision-projects.eu/api/admin/users/${encodeURIComponent(targetUid)}/projects/add`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${token}`,
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-              projects: [projectId]
-            })
-          }
-        );
-        addedViaApi = true;
-      } catch {
-        // Fallback for setups where the admin project endpoint is not available yet.
-        await updateDoc(doc(db, "users", targetUid), {
-          projects: arrayUnion(projectId)
-        });
-      }
+      await updateDoc(doc(db, "users", targetUid), {
+        projects: arrayUnion(projectId)
+      });
 
       setMembers((prev) =>
         prev.map((member) => {
@@ -4050,10 +4061,7 @@ export default function App() {
         setUserProjectIds((prev) => (prev.includes(projectId) ? prev : [...prev, projectId]));
       }
 
-      showToast(
-        addedViaApi ? "Projekt hinzugefügt." : "Projekt hinzugefügt (Fallback).",
-        "success"
-      );
+      showToast("Projekt hinzugefügt.", "success");
       setMemberProjectDialog(null);
       setMemberProjectTarget("");
     } catch (error) {
@@ -4379,29 +4387,68 @@ export default function App() {
     await handleDeleteProject(id);
   };
 
+  const getProjectAccessIdentity = async () => {
+    if (!user) {
+      throw new Error("Bitte zuerst anmelden.");
+    }
+
+    let record = userProfileData;
+
+    if (!record) {
+      showToast("Lade Firestore-Profil für Projektzugriff...", "success");
+      const snapshot = await getDoc(doc(db, "users", user.uid));
+      record = snapshot.exists() ? (snapshot.data() as Record<string, unknown>) : null;
+      setUserProfileData(record);
+      showToast(snapshot.exists() ? "Firestore-Profil geladen." : "Kein Firestore-Profil gefunden.", snapshot.exists() ? "success" : "error");
+    } else {
+      showToast("Firestore-Profil bereits im Cache gefunden.", "success");
+    }
+
+    const mcName =
+      record && typeof record.minecraftName === "string" ? record.minecraftName.trim() : "";
+    const discordUserId =
+      record && typeof record.discordId === "string" ? record.discordId.trim() : "";
+
+    showToast(
+      `minecraftName: ${mcName || "fehlt"} | discordId: ${discordUserId || "fehlt"}`,
+      mcName && discordUserId ? "success" : "error"
+    );
+
+    if (!mcName) {
+      throw new Error("`minecraftName` fehlt im Firestore-Profil.");
+    }
+
+    if (!discordUserId) {
+      throw new Error("`discordId` fehlt im Firestore-Profil.");
+    }
+
+    return { mcName, discordUserId };
+  };
+
   const handleJoinProject = async (project: ProjectItem) => {
     if (!user) {
       showToast("Bitte zuerst anmelden.", "error");
       return;
     }
-    const membershipKeys = getProjectMembershipKeys(project);
-    const projectId = project.id;
 
     try {
-      const token = await getApiToken();
+      const identity = await getProjectAccessIdentity();
+      showToast(
+        `Sende Join an API mit mcName=${identity.mcName} und discordId=${identity.discordUserId}`,
+        "success"
+      );
       await requestText(
-        "https://api.vision-projects.eu/api/projects/join",
+        `${PROJECT_ACCESS_API_BASE_URL}/join`,
         {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${token}`,
+            Authorization: `Bearer ${PROJECT_ACCESS_API_TOKEN}`,
             "Content-Type": "application/json"
           },
-          body: JSON.stringify({ projectId })
+          body: JSON.stringify(identity)
         }
       );
-
-      setUserProjectIds((prev) => Array.from(new Set([...prev, ...membershipKeys])));
+      showToast(`Join-Anfrage für "${project.title}" gesendet.`, "success");
     } catch (error) {
       showToast(formatToastError(error) || "Projektbeitritt fehlgeschlagen.", "error");
       return;
@@ -4412,24 +4459,25 @@ export default function App() {
     if (!user) {
       return;
     }
-    const membershipKeys = getProjectMembershipKeys(project);
-    const projectId = project.id;
 
     try {
-      const token = await getApiToken();
+      const identity = await getProjectAccessIdentity();
+      showToast(
+        `Sende Leave an API mit mcName=${identity.mcName} und discordId=${identity.discordUserId}`,
+        "success"
+      );
       await requestText(
-        "https://api.vision-projects.eu/api/projects/leave",
+        `${PROJECT_ACCESS_API_BASE_URL}/leave`,
         {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${token}`,
+            Authorization: `Bearer ${PROJECT_ACCESS_API_TOKEN}`,
             "Content-Type": "application/json"
           },
-          body: JSON.stringify({ projectId })
+          body: JSON.stringify(identity)
         }
       );
-
-      setUserProjectIds((prev) => prev.filter((id) => !membershipKeys.includes(id)));
+      showToast(`Leave-Anfrage für "${project.title}" gesendet.`, "success");
     } catch (error) {
       showToast(formatToastError(error) || "Projekt verlassen fehlgeschlagen.", "error");
       return;
@@ -4477,7 +4525,7 @@ export default function App() {
                 onChangeEmail={setLoginEmail}
                 onChangePassword={setLoginPassword}
                 onSubmit={() => void handleEmailPasswordLogin()}
-                onRegister={() => void openUrl("https://vision-projects.eu/accounting/register")}
+                onRegister={() => void openExternalUrl("https://vision-projects.eu/accounting/register")}
               />
             </div>
           </div>
@@ -4691,8 +4739,8 @@ export default function App() {
                 type="button"
                 onClick={() => {
                   const url = TEAM_APPLICATION_URL;
-                  openUrl(url).catch(() => {
-                    window.open(url, "_blank", "noopener,noreferrer");
+                  void openExternalUrl(url).catch(() => {
+                    console.error("Failed to open team application URL");
                   });
                 }}
                 className="cta-primary mt-4 w-full justify-center px-4 py-3 text-[13px]"
@@ -5493,8 +5541,8 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => {
-                    openUrl(TEAM_APPLICATION_URL).catch(() => {
-                      window.open(TEAM_APPLICATION_URL, "_blank", "noopener,noreferrer");
+                    void openExternalUrl(TEAM_APPLICATION_URL).catch(() => {
+                      console.error("Failed to open team application URL");
                     });
                     setShowTeamApplyPopup(false);
                   }}
@@ -8036,6 +8084,28 @@ function renderContent(
                 month: "2-digit",
                 year: "numeric"
               });
+              const cardBorderClass =
+                item.status === "accepted"
+                  ? "border-[rgba(43,254,113,0.55)] shadow-[0_0_0_1px_rgba(43,254,113,0.18),0_16px_36px_rgba(16,36,24,0.42)]"
+                  : item.status === "rejected"
+                    ? "border-[rgba(255,107,107,0.55)] shadow-[0_0_0_1px_rgba(255,107,107,0.18),0_16px_36px_rgba(36,18,18,0.42)]"
+                    : "border-[rgba(255,255,255,0.08)] shadow-lg";
+              const statusBadgeClass =
+                item.status === "new"
+                  ? "border-[rgba(43,254,113,0.35)] bg-[rgba(43,254,113,0.12)] text-[#2BFE71]"
+                  : item.status === "reviewing"
+                    ? "border-[rgba(255,209,102,0.35)] bg-[rgba(255,209,102,0.12)] text-[#FFD166]"
+                    : item.status === "accepted"
+                      ? "border-[rgba(43,254,113,0.35)] bg-[rgba(43,254,113,0.12)] text-[#2BFE71]"
+                      : "border-[rgba(255,107,107,0.35)] bg-[rgba(255,107,107,0.12)] text-[#FF6B6B]";
+              const statusBadgeLabel =
+                item.status === "new"
+                  ? "Neu"
+                  : item.status === "reviewing"
+                    ? "In Prüfung"
+                    : item.status === "accepted"
+                      ? "Angenommen"
+                      : "Abgelehnt";
 
               // Find linked member for avatar
               const linkedMember = members.find(m =>
@@ -8052,9 +8122,9 @@ function renderContent(
                     aria-hidden="true"
                     className="rainbow-draw pointer-events-none absolute inset-0 rounded-[20px] blur-[2px] opacity-0 transition-opacity duration-500 group-hover:opacity-100"
                   />
-                  <div className="relative z-10 flex h-full w-full flex-col rounded-[17px] bg-[#14161A] border border-[rgba(255,255,255,0.08)] p-5 shadow-lg">
+                  <div className={`relative z-10 flex h-full w-full flex-col rounded-[17px] bg-[#14161A] border p-5 ${cardBorderClass}`}>
                     {/* Header */}
-                    <div className="flex items-start gap-3">
+                    <div className="flex items-start justify-between gap-3">
                       <div className="flex min-w-0 items-center gap-3">
                         <div className="relative">
                           {avatarUrl ? (
@@ -8084,6 +8154,11 @@ function renderContent(
                           </p>
                         </div>
                       </div>
+                      <span
+                        className={`inline-flex shrink-0 items-center rounded-[999px] border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${statusBadgeClass}`}
+                      >
+                        {statusBadgeLabel}
+                      </span>
                     </div>
 
                     {/* Content */}
@@ -8093,9 +8168,6 @@ function renderContent(
                       </p>
                       <p className="text-[13px] leading-relaxed text-[rgba(255,255,255,0.75)] line-clamp-3">
                         {item.experience}
-                      </p>
-                      <p className="mt-2 text-[11px] text-[rgba(255,255,255,0.45)]">
-                        Application: {item.apiApplicationStatus}
                       </p>
                     </div>
 
