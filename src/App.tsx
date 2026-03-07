@@ -7,7 +7,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faChevronRight } from "@fortawesome/free-solid-svg-icons";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut, type User } from "firebase/auth";
-import { arrayUnion, collection, doc, getDoc, getDocs, updateDoc } from "firebase/firestore";
+import { arrayRemove, arrayUnion, collection, doc, getDoc, getDocs, updateDoc } from "firebase/firestore";
 import { AppShell } from "./components/AppShell";
 import { MainCard } from "./components/MainCard";
 import { SideIcons } from "./components/SideIcons";
@@ -178,6 +178,11 @@ type MemberProjectDialogState = {
   member: MemberProfile;
 };
 
+type MemberProjectRemoveDialogState = {
+  member: MemberProfile;
+  projectId: string;
+};
+
 type AppSettings = {
   discordPresenceEnabled: boolean;
   autoRefreshEnabled: boolean;
@@ -217,9 +222,6 @@ const MIN_MC_VERSION = "1.20";
 const TEAM_APPLICATION_URL =
   (import.meta.env.VITE_TEAM_APPLICATION_URL as string | undefined) ??
   "https://vision-projects.eu/apply";
-const PROJECT_ACCESS_API_BASE_URL = "http://vision-projects.eu:3000";
-const PROJECT_ACCESS_API_TOKEN =
-  "e904d01ff3e93267939908d20564e5e92e5e59f6dbf65f7ba798d9a02fcd8cc5";
 const APP_SETTINGS_KEY = "vision.desktop.settings.v1";
 const SHOW_CALENDAR_UI = false;
 
@@ -1371,6 +1373,10 @@ export default function App() {
   const [memberProjectTarget, setMemberProjectTarget] = useState("");
   const [memberProjectSaving, setMemberProjectSaving] = useState(false);
   const [memberProjectError, setMemberProjectError] = useState<string | null>(null);
+  const [memberProjectRemoveDialog, setMemberProjectRemoveDialog] =
+    useState<MemberProjectRemoveDialogState | null>(null);
+  const [memberProjectRemoving, setMemberProjectRemoving] = useState(false);
+  const [memberProjectRemoveError, setMemberProjectRemoveError] = useState<string | null>(null);
   const [banCandidate, setBanCandidate] = useState<MemberProfile | null>(null);
   const [banReason, setBanReason] = useState("Spamming");
   const [banProgress, setBanProgress] = useState(0);
@@ -1649,6 +1655,17 @@ export default function App() {
     setMemberProjectDialog(null);
     setMemberProjectError(null);
   };
+  const handleOpenMemberProjectRemoveDialog = (member: MemberProfile, projectId: string) => {
+    setMemberProjectRemoveDialog({ member, projectId });
+    setMemberProjectRemoveError(null);
+  };
+  const handleCloseMemberProjectRemoveDialog = () => {
+    if (memberProjectRemoving) {
+      return;
+    }
+    setMemberProjectRemoveDialog(null);
+    setMemberProjectRemoveError(null);
+  };
   const handleCloseRoleDelete = () => {
     if (roleDeleteSaving) {
       return;
@@ -1807,20 +1824,32 @@ export default function App() {
   const [projectParticipants, setProjectParticipants] = useState<MemberProfile[]>([]);
   const [participantsLoading, setParticipantsLoading] = useState(false);
   const [participantsError, setParticipantsError] = useState<string | null>(null);
+  const [projectMembershipPending, setProjectMembershipPending] = useState<{
+    projectId: string;
+    action: "join" | "leave";
+  } | null>(null);
   const isSelectedProjectEnded =
     selectedProject?.activityStatus === "Ended";
   const isSelectedProjectJoined = isUserInProject(selectedProject, userProjectIds);
+  const isSelectedProjectJoinPending =
+    projectMembershipPending?.projectId === selectedProject?.id &&
+    projectMembershipPending?.action === "join";
+  const isSelectedProjectLeavePending =
+    projectMembershipPending?.projectId === selectedProject?.id &&
+    projectMembershipPending?.action === "leave";
   const canJoinSelectedProject = Boolean(
     user &&
     selectedProject &&
     !isSelectedProjectJoined &&
-    !isSelectedProjectEnded
+    !isSelectedProjectEnded &&
+    !projectMembershipPending
   );
   const canLeaveSelectedProject = Boolean(
     user &&
     selectedProject &&
     isSelectedProjectJoined &&
-    !isSelectedProjectEnded
+    !isSelectedProjectEnded &&
+    !projectMembershipPending
   );
 
   const handleMediaDrop = (event: DragEvent<HTMLLabelElement>) => {
@@ -4386,43 +4415,41 @@ export default function App() {
     setProjectDeleteCandidate(null);
     await handleDeleteProject(id);
   };
-
-  const getProjectAccessIdentity = async () => {
-    if (!user) {
-      throw new Error("Bitte zuerst anmelden.");
+  const handleSubmitMemberProjectRemove = async () => {
+    if (!user || !memberProjectRemoveDialog) {
+      return;
     }
+    setMemberProjectRemoving(true);
+    setMemberProjectRemoveError(null);
+    try {
+      const targetUid = memberProjectRemoveDialog.member.uid;
+      const projectId = memberProjectRemoveDialog.projectId;
+      await updateDoc(doc(db, "users", targetUid), {
+        projects: arrayRemove(projectId)
+      });
 
-    let record = userProfileData;
+      setMembers((prev) =>
+        prev.map((member) => {
+          if (member.uid !== targetUid) {
+            return member;
+          }
+          const currentProjects = Array.isArray(member.projects) ? member.projects : [];
+          return { ...member, projects: currentProjects.filter((id) => id !== projectId) };
+        })
+      );
+      if (user.uid === targetUid) {
+        setUserProjectIds((prev) => prev.filter((id) => id !== projectId));
+      }
 
-    if (!record) {
-      showToast("Lade Firestore-Profil für Projektzugriff...", "success");
-      const snapshot = await getDoc(doc(db, "users", user.uid));
-      record = snapshot.exists() ? (snapshot.data() as Record<string, unknown>) : null;
-      setUserProfileData(record);
-      showToast(snapshot.exists() ? "Firestore-Profil geladen." : "Kein Firestore-Profil gefunden.", snapshot.exists() ? "success" : "error");
-    } else {
-      showToast("Firestore-Profil bereits im Cache gefunden.", "success");
+      showToast("Projekt entfernt.", "success");
+      setMemberProjectRemoveDialog(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unbekannter Fehler.";
+      setMemberProjectRemoveError(message);
+      showToast("Projekt konnte nicht entfernt werden.", "error");
+    } finally {
+      setMemberProjectRemoving(false);
     }
-
-    const mcName =
-      record && typeof record.minecraftName === "string" ? record.minecraftName.trim() : "";
-    const discordUserId =
-      record && typeof record.discordId === "string" ? record.discordId.trim() : "";
-
-    showToast(
-      `minecraftName: ${mcName || "fehlt"} | discordId: ${discordUserId || "fehlt"}`,
-      mcName && discordUserId ? "success" : "error"
-    );
-
-    if (!mcName) {
-      throw new Error("`minecraftName` fehlt im Firestore-Profil.");
-    }
-
-    if (!discordUserId) {
-      throw new Error("`discordId` fehlt im Firestore-Profil.");
-    }
-
-    return { mcName, discordUserId };
   };
 
   const handleJoinProject = async (project: ProjectItem) => {
@@ -4432,26 +4459,43 @@ export default function App() {
     }
 
     try {
-      const identity = await getProjectAccessIdentity();
-      showToast(
-        `Sende Join an API mit mcName=${identity.mcName} und discordId=${identity.discordUserId}`,
-        "success"
-      );
-      await requestText(
-        `${PROJECT_ACCESS_API_BASE_URL}/join`,
+      setProjectMembershipPending({ projectId: project.id, action: "join" });
+      const token = await getApiToken();
+      await requestJson<unknown>(
+        "https://api.vision-projects.eu/api/projects/join",
         {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${PROJECT_ACCESS_API_TOKEN}`,
+            Authorization: `Bearer ${token}`,
             "Content-Type": "application/json"
           },
-          body: JSON.stringify(identity)
+          body: JSON.stringify({
+            projectId: project.id
+          })
         }
       );
-      showToast(`Join-Anfrage für "${project.title}" gesendet.`, "success");
+      setUserProjectIds((prev) => (prev.includes(project.id) ? prev : [...prev, project.id]));
+      setUserProfileData((prev) => {
+        if (!prev) {
+          return prev;
+        }
+        const currentProjects = normalizeProjectIds(prev.projects);
+        if (currentProjects.includes(project.id)) {
+          return prev;
+        }
+        return {
+          ...prev,
+          projects: [...currentProjects, project.id]
+        };
+      });
+      showToast(`Du bist "${project.title}" beigetreten.`, "success");
     } catch (error) {
       showToast(formatToastError(error) || "Projektbeitritt fehlgeschlagen.", "error");
       return;
+    } finally {
+      setProjectMembershipPending((current) =>
+        current?.projectId === project.id && current.action === "join" ? null : current
+      );
     }
   };
 
@@ -4461,26 +4505,40 @@ export default function App() {
     }
 
     try {
-      const identity = await getProjectAccessIdentity();
-      showToast(
-        `Sende Leave an API mit mcName=${identity.mcName} und discordId=${identity.discordUserId}`,
-        "success"
-      );
-      await requestText(
-        `${PROJECT_ACCESS_API_BASE_URL}/leave`,
+      setProjectMembershipPending({ projectId: project.id, action: "leave" });
+      const token = await getApiToken();
+      await requestJson<unknown>(
+        "https://api.vision-projects.eu/api/projects/leave",
         {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${PROJECT_ACCESS_API_TOKEN}`,
+            Authorization: `Bearer ${token}`,
             "Content-Type": "application/json"
           },
-          body: JSON.stringify(identity)
+          body: JSON.stringify({
+            projectId: project.id
+          })
         }
       );
-      showToast(`Leave-Anfrage für "${project.title}" gesendet.`, "success");
+      setUserProjectIds((prev) => prev.filter((id) => id !== project.id));
+      setUserProfileData((prev) => {
+        if (!prev) {
+          return prev;
+        }
+        const currentProjects = normalizeProjectIds(prev.projects);
+        return {
+          ...prev,
+          projects: currentProjects.filter((id) => id !== project.id)
+        };
+      });
+      showToast(`Du hast "${project.title}" verlassen.`, "success");
     } catch (error) {
       showToast(formatToastError(error) || "Projekt verlassen fehlgeschlagen.", "error");
       return;
+    } finally {
+      setProjectMembershipPending((current) =>
+        current?.projectId === project.id && current.action === "leave" ? null : current
+      );
     }
   };
 
@@ -4639,6 +4697,7 @@ export default function App() {
                     handleOpenRoleDelete,
                     handleOpenMemberRoleDialog,
                     handleOpenMemberProjectDialog,
+                    handleOpenMemberProjectRemoveDialog,
                     openBanDialog,
                     openWarnDialog,
                     handleAuthzTest,
@@ -5242,6 +5301,53 @@ export default function App() {
             </div>
           </div>
         )}
+        {memberProjectRemoveDialog && (
+          <div className="fixed inset-0 z-[79] flex items-center justify-center bg-black/70 px-4">
+            <div className="w-full max-w-[460px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
+              <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
+                Projekt entfernen
+              </h3>
+              <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.65)]">
+                User:{" "}
+                <span className="font-semibold text-[rgba(255,255,255,0.9)]">
+                  {memberProjectRemoveDialog.member.username ?? memberProjectRemoveDialog.member.uid}
+                </span>
+              </p>
+              <p className="mt-1 text-[12px] text-[rgba(255,255,255,0.58)]">
+                Projekt:{" "}
+                <span className="font-semibold text-[rgba(255,255,255,0.85)]">
+                  {projectItems.find((project) => project.id === memberProjectRemoveDialog.projectId)?.title ??
+                    memberProjectRemoveDialog.projectId}
+                </span>
+              </p>
+              {memberProjectRemoveError && (
+                <div className="mt-3 rounded-[10px] border border-[rgba(255,100,100,0.25)] bg-[rgba(255,100,100,0.08)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.8)]">
+                  {memberProjectRemoveError}
+                </div>
+              )}
+              <div className="mt-5 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={handleCloseMemberProjectRemoveDialog}
+                  disabled={memberProjectRemoving}
+                  className="cta-secondary px-4 py-2 text-[12px]"
+                >
+                  Abbrechen
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleSubmitMemberProjectRemove();
+                  }}
+                  disabled={memberProjectRemoving}
+                  className="inline-flex items-center rounded-[10px] border border-[rgba(255,107,107,0.35)] bg-[rgba(255,107,107,0.12)] px-4 py-2 text-[12px] font-semibold text-[#FF8A8A] transition hover:bg-[rgba(255,107,107,0.2)] disabled:opacity-60"
+                >
+                  {memberProjectRemoving ? "Entferne..." : "Entfernen"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {banCandidate && (
           <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 px-4">
             <div className="w-full max-w-[460px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
@@ -5675,18 +5781,46 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => handleJoinProject(selectedProject)}
-                        className="rounded-[10px] bg-[#2BFE71] px-4 py-2 text-[13px] font-semibold text-[#0D0E12] transition hover:brightness-95"
+                        disabled={isSelectedProjectJoinPending}
+                        className="inline-flex min-w-[122px] items-center justify-center gap-2 rounded-[10px] bg-[#2BFE71] px-4 py-2 text-[13px] font-semibold text-[#0D0E12] transition hover:brightness-95 disabled:cursor-default disabled:opacity-80"
                       >
-                        Beitreten
+                        {isSelectedProjectJoinPending && (
+                          <i className="fa-solid fa-spinner animate-spin text-[12px]" aria-hidden="true" />
+                        )}
+                        {isSelectedProjectJoinPending ? "Trete bei..." : "Beitreten"}
+                      </button>
+                    )}
+                    {!canJoinSelectedProject && isSelectedProjectJoinPending && (
+                      <button
+                        type="button"
+                        disabled
+                        className="inline-flex min-w-[122px] items-center justify-center gap-2 rounded-[10px] bg-[#2BFE71] px-4 py-2 text-[13px] font-semibold text-[#0D0E12] opacity-80"
+                      >
+                        <i className="fa-solid fa-spinner animate-spin text-[12px]" aria-hidden="true" />
+                        Trete bei...
                       </button>
                     )}
                     {canLeaveSelectedProject && (
                       <button
                         type="button"
                         onClick={() => handleLeaveProject(selectedProject)}
-                        className="rounded-[10px] bg-[#E24C4C] px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-[#F06060]"
+                        disabled={isSelectedProjectLeavePending}
+                        className="inline-flex min-w-[122px] items-center justify-center gap-2 rounded-[10px] bg-[#E24C4C] px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-[#F06060] disabled:cursor-default disabled:opacity-80"
                       >
-                        Verlassen
+                        {isSelectedProjectLeavePending && (
+                          <i className="fa-solid fa-spinner animate-spin text-[12px]" aria-hidden="true" />
+                        )}
+                        {isSelectedProjectLeavePending ? "Verlasse..." : "Verlassen"}
+                      </button>
+                    )}
+                    {!canLeaveSelectedProject && isSelectedProjectLeavePending && (
+                      <button
+                        type="button"
+                        disabled
+                        className="inline-flex min-w-[122px] items-center justify-center gap-2 rounded-[10px] bg-[#E24C4C] px-4 py-2 text-[13px] font-semibold text-white opacity-80"
+                      >
+                        <i className="fa-solid fa-spinner animate-spin text-[12px]" aria-hidden="true" />
+                        Verlasse...
                       </button>
                     )}
                   </div>
@@ -6630,6 +6764,7 @@ function renderContent(
     presetRoleId?: string
   ) => void,
   onOpenMemberProjectDialog: (member: MemberProfile) => void,
+  onOpenMemberProjectRemoveDialog: (member: MemberProfile, projectId: string) => void,
   onOpenBanDialog: (member: MemberProfile) => void,
   onOpenWarnDialog: (member: MemberProfile) => void,
   handleAuthzTest: () => void,
@@ -8254,7 +8389,8 @@ function renderContent(
     }
     const canBanUsers = permissionFlags.canBanUsers;
     const canWarnUsers = permissionFlags.canWarnUsers;
-    const canManageUserRoles = permissionFlags.canAccessRoles;
+    const canManageUserRoles =
+      permissionFlags.canAccessRoles || permissionFlags.canAccessMembers || permissionFlags.isModerator;
     const canManageMemberProjects = permissionFlags.canAccessMembers || permissionFlags.isModerator;
     const showActions = canBanUsers || canWarnUsers;
     return (
@@ -8389,10 +8525,24 @@ function renderContent(
                           return (
                             <span
                               key={projectId}
-                              className="inline-flex items-center border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.03)] px-2 py-0.5 text-[10px] text-[rgba(255,255,255,0.72)]"
+                              className="inline-flex items-center gap-1 border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.03)] px-2 py-0.5 text-[10px] text-[rgba(255,255,255,0.72)]"
                               title={projectId}
                             >
                               {label}
+                              {canManageMemberProjects && (
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    onOpenMemberProjectRemoveDialog(member, projectId);
+                                  }}
+                                  className="text-[rgba(255,255,255,0.55)] transition hover:text-[#FF8A8A]"
+                                  aria-label={`Projekt ${label} entfernen`}
+                                  title={`Projekt ${label} entfernen`}
+                                >
+                                  <i className="fa-solid fa-xmark text-[9px]" aria-hidden="true" />
+                                </button>
+                              )}
                             </span>
                           );
                         })}

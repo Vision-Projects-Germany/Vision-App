@@ -54,6 +54,27 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
     const normalized = trimmed.replace(/-original$/i, "");
     return `https://api.vision-projects.eu/media/${normalized}/thumb`;
   };
+  const resolveAvatarUrl = (
+    currentPhotoUrl: string | null | undefined,
+    record: Record<string, unknown>
+  ): string | null => {
+    const avatarMediaId =
+      (typeof record.avatarMediaId === "string" && record.avatarMediaId.trim()) ||
+      (typeof record.avatar_media_id === "string" && record.avatar_media_id.trim()) ||
+      null;
+    const mediaAvatarUrl = avatarUrlFromMediaId(avatarMediaId);
+    const explicitAvatarUrl =
+      (typeof record.avatarUrl === "string" && record.avatarUrl.trim()) ||
+      (typeof record.avatar_url === "string" && record.avatar_url.trim()) ||
+      (typeof record.photoURL === "string" && record.photoURL.trim()) ||
+      (typeof record.photoUrl === "string" && record.photoUrl.trim()) ||
+      null;
+    const discordAvatarUrl =
+      (typeof record.discordAvatar === "string" && record.discordAvatar.trim()) ||
+      (typeof record.discord_avatar === "string" && record.discord_avatar.trim()) ||
+      null;
+    return currentPhotoUrl || explicitAvatarUrl || discordAvatarUrl || mediaAvatarUrl || null;
+  };
 
   const toDateSafe = (value: unknown): Date | undefined => {
     if (!value) return undefined;
@@ -102,12 +123,10 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
 
         if (userDoc?.exists()) {
           const data = userDoc.data();
-          const avatarFromMediaId = avatarUrlFromMediaId(data.avatarMediaId);
-          const profileAvatarUrl =
-            currentUser.photoURL ||
-            data.avatarUrl ||
-            (typeof data.photoURL === "string" ? data.photoURL : null) ||
-            avatarFromMediaId ||
+          const profileAvatarUrl = resolveAvatarUrl(currentUser.photoURL, data);
+          const avatarMediaId =
+            (typeof data.avatarMediaId === "string" && data.avatarMediaId) ||
+            (typeof data.avatar_media_id === "string" && data.avatar_media_id) ||
             null;
           const userProfile: UserProfile = {
             uid: currentUser.uid,
@@ -124,8 +143,8 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
               (typeof data.xp_display === "string" && data.xp_display) ||
               (typeof data.xpDisplay === "string" && data.xpDisplay) ||
               null,
-            avatarMediaId: data.avatarMediaId || null,
-            avatarUrl: data.avatarUrl || null,
+            avatarMediaId,
+            avatarUrl: profileAvatarUrl,
             projects: normalizeProjectIds(data.projects),
             createdAt: toDateSafe(data.createdAt),
             updatedAt: toDateSafe(data.updatedAt),
