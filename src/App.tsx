@@ -159,6 +159,7 @@ type ApplicationItem = {
   id: string;
   username: string;
   role: string;
+  description: string;
   experience: string;
   createdAt: string;
   status: ApplicationStatus;
@@ -881,6 +882,8 @@ function mapApplicationItems(items: unknown[]): ApplicationItem[] {
           ? application.role
           : typeof application?.customRole === "string"
             ? application.customRole
+          : typeof raw.requestedRole === "string"
+            ? raw.requestedRole
           : typeof raw.role === "string"
             ? raw.role
           : typeof raw.type === "string"
@@ -891,22 +894,25 @@ function mapApplicationItems(items: unknown[]): ApplicationItem[] {
       const role = roleRaw
         ? roleRaw.charAt(0).toUpperCase() + roleRaw.slice(1)
         : "—";
-      const experience =
+      const experienceText =
         typeof application?.experience === "string"
-          ? application.experience
-          : typeof application?.motivation === "string"
-            ? application.motivation
+          ? application.experience.trim()
           : typeof raw.experience === "string"
-            ? raw.experience
+            ? raw.experience.trim()
+            : "";
+      const descriptionText =
+        typeof application?.motivation === "string"
+          ? application.motivation.trim()
           : typeof raw.description === "string"
-            ? raw.description
+            ? raw.description.trim()
             : typeof raw.notes === "string"
-              ? raw.notes
+              ? raw.notes.trim()
               : typeof raw.message === "string"
-                ? raw.message
+                ? raw.message.trim()
                 : typeof raw.text === "string"
-                  ? raw.text
+                  ? raw.text.trim()
                   : "";
+      const experience = experienceText;
       const createdAt =
         typeof raw.createdAt === "string"
           ? raw.createdAt
@@ -927,6 +933,7 @@ function mapApplicationItems(items: unknown[]): ApplicationItem[] {
         id: id || `${username}-${createdAt}`,
         username,
         role,
+        description: descriptionText,
         experience,
         createdAt,
         status: mapApplicationStatus(raw.applicationStatus ?? raw.status),
@@ -1955,6 +1962,7 @@ export default function App() {
   const [selectedProject, setSelectedProject] = useState<ProjectItem | null>(null);
   const [joinBlockedDialogProject, setJoinBlockedDialogProject] = useState<ProjectItem | null>(null);
   const [selectedNewsItem, setSelectedNewsItem] = useState<NewsItem | null>(null);
+  const [selectedApplicationItem, setSelectedApplicationItem] = useState<ApplicationItem | null>(null);
   const [projectParticipants, setProjectParticipants] = useState<MemberProfile[]>([]);
   const [participantsLoading, setParticipantsLoading] = useState(false);
   const [participantsError, setParticipantsError] = useState<string | null>(null);
@@ -3796,19 +3804,11 @@ export default function App() {
     setApplicationItems([]);
 
     (async () => {
-      const endpoint = "https://api.vision-projects.eu/api/applications?page=1&limit=50";
-      let data: Record<string, unknown> | unknown[];
-
-      try {
-        const token = await getApiToken();
-        data = await requestJson<Record<string, unknown> | unknown[]>(endpoint, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-      } catch (firstError) {
-        // Fallback: some environments expose this endpoint without auth.
-        data = await requestJson<Record<string, unknown> | unknown[]>(endpoint);
-        console.warn("[applications] auth request failed, used public fallback", firstError);
-      }
+      const endpoint = "https://api.vision-projects.eu/api/applications?page=1&limit=20";
+      const token = await getApiToken();
+      const data = await requestJson<Record<string, unknown> | unknown[]>(endpoint, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
 
       const payload = data as Record<string, unknown>;
       const rawItems = Array.isArray(data)
@@ -4937,6 +4937,7 @@ export default function App() {
                     applicationItems,
                     applicationsLoading,
                     applicationsError,
+                    setSelectedApplicationItem,
                     requestApplicationStatusChange
                   )}
                 </div>
@@ -6179,6 +6180,79 @@ export default function App() {
             </div>
           </div>
         )}
+        {selectedApplicationItem && (
+          <div className="fixed inset-0 z-[62] flex items-center justify-center bg-black/60 px-4">
+            <div className="relative w-full max-w-[760px] overflow-hidden rounded-[24px] border border-[rgba(255,255,255,0.12)] bg-[#24262C] shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
+              <button
+                type="button"
+                onClick={() => setSelectedApplicationItem(null)}
+                className="absolute right-4 top-4 z-10 flex h-9 w-9 items-center justify-center rounded-[10px] border border-[rgba(255,255,255,0.18)] bg-[rgba(13,14,18,0.65)] text-[rgba(255,255,255,0.85)] transition hover:border-[rgba(255,255,255,0.35)] hover:bg-[rgba(13,14,18,0.9)]"
+                aria-label="Bewerbung schliessen"
+              >
+                <i className="fa-solid fa-xmark text-[13px]" aria-hidden="true" />
+              </button>
+              <div className="max-h-[75vh] overflow-auto px-5 pb-6 pt-5">
+                <div className="pr-10">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-[22px] font-semibold text-[rgba(255,255,255,0.95)]">
+                        {selectedApplicationItem.username}
+                      </p>
+                      <p className="mt-1 text-[13px] text-[rgba(255,255,255,0.55)]">
+                        {selectedApplicationItem.role}
+                      </p>
+                    </div>
+                    <span className="rounded-[999px] border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.05)] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[rgba(255,255,255,0.72)]">
+                      {selectedApplicationItem.apiApplicationStatus}
+                    </span>
+                  </div>
+                  <div className="mt-5 grid gap-4 md:grid-cols-3">
+                    <div className="rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[#14161C] px-4 py-3">
+                      <p className="text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.42)]">
+                        Rolle
+                      </p>
+                      <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.88)]">
+                        {selectedApplicationItem.role}
+                      </p>
+                    </div>
+                    <div className="rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[#14161C] px-4 py-3">
+                      <p className="text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.42)]">
+                        Erstellt
+                      </p>
+                      <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.88)]">
+                        {new Date(selectedApplicationItem.createdAt).toLocaleString("de-DE")}
+                      </p>
+                    </div>
+                    <div className="rounded-[14px] border border-[rgba(255,255,255,0.08)] bg-[#14161C] px-4 py-3">
+                      <p className="text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.42)]">
+                        API Status
+                      </p>
+                      <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.88)]">
+                        {selectedApplicationItem.apiStatus}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-5 rounded-[16px] border border-[rgba(255,255,255,0.08)] bg-[#14161C] p-4">
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.42)]">
+                      Description
+                    </p>
+                    <p className="mt-3 whitespace-pre-line text-[14px] leading-[23px] text-[rgba(255,255,255,0.78)]">
+                      {selectedApplicationItem.description || "Keine Description vorhanden."}
+                    </p>
+                  </div>
+                  <div className="mt-4 rounded-[16px] border border-[rgba(255,255,255,0.08)] bg-[#14161C] p-4">
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.42)]">
+                      Experience
+                    </p>
+                    <p className="mt-3 whitespace-pre-line text-[14px] leading-[23px] text-[rgba(255,255,255,0.78)]">
+                      {selectedApplicationItem.experience || "Keine Experience vorhanden."}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         {banState.banned && (
           <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/85 px-4">
             <div className="w-full max-w-[520px] rounded-[18px] border border-[rgba(255,107,107,0.25)] bg-[#13161C] p-6 shadow-[0_40px_80px_rgba(0,0,0,0.65)]">
@@ -7138,6 +7212,7 @@ function renderContent(
   applicationItems: ApplicationItem[],
   applicationsLoading: boolean,
   applicationsError: string | null,
+  onOpenApplicationItem: (item: ApplicationItem) => void,
   onRequestApplicationStatusChange: (
     id: string,
     username: string,
@@ -8623,7 +8698,8 @@ function renderContent(
               return (
                 <div
                   key={item.id}
-                  className="group relative flex flex-col rounded-[20px] p-[3px] transition-transform duration-300 hover:-translate-y-1"
+                  onClick={() => onOpenApplicationItem(item)}
+                  className="group relative flex cursor-pointer flex-col rounded-[20px] p-[3px] transition-transform duration-300 hover:-translate-y-1"
                 >
                   <span
                     aria-hidden="true"
@@ -8671,10 +8747,10 @@ function renderContent(
                     {/* Content */}
                     <div className="mt-4 flex-grow">
                       <p className="text-[11px] font-bold uppercase tracking-widest text-[rgba(255,255,255,0.3)] mb-1">
-                        Erfahrung
+                        Description
                       </p>
                       <p className="text-[13px] leading-relaxed text-[rgba(255,255,255,0.75)] line-clamp-3">
-                        {item.experience}
+                        {item.description || item.experience || "Keine Details"}
                       </p>
                     </div>
 
