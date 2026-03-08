@@ -26,7 +26,7 @@ In `src-tauri/tauri.conf.json`:
 ## 2) Commit + Push
 ```bash
 git add .
-git commit -m "release: v0.1.7"
+git commit -m "release: v0.1.8"
 git push
 ```
 
@@ -41,7 +41,7 @@ git tag v0.1.7
 
 ## 4) Tag pushen (STARTET DEN BUILD)
 ```bash
-git push origin v0.1.7
+git push origin v0.1.8
 ```
 
 ---
@@ -62,12 +62,12 @@ Im Release müssen sein:
 
 ## Lokal:
 ```bash
-git tag -d v0.1.7
+git tag -d v0.1.8
 ```
 
 ## Remote:
 ```bash
-git push origin --delete v0.1.7
+git push origin --delete v0.1.8
 ```
 
 ---
