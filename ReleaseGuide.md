@@ -34,7 +34,7 @@ git push
 
 ## 3) Release-Tag erstellen
 ```bash
-git tag v0.1.7
+git tag v0.1.8
 ```
 
 ---
