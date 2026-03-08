@@ -109,6 +109,10 @@ interface MemberProfile {
   profileData?: Record<string, unknown>;
 }
 
+interface PendingPlayerProfile extends MemberProfile {
+  status?: string | null;
+}
+
 interface AdminRoleItem {
   id: string;
   name: string;
@@ -181,6 +185,11 @@ type MemberProjectDialogState = {
 type MemberProjectRemoveDialogState = {
   member: MemberProfile;
   projectId: string;
+};
+
+type PendingPlayerActionDialogState = {
+  member: PendingPlayerProfile;
+  status: "approved" | "denied";
 };
 
 type AppSettings = {
@@ -390,6 +399,7 @@ type PermissionFlags = {
   canBanUsers: boolean;
   canWarnUsers: boolean;
   canViewApplications: boolean;
+  canAcceptMembers: boolean;
   isModerator: boolean;
 };
 
@@ -424,6 +434,7 @@ const buildPermissionFlags = (
       canBanUsers: true,
       canWarnUsers: true,
       canViewApplications: true,
+      canAcceptMembers: true,
       isModerator: true
     };
   }
@@ -449,6 +460,7 @@ const buildPermissionFlags = (
   const canBanUsers = has("users.ban");
   const canWarnUsers = has("users.warn");
   const canViewApplications = has("mod.viewApplications");
+  const canAcceptMembers = has("members.accept");
 
   return {
     canAccessProjects,
@@ -469,6 +481,7 @@ const buildPermissionFlags = (
     canBanUsers,
     canWarnUsers,
     canViewApplications,
+    canAcceptMembers,
     isModerator: hasModeratorRole
   };
 };
@@ -497,6 +510,8 @@ const isPageAllowed = (pageId: string, flags: PermissionFlags) => {
       return flags.canAccessAdmin || flags.isModerator;
     case "members":
       return flags.canAccessMembers || flags.isModerator;
+    case "player-applications":
+      return flags.canAcceptMembers;
     case "roles":
       return flags.canAccessRoles;
     case "applications":
@@ -610,6 +625,7 @@ function isPage(route: string) {
     "admin",
     "roles",
     "members",
+    "player-applications",
     "applications"
   ].includes(route);
 }
@@ -784,6 +800,45 @@ function mapApplicationStatus(value: unknown): ApplicationStatus {
     return "rejected";
   }
   return "new";
+}
+
+function getMemberApprovalStatus(record: Record<string, unknown> | null | undefined) {
+  const rawStatus =
+    typeof record?.status === "string"
+      ? record.status
+      : typeof record?.applicationStatus === "string"
+        ? record.applicationStatus
+        : null;
+  if (!rawStatus) {
+    return null;
+  }
+  const normalized = rawStatus.trim().toLowerCase().replace(/[\s_-]+/g, "");
+  if (normalized === "approved" || normalized === "accepted") {
+    return "approved";
+  }
+  if (normalized === "pending" || normalized === "reviewing" || normalized === "review") {
+    return "pending";
+  }
+  if (normalized === "denied" || normalized === "rejected") {
+    return "denied";
+  }
+  return normalized;
+}
+
+function getBanState(record: Record<string, unknown> | null | undefined) {
+  const banned = record?.banned === true;
+  const reason =
+    typeof record?.banReason === "string"
+      ? record.banReason
+      : typeof record?.bannedReason === "string"
+        ? record.bannedReason
+        : typeof record?.reason === "string"
+          ? record.reason
+          : null;
+  return {
+    banned,
+    reason: reason?.trim() || null
+  };
 }
 
 function mapApplicationItems(items: unknown[]): ApplicationItem[] {
@@ -1144,6 +1199,58 @@ async function fetchModrinthProject(modrinthId: string, signal: AbortSignal) {
   );
 }
 
+async function fetchProjectItems(signal: AbortSignal) {
+  const data = await requestJson<{ items?: ProjectItem[] }>(
+    "https://api.vision-projects.eu/api/projects?page=1&limit=6",
+    { signal }
+  );
+  const items = Array.isArray(data?.items)
+    ? (data.items as ProjectItem[]).map(normalizeProjectMedia)
+    : [];
+
+  const enrichedItems = await Promise.all(
+    items.map(async (item) => {
+      const { modrinthId } = normalizeModrinthFields(item);
+      const srcModrinth = isTruthyFlag(
+        item.srcModrinth ??
+          item.src_modrinth ??
+          (item as any).src_modrinth ??
+          false
+      );
+      if (!modrinthId || !srcModrinth) {
+        return item;
+      }
+
+      try {
+        const modrinth = await fetchModrinthProject(modrinthId, signal);
+        const coverUrl = getModrinthCover(modrinth);
+        const fallbackCoverUrl = modrinth.icon_url ?? null;
+
+        return normalizeProjectMedia({
+          ...item,
+          modrinthSlug:
+            modrinth.slug ??
+            item.modrinthSlug ??
+            (item as any).modrinth_slug ??
+            null,
+          title: modrinth.title ?? item.title,
+          description: modrinth.description ?? item.description,
+          logoIcon: modrinth.icon_url ? { url: modrinth.icon_url } : item.logoIcon ?? null,
+          cover: coverUrl
+            ? { url: coverUrl }
+            : fallbackCoverUrl
+              ? { url: fallbackCoverUrl }
+              : item.cover ?? null
+        });
+      } catch {
+        return item;
+      }
+    })
+  );
+
+  return enrichedItems;
+}
+
 async function fetchModrinthVersions(modrinthId: string, signal: AbortSignal) {
   return requestJson<ModrinthVersion[]>(
     `https://api.modrinth.com/v2/project/${modrinthId}/version`,
@@ -1343,6 +1450,15 @@ export default function App() {
   const [selectedMemberProfile, setSelectedMemberProfile] = useState<MemberProfile | null>(null);
   const [membersLoading, setMembersLoading] = useState(false);
   const [membersError, setMembersError] = useState<string | null>(null);
+  const [pendingPlayers, setPendingPlayers] = useState<PendingPlayerProfile[]>([]);
+  const [pendingPlayersLoading, setPendingPlayersLoading] = useState(false);
+  const [pendingPlayersError, setPendingPlayersError] = useState<string | null>(null);
+  const [pendingPlayerActionDialog, setPendingPlayerActionDialog] =
+    useState<PendingPlayerActionDialogState | null>(null);
+  const [pendingPlayerDecision, setPendingPlayerDecision] = useState<{
+    uid: string;
+    status: "approved" | "denied";
+  } | null>(null);
   const [rolesList, setRolesList] = useState<AdminRoleItem[]>([]);
   const [rolesLoading, setRolesLoading] = useState(false);
   const [rolesError, setRolesError] = useState<string | null>(null);
@@ -1666,6 +1782,18 @@ export default function App() {
     setMemberProjectRemoveDialog(null);
     setMemberProjectRemoveError(null);
   };
+  const handleOpenPendingPlayerActionDialog = (
+    member: PendingPlayerProfile,
+    status: "approved" | "denied"
+  ) => {
+    setPendingPlayerActionDialog({ member, status });
+  };
+  const handleClosePendingPlayerActionDialog = () => {
+    if (pendingPlayerDecision) {
+      return;
+    }
+    setPendingPlayerActionDialog(null);
+  };
   const handleCloseRoleDelete = () => {
     if (roleDeleteSaving) {
       return;
@@ -1819,7 +1947,13 @@ export default function App() {
     () => getFirestoreUserAvatarUrl(userProfileData ?? null),
     [userProfileData]
   );
+  const banState = useMemo(() => getBanState(userProfileData), [userProfileData]);
+  const memberApprovalStatus = useMemo(
+    () => getMemberApprovalStatus(userProfileData),
+    [userProfileData]
+  );
   const [selectedProject, setSelectedProject] = useState<ProjectItem | null>(null);
+  const [joinBlockedDialogProject, setJoinBlockedDialogProject] = useState<ProjectItem | null>(null);
   const [selectedNewsItem, setSelectedNewsItem] = useState<NewsItem | null>(null);
   const [projectParticipants, setProjectParticipants] = useState<MemberProfile[]>([]);
   const [participantsLoading, setParticipantsLoading] = useState(false);
@@ -2873,57 +3007,7 @@ export default function App() {
 
     const loadProjects = async () => {
       try {
-        const data = await requestJson<{ items?: ProjectItem[] }>(
-          "https://api.vision-projects.eu/api/projects?page=1&limit=6",
-          { signal: controller.signal }
-        );
-        const items = Array.isArray(data?.items)
-          ? (data.items as ProjectItem[]).map(normalizeProjectMedia)
-          : [];
-        if (!controller.signal.aborted) {
-          setProjectItems(items);
-          setProjectError(false);
-        }
-        const enrichedItems = await Promise.all(
-          items.map(async (item) => {
-            const { modrinthId } = normalizeModrinthFields(item);
-            const srcModrinth = isTruthyFlag(
-              item.srcModrinth ??
-              item.src_modrinth ??
-              (item as any).src_modrinth ??
-              false
-            );
-            if (!modrinthId || !srcModrinth) {
-              return item;
-            }
-
-            try {
-              const modrinth = await fetchModrinthProject(modrinthId, controller.signal);
-              const coverUrl = getModrinthCover(modrinth);
-              const fallbackCoverUrl = modrinth.icon_url ?? null;
-
-              return normalizeProjectMedia({
-                ...item,
-                modrinthSlug:
-                  modrinth.slug ??
-                  item.modrinthSlug ??
-                  (item as any).modrinth_slug ??
-                  null,
-                title: modrinth.title ?? item.title,
-                description: modrinth.description ?? item.description,
-                logoIcon: modrinth.icon_url ? { url: modrinth.icon_url } : item.logoIcon ?? null,
-                cover: coverUrl
-                  ? { url: coverUrl }
-                  : fallbackCoverUrl
-                    ? { url: fallbackCoverUrl }
-                    : item.cover ?? null
-              });
-            } catch {
-              return item;
-            }
-          })
-        );
-
+        const enrichedItems = await fetchProjectItems(controller.signal);
         if (!controller.signal.aborted) {
           setProjectItems(enrichedItems);
           setProjectError(false);
@@ -3517,6 +3601,79 @@ export default function App() {
     permissionFlags.isModerator,
     user
   ]);
+
+  useEffect(() => {
+    if (activePage !== "player-applications") {
+      return;
+    }
+    if (!permissionFlags.canAcceptMembers) {
+      return;
+    }
+    if (!user) {
+      setPendingPlayers([]);
+      setPendingPlayersLoading(false);
+      setPendingPlayersError("Bitte zuerst anmelden.");
+      return;
+    }
+
+    setPendingPlayers([]);
+    setPendingPlayersLoading(true);
+    setPendingPlayersError(null);
+
+    (async () => {
+      const snapshot = await getDocs(collection(db, "users"));
+      const mapped = snapshot.docs
+        .map((docSnap) => {
+          const record = (docSnap.data() ?? {}) as Record<string, unknown>;
+          const status =
+            typeof record.status === "string"
+              ? record.status
+              : typeof record.applicationStatus === "string"
+                ? record.applicationStatus
+                : null;
+          if ((status ?? "").trim().toLowerCase() !== "pending") {
+            return null;
+          }
+          const avatarMediaId =
+            typeof record.avatarMediaId === "string"
+              ? record.avatarMediaId
+              : typeof record.avatar_media_id === "string"
+                ? record.avatar_media_id
+                : null;
+          const projectsValue = normalizeProjectIds(record.projects);
+          return {
+            uid: docSnap.id,
+            username: typeof record.username === "string" ? record.username : null,
+            email: typeof record.email === "string" ? record.email : null,
+            roles: Array.isArray(record.roles) ? (record.roles as string[]) : [],
+            experience: typeof record.experience === "string" ? record.experience : null,
+            level: typeof record.level === "number" ? record.level : null,
+            age: typeof record.age === "number" ? record.age : null,
+            minecraftName:
+              typeof record.minecraftName === "string" ? record.minecraftName : null,
+            bio: typeof record.bio === "string" ? record.bio : null,
+            interests: Array.isArray(record.interests)
+              ? (record.interests.filter((entry) => typeof entry === "string") as string[])
+              : null,
+            avatarMediaId,
+            avatarUrl: getFirestoreUserAvatarUrl(record),
+            projects: projectsValue,
+            profileData: record,
+            status
+          } as PendingPlayerProfile;
+        })
+        .filter((entry): entry is PendingPlayerProfile => Boolean(entry?.uid));
+      setPendingPlayers(mapped);
+    })()
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : "Unbekannter Fehler.";
+        console.error("Failed to load pending player applications", error);
+        setPendingPlayersError(`Spieler-Bewerbungen konnten nicht geladen werden. (${message})`);
+      })
+      .finally(() => {
+        setPendingPlayersLoading(false);
+      });
+  }, [activePage, permissionFlags.canAcceptMembers, user]);
 
   useEffect(() => {
     if (activePage !== "roles" && activePage !== "members") {
@@ -4457,6 +4614,10 @@ export default function App() {
       showToast("Bitte zuerst anmelden.", "error");
       return;
     }
+    if (memberApprovalStatus !== "approved") {
+      setJoinBlockedDialogProject(project);
+      return;
+    }
 
     try {
       setProjectMembershipPending({ projectId: project.id, action: "join" });
@@ -4531,6 +4692,14 @@ export default function App() {
           projects: currentProjects.filter((id) => id !== project.id)
         };
       });
+      try {
+        const refreshController = new AbortController();
+        const refreshedProjects = await fetchProjectItems(refreshController.signal);
+        setProjectItems(refreshedProjects);
+        setProjectError(false);
+      } catch {
+        // Keep the leave flow successful even if the visual refresh fails.
+      }
       showToast(`Du hast "${project.title}" verlassen.`, "success");
     } catch (error) {
       showToast(formatToastError(error) || "Projekt verlassen fehlgeschlagen.", "error");
@@ -4539,6 +4708,46 @@ export default function App() {
       setProjectMembershipPending((current) =>
         current?.projectId === project.id && current.action === "leave" ? null : current
       );
+    }
+  };
+
+  const handleResolvePendingPlayer = async (
+    member: PendingPlayerProfile,
+    status: "approved" | "denied"
+  ) => {
+    if (!user) {
+      showToast("Bitte zuerst anmelden.", "error");
+      return;
+    }
+    setPendingPlayerDecision({ uid: member.uid, status });
+    try {
+      const token = await getApiToken();
+      await requestJson<unknown>(
+        `https://api.vision-projects.eu/api/admin/users/${encodeURIComponent(member.uid)}/member-status`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ status })
+        }
+      );
+      setPendingPlayers((prev) => prev.filter((entry) => entry.uid !== member.uid));
+      showToast(
+        status === "approved"
+          ? "Spieler-Bewerbung angenommen."
+          : "Spieler-Bewerbung abgelehnt.",
+        "success"
+      );
+    } catch (error) {
+      showToast(
+        formatToastError(error) || "Spieler-Bewerbung konnte nicht aktualisiert werden.",
+        "error"
+      );
+    } finally {
+      setPendingPlayerDecision(null);
+      setPendingPlayerActionDialog(null);
     }
   };
 
@@ -4686,7 +4895,12 @@ export default function App() {
                     members,
                     membersLoading,
                     membersError,
+                    pendingPlayers,
+                    pendingPlayersLoading,
+                    pendingPlayersError,
+                    pendingPlayerDecision,
                     setSelectedMemberProfile,
+                    handleOpenPendingPlayerActionDialog,
                     rolesList,
                     rolesLoading,
                     rolesError,
@@ -5301,6 +5515,67 @@ export default function App() {
             </div>
           </div>
         )}
+        {pendingPlayerActionDialog && (
+          <div className="fixed inset-0 z-[79] flex items-center justify-center bg-black/70 px-4">
+            <div className="w-full max-w-[460px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 flex h-9 w-9 items-center justify-center rounded-[10px] bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.82)]">
+                  <i className="fa-solid fa-triangle-exclamation text-[14px]" aria-hidden="true" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
+                    Bewerbung bestätigen
+                  </h3>
+                  <p className="mt-2 text-[13px] leading-[20px] text-[rgba(255,255,255,0.65)]">
+                    Nutzer{" "}
+                    <span className="font-semibold text-[rgba(255,255,255,0.9)]">
+                      {pendingPlayerActionDialog.member.username ??
+                        pendingPlayerActionDialog.member.uid}
+                    </span>{" "}
+                    wirklich{" "}
+                    <span className="font-semibold text-[rgba(255,255,255,0.9)]">
+                      {pendingPlayerActionDialog.status === "approved"
+                        ? "annehmen"
+                        : "ablehnen"}
+                    </span>
+                    ?
+                  </p>
+                </div>
+              </div>
+              <div className="mt-5 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={handleClosePendingPlayerActionDialog}
+                  disabled={Boolean(pendingPlayerDecision)}
+                  className="cta-secondary px-4 py-2 text-[12px]"
+                >
+                  Abbrechen
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleResolvePendingPlayer(
+                      pendingPlayerActionDialog.member,
+                      pendingPlayerActionDialog.status
+                    );
+                  }}
+                  disabled={Boolean(pendingPlayerDecision)}
+                  className={`px-4 py-2 text-[12px] font-semibold disabled:opacity-60 ${
+                    pendingPlayerActionDialog.status === "approved"
+                      ? "cta-primary"
+                      : "inline-flex items-center rounded-[10px] border border-[rgba(255,107,107,0.35)] bg-[rgba(255,107,107,0.12)] text-[#FF8A8A] transition hover:bg-[rgba(255,107,107,0.2)]"
+                  }`}
+                >
+                  {pendingPlayerDecision
+                    ? pendingPlayerActionDialog.status === "approved"
+                      ? "Nehme an..."
+                      : "Lehne ab..."
+                    : "Bestätigen"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {memberProjectRemoveDialog && (
           <div className="fixed inset-0 z-[79] flex items-center justify-center bg-black/70 px-4">
             <div className="w-full max-w-[460px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
@@ -5829,6 +6104,41 @@ export default function App() {
             </div>
           </div>
         )}
+        {joinBlockedDialogProject && (
+          <div className="fixed inset-0 z-[62] flex items-center justify-center bg-black/70 px-4">
+            <div className="w-full max-w-[460px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 flex h-9 w-9 items-center justify-center rounded-[10px] bg-[rgba(255,209,102,0.14)] text-[#FFD166]">
+                  <i className="fa-solid fa-shield-halved text-[14px]" aria-hidden="true" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
+                    Warte auf Verifizierung
+                  </h3>
+                  <p className="mt-2 text-[13px] leading-[20px] text-[rgba(255,255,255,0.65)]">
+                    Du kannst{" "}
+                    <span className="font-semibold text-[rgba(255,255,255,0.9)]">
+                      {joinBlockedDialogProject.title}
+                    </span>{" "}
+                    erst beitreten, wenn dein Account verifiziert und freigegeben wurde.
+                  </p>
+                  <p className="mt-2 text-[12px] text-[rgba(255,255,255,0.5)]">
+                    Aktueller Status: {memberApprovalStatus ?? "unbekannt"}
+                  </p>
+                </div>
+              </div>
+              <div className="mt-5 flex items-center justify-end">
+                <button
+                  type="button"
+                  onClick={() => setJoinBlockedDialogProject(null)}
+                  className="cta-primary px-4 py-2 text-[12px]"
+                >
+                  Verstanden
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {selectedNewsItem && (
           <div className="fixed inset-0 z-[61] flex items-center justify-center bg-black/60 px-4">
             <div className="relative w-full max-w-[760px] overflow-hidden rounded-[24px] border border-[rgba(255,255,255,0.12)] bg-[#24262C] shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
@@ -5865,6 +6175,36 @@ export default function App() {
                 <p className="mt-4 whitespace-pre-line text-[14px] leading-[22px] text-[rgba(255,255,255,0.78)]">
                   {getNewsDetailText(selectedNewsItem)}
                 </p>
+              </div>
+            </div>
+          </div>
+        )}
+        {banState.banned && (
+          <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/85 px-4">
+            <div className="w-full max-w-[520px] rounded-[18px] border border-[rgba(255,107,107,0.25)] bg-[#13161C] p-6 shadow-[0_40px_80px_rgba(0,0,0,0.65)]">
+              <div className="flex items-start gap-4">
+                <div className="flex h-11 w-11 items-center justify-center rounded-[12px] bg-[rgba(255,107,107,0.14)] text-[#FF8A8A]">
+                  <i className="fa-solid fa-ban text-[18px]" aria-hidden="true" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-[18px] font-semibold text-[rgba(255,255,255,0.94)]">
+                    Du wurdest gebannt
+                  </h3>
+                  <p className="mt-2 text-[13px] leading-[21px] text-[rgba(255,255,255,0.68)]">
+                    Dein Account wurde für die Nutzung dieser App gesperrt. Solange der Bann
+                    aktiv ist, ist kein Zugriff möglich.
+                  </p>
+                  {banState.reason && (
+                    <div className="mt-4 rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-4 py-3">
+                      <p className="text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.42)]">
+                        Grund
+                      </p>
+                      <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.82)]">
+                        {banState.reason}
+                      </p>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -6749,7 +7089,15 @@ function renderContent(
   members: MemberProfile[],
   membersLoading: boolean,
   membersError: string | null,
+  pendingPlayers: PendingPlayerProfile[],
+  pendingPlayersLoading: boolean,
+  pendingPlayersError: string | null,
+  pendingPlayerDecision: { uid: string; status: "approved" | "denied" } | null,
   onOpenMemberProfile: (member: MemberProfile) => void,
+  onOpenPendingPlayerActionDialog: (
+    member: PendingPlayerProfile,
+    status: "approved" | "denied"
+  ) => void,
   rolesList: AdminRoleItem[],
   rolesLoading: boolean,
   rolesError: string | null,
@@ -7998,6 +8346,7 @@ function renderContent(
       permissionFlags.canAccessMembers || permissionFlags.isModerator;
     const canShowRoles = permissionFlags.canAccessRoles;
     const canShowApplications = permissionFlags.canViewApplications;
+    const canShowPlayerApplications = permissionFlags.canAcceptMembers;
     if (canShowApplications) {
       console.info("[admin] module visibility", {
         canShowApplications
@@ -8080,8 +8429,31 @@ function renderContent(
               </div>
             </button>
           )}
+          {canShowPlayerApplications && (
+            <button
+              type="button"
+              onClick={() => onNavigate("player-applications")}
+              className="group relative flex flex-col items-center justify-center rounded-[24px] p-[3px] transition-all"
+            >
+              <span
+                aria-hidden="true"
+                className="rainbow-draw pointer-events-none absolute inset-0 rounded-[24px] blur-[2px]"
+              />
+              <div className="relative z-10 flex h-full w-full flex-col items-center justify-center rounded-[21px] bg-[#24262C] p-12">
+                <div className="flex h-32 w-32 items-center justify-center rounded-full bg-[rgba(126,214,255,0.16)] text-[#7ED6FF] transition-all">
+                  <i className="fa-solid fa-user-clock text-[56px]" aria-hidden="true" />
+                </div>
+                <h3 className="mt-8 text-[24px] font-bold text-[rgba(255,255,255,0.92)]">
+                  Spieler Bewerbungen
+                </h3>
+                <p className="mt-3 text-center text-[15px] text-[rgba(255,255,255,0.65)]">
+                  Firestore-Nutzer mit Status pending pruefen
+                </p>
+              </div>
+            </button>
+          )}
         </div>
-        {!canShowMembers && !canShowRoles && !canShowApplications && (
+        {!canShowMembers && !canShowRoles && !canShowApplications && !canShowPlayerApplications && (
           <p className="text-[13px] text-[rgba(255,255,255,0.60)]">
             Keine Module freigeschaltet.
           </p>
@@ -8606,6 +8978,129 @@ function renderContent(
             {!membersLoading && !members.length && !membersError && (
               <div className="px-4 py-6 text-[12px] text-[rgba(255,255,255,0.55)]">
                 Keine Mitglieder gefunden.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (page === "player-applications") {
+    if (!permissionFlags.canAcceptMembers) {
+      return (
+        <p className="text-[13px] text-[rgba(255,255,255,0.60)]">
+          Keine Berechtigung.
+        </p>
+      );
+    }
+    return (
+      <div className="space-y-8">
+        <div className="flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => onNavigate("admin")}
+            className="cta-secondary flex items-center gap-2 px-4 py-3 text-[14px]"
+            aria-label="Zurück"
+          >
+            <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
+            Zurück
+          </button>
+          <p className="text-[13px] text-[rgba(255,255,255,0.55)]">
+            {pendingPlayersLoading ? "Lade..." : `${pendingPlayers.length} offen`}
+          </p>
+        </div>
+
+        {pendingPlayersError && (
+          <div className="rounded-[12px] border border-[rgba(255,100,100,0.25)] bg-[rgba(255,100,100,0.08)] px-4 py-3 text-[12px] text-[rgba(255,255,255,0.75)]">
+            {pendingPlayersError}
+          </div>
+        )}
+
+        <div className="overflow-hidden rounded-[16px] border border-[rgba(255,255,255,0.08)] bg-[#12141A]">
+          <div className="grid grid-cols-[1.6fr,1.15fr,0.65fr,1fr,0.9fr] gap-4 border-b border-[rgba(255,255,255,0.08)] px-4 py-3 text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]">
+            <span>User</span>
+            <span>UID</span>
+            <span>Status</span>
+            <span>Details</span>
+            <span>Aktionen</span>
+          </div>
+          <div className="divide-y divide-[rgba(255,255,255,0.06)]">
+            {pendingPlayers.map((member) => (
+              <div
+                key={member.uid}
+                onClick={() => onOpenMemberProfile(member)}
+                className="grid cursor-pointer grid-cols-[1.6fr,1.15fr,0.65fr,1fr,0.9fr] gap-4 px-4 py-3 text-[12px] text-[rgba(255,255,255,0.75)] transition hover:bg-[rgba(255,255,255,0.03)]"
+              >
+                <div className="flex items-center gap-3">
+                  {member.avatarUrl ? (
+                    <img
+                      src={member.avatarUrl}
+                      alt={`${member.username ?? "User"} avatar`}
+                      className="h-9 w-9 rounded-full border border-[rgba(255,255,255,0.12)] object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[rgba(255,255,255,0.08)] text-[rgba(255,255,255,0.8)]">
+                      <i className="fa-solid fa-user" aria-hidden="true" />
+                    </div>
+                  )}
+                  <div>
+                    <p className="text-[13px] font-semibold text-[rgba(255,255,255,0.92)]">
+                      {member.username ?? "Unbekannt"}
+                    </p>
+                    <p className="text-[11px] text-[rgba(255,255,255,0.55)]">
+                      {member.email ?? "Keine Email"}
+                    </p>
+                  </div>
+                </div>
+                <div className="text-[11px] text-[rgba(255,255,255,0.6)]">
+                  {member.uid}
+                </div>
+                <div className="text-[11px] text-[rgba(255,255,255,0.6)]">
+                  <span className="inline-flex items-center rounded-[8px] border border-[rgba(255,209,102,0.3)] bg-[rgba(255,209,102,0.12)] px-2 py-0.5 text-[10px] font-semibold uppercase text-[#FFD166]">
+                    {member.status ?? "pending"}
+                  </span>
+                </div>
+                <div className="text-[11px] text-[rgba(255,255,255,0.6)]">
+                  {member.minecraftName ? `MC: ${member.minecraftName}` : "—"}
+                  {typeof member.level === "number" ? ` • Lvl ${member.level}` : ""}
+                  {member.experience ? ` • ${member.experience}` : ""}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onOpenPendingPlayerActionDialog(member, "approved");
+                    }}
+                    disabled={pendingPlayerDecision?.uid === member.uid}
+                    className="inline-flex items-center rounded-[8px] border border-[rgba(43,254,113,0.35)] bg-[rgba(43,254,113,0.12)] px-3 py-1 text-[10px] font-semibold text-[#2BFE71] transition hover:bg-[rgba(43,254,113,0.22)] disabled:opacity-60"
+                  >
+                    {pendingPlayerDecision?.uid === member.uid &&
+                    pendingPlayerDecision.status === "approved"
+                      ? "..."
+                      : "Accept"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onOpenPendingPlayerActionDialog(member, "denied");
+                    }}
+                    disabled={pendingPlayerDecision?.uid === member.uid}
+                    className="inline-flex items-center rounded-[8px] border border-[rgba(255,107,107,0.35)] bg-[rgba(255,107,107,0.12)] px-3 py-1 text-[10px] font-semibold text-[#FF8A8A] transition hover:bg-[rgba(255,107,107,0.2)] disabled:opacity-60"
+                  >
+                    {pendingPlayerDecision?.uid === member.uid &&
+                    pendingPlayerDecision.status === "denied"
+                      ? "..."
+                      : "Deny"}
+                  </button>
+                </div>
+              </div>
+            ))}
+            {!pendingPlayersLoading && !pendingPlayers.length && !pendingPlayersError && (
+              <div className="px-4 py-6 text-[12px] text-[rgba(255,255,255,0.55)]">
+                Keine offenen Spieler-Bewerbungen gefunden.
               </div>
             )}
           </div>
