@@ -26,10 +26,12 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
   const [isSaving, setIsSaving] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editDisplayName, setEditDisplayName] = useState("");
+  const [editAge, setEditAge] = useState("");
+  const [editMinecraftName, setEditMinecraftName] = useState("");
+  const [editExperience, setEditExperience] = useState("");
   const [editBio, setEditBio] = useState("");
   const [editInterests, setEditInterests] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
-  const [profileDocCollection, setProfileDocCollection] = useState<"users" | "members">("users");
   const [interestsInput, setInterestsInput] = useState("");
   const normalizeProjectIds = (value: unknown): string[] => {
     if (!Array.isArray(value)) return [];
@@ -116,9 +118,6 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
         const membersDocRef = doc(db, "members", currentUser.uid);
         const membersDoc = usersDoc.exists() ? null : await getDoc(membersDocRef);
         const userDoc = usersDoc.exists() ? usersDoc : membersDoc;
-        const selectedCollection: "users" | "members" = usersDoc.exists() ? "users" : "members";
-        setProfileDocCollection(selectedCollection);
-
         let currentStats: ProfileStats;
 
         if (userDoc?.exists()) {
@@ -132,6 +131,7 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
             uid: currentUser.uid,
             username: data.username || null,
             displayName: currentUser.displayName || data.displayName || null,
+            age: typeof data.age === "number" ? data.age : null,
             email: currentUser.email || null,
             photoURL: profileAvatarUrl,
             bio: data.bio || null,
@@ -183,6 +183,7 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
             uid: currentUser.uid,
             username: null,
             displayName: currentUser.displayName,
+            age: null,
             email: currentUser.email,
             photoURL: currentUser.photoURL,
             bio: null,
@@ -345,9 +346,24 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
     if (!profile) return;
     try {
       setIsSaving(true);
-      updateProfile({ displayName: newName });
-      const userDocRef = doc(db, profileDocCollection, profile.uid);
-      await updateDoc(userDocRef, { displayName: newName });
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
+        throw new Error("Nicht angemeldet.");
+      }
+      const token = await currentUser.getIdToken();
+      const response = await fetch("https://api.vision-projects.eu/api/profile", {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ displayName: newName.trim() })
+      });
+      if (!response.ok) {
+        const message = (await response.text()) || `HTTP ${response.status}`;
+        throw new Error(message);
+      }
+      updateProfile({ displayName: newName.trim() });
     } catch (error) {
       console.error("Error updating display name:", error);
     } finally {
@@ -358,6 +374,9 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
   const openEditModal = () => {
     if (!profile) return;
     setEditDisplayName(profile.displayName || profile.username || "");
+    setEditAge(typeof profile.age === "number" ? String(profile.age) : "");
+    setEditMinecraftName(profile.minecraftName || "");
+    setEditExperience(profile.experience || "");
     setEditBio(profile.bio || "");
     setEditInterests(interestsInput);
     setEditError(null);
@@ -369,22 +388,51 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
     setEditError(null);
     setIsSaving(true);
     try {
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
+        throw new Error("Nicht angemeldet.");
+      }
       const nextDisplayName = editDisplayName.trim();
+      const nextAgeRaw = editAge.trim();
+      const parsedAge = nextAgeRaw ? Number(nextAgeRaw) : null;
+      if (nextAgeRaw && (parsedAge === null || !Number.isFinite(parsedAge) || parsedAge <= 0)) {
+        throw new Error("Bitte ein gültiges Alter eingeben.");
+      }
+      const nextAge = parsedAge;
+      const nextMinecraftName = editMinecraftName.trim();
+      const nextExperience = editExperience.trim();
       const nextBio = editBio.trim();
       const nextInterests = editInterests
         .split(",")
         .map((value) => value.trim())
         .filter(Boolean);
-
-      if (nextDisplayName) {
-        const userDocRef = doc(db, profileDocCollection, profile.uid);
-        await updateDoc(userDocRef, { displayName: nextDisplayName });
-        updateProfile({ displayName: nextDisplayName });
+      const token = await currentUser.getIdToken();
+      const response = await fetch("https://api.vision-projects.eu/api/profile", {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          displayName: nextDisplayName || null,
+          age: nextAge,
+          minecraftName: nextMinecraftName || null,
+          experience: nextExperience || null,
+          bio: nextBio || null,
+          interests: nextInterests
+        })
+      });
+      if (!response.ok) {
+        const message = (await response.text()) || `HTTP ${response.status}`;
+        throw new Error(message);
       }
-
-      const userDocRef = doc(db, profileDocCollection, profile.uid);
-      await updateDoc(userDocRef, { bio: nextBio, interests: nextInterests });
-      updateProfile({ bio: nextBio });
+      updateProfile({
+        displayName: nextDisplayName || null,
+        age: nextAge,
+        minecraftName: nextMinecraftName || null,
+        experience: nextExperience || null,
+        bio: nextBio || null
+      });
       setInterestsInput(nextInterests.join(", "));
       setIsEditModalOpen(false);
     } catch (error) {
@@ -443,7 +491,6 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
                 </button>
               </div>
             </div>
-
           </div>
         </div>
 
@@ -467,6 +514,21 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
         </div>
       )}
 
+      <div className="group fixed bottom-5 right-[316px] z-40 hidden lg:flex">
+        <div className="relative">
+          <div className="flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-[#0F1116]/92 text-[rgba(255,255,255,0.52)] transition group-hover:border-[#2BFE71]/45 group-hover:text-[#2BFE71]">
+            <i className="fas fa-question text-[12px]" aria-hidden="true" />
+          </div>
+          <div className="pointer-events-none absolute bottom-10 right-0 w-[260px] rounded-xl border border-white/10 bg-[#12141A]/96 px-3 py-2 text-[11px] leading-[17px] text-[rgba(255,255,255,0.68)] opacity-0 shadow-[0_18px_40px_rgba(0,0,0,0.35)] transition duration-150 group-hover:opacity-100">
+            Die vollständige Profilverwaltung ist auf der Website unter{" "}
+            <span className="font-medium text-[rgba(255,255,255,0.9)]">
+              vision-projects.eu/accounting/profile
+            </span>
+            {" "}erreichbar.
+          </div>
+        </div>
+      </div>
+
       {isEditModalOpen && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/65 px-4">
           <div className="w-full max-w-xl rounded-2xl border border-white/15 bg-[#12141A] p-5 shadow-[0_30px_80px_rgba(0,0,0,0.5)]">
@@ -482,12 +544,42 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
 
             <div className="space-y-3">
               <div>
-                <p className="mb-1 text-xs uppercase tracking-wide text-muted">Username</p>
+                <p className="mb-1 text-xs uppercase tracking-wide text-muted">Display Name</p>
                 <input
                   value={editDisplayName}
                   onChange={(event) => setEditDisplayName(event.target.value)}
                   className="w-full rounded-xl border border-white/10 bg-surface-2/60 px-3 py-2 text-sm text-foreground outline-none focus:border-accent/70"
                   placeholder="Display Name"
+                />
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div>
+                  <p className="mb-1 text-xs uppercase tracking-wide text-muted">Age</p>
+                  <input
+                    value={editAge}
+                    onChange={(event) => setEditAge(event.target.value)}
+                    inputMode="numeric"
+                    className="w-full rounded-xl border border-white/10 bg-surface-2/60 px-3 py-2 text-sm text-foreground outline-none focus:border-accent/70"
+                    placeholder="21"
+                  />
+                </div>
+                <div>
+                  <p className="mb-1 text-xs uppercase tracking-wide text-muted">Minecraft Name</p>
+                  <input
+                    value={editMinecraftName}
+                    onChange={(event) => setEditMinecraftName(event.target.value)}
+                    className="w-full rounded-xl border border-white/10 bg-surface-2/60 px-3 py-2 text-sm text-foreground outline-none focus:border-accent/70"
+                    placeholder="Blizz606"
+                  />
+                </div>
+              </div>
+              <div>
+                <p className="mb-1 text-xs uppercase tracking-wide text-muted">Experience</p>
+                <textarea
+                  value={editExperience}
+                  onChange={(event) => setEditExperience(event.target.value)}
+                  className="h-20 w-full resize-none rounded-xl border border-white/10 bg-surface-2/60 px-3 py-2 text-sm text-foreground outline-none focus:border-accent/70"
+                  placeholder="3 Jahre Builder/Dev"
                 />
               </div>
               <div>
