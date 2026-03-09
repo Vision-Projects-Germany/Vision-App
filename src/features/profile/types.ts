@@ -9,8 +9,13 @@ export interface UserProfile {
   minecraftName: string | null;
   roles: string[];
   level: number;
+  xpTotal?: number | null;
   experience: string | null;
   xpDisplay: string | null;
+  currentLevelTitle?: string | null;
+  nextLevelTitle?: string | null;
+  currentLevelXpRequired?: number | null;
+  nextLevelXpRequired?: number | null;
   avatarMediaId: string | null;
   avatarUrl: string | null;
   projects: string[];

@@ -33,6 +33,33 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
   const [editInterests, setEditInterests] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
   const [interestsInput, setInterestsInput] = useState("");
+  const [profileToastMessage, setProfileToastMessage] = useState<string | null>(null);
+  const [profileToastVariant, setProfileToastVariant] = useState<"success" | "error">("success");
+  const [profileToastVisible, setProfileToastVisible] = useState(false);
+  const [profileToastProgress, setProfileToastProgress] = useState(0);
+  const showProfileToast = (
+    message: string,
+    variant: "success" | "error" = "success"
+  ) => {
+    setProfileToastMessage(message);
+    setProfileToastVariant(variant);
+    setProfileToastVisible(true);
+    setProfileToastProgress(1);
+    const startedAt = Date.now();
+    const duration = 3200;
+    window.setTimeout(() => {
+      setProfileToastVisible(false);
+    }, duration - 250);
+    const intervalId = window.setInterval(() => {
+      const elapsed = Date.now() - startedAt;
+      const next = Math.max(0, 1 - elapsed / duration);
+      setProfileToastProgress(next);
+      if (next <= 0) {
+        window.clearInterval(intervalId);
+        setProfileToastMessage((current) => (current === message ? null : current));
+      }
+    }, 40);
+  };
   const normalizeProjectIds = (value: unknown): string[] => {
     if (!Array.isArray(value)) return [];
     const ids = value
@@ -100,6 +127,17 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
     return undefined;
   };
 
+  const toNumberSafe = (value: unknown): number | null => {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === "string" && value.trim()) {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+  };
+
   // Load user profile data from Firebase
   useEffect(() => {
     const loadProfileData = async () => {
@@ -109,6 +147,7 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
         return;
       }
 
+      console.info("[profile] start loading", { uid: currentUser.uid });
       setLoading(true);
 
       try {
@@ -118,11 +157,54 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
         const membersDocRef = doc(db, "members", currentUser.uid);
         const membersDoc = usersDoc.exists() ? null : await getDoc(membersDocRef);
         const userDoc = usersDoc.exists() ? usersDoc : membersDoc;
+        console.info("[profile] source resolved", {
+          source: usersDoc.exists() ? "users" : membersDoc?.exists() ? "members" : "none"
+        });
+        const levels = await getDocs(collection(db, "levels"))
+          .then((levelsSnapshot) =>
+            levelsSnapshot.docs
+              .map((levelDoc) => {
+                const record = levelDoc.data() as Record<string, unknown>;
+                const levelNumber =
+                  toNumberSafe(record.level) ?? toNumberSafe(levelDoc.id);
+                const xpRequired = toNumberSafe(record.xpRequired ?? record.xprequired);
+                const title =
+                  typeof record.title === "string" && record.title.trim()
+                    ? record.title.trim()
+                    : levelNumber !== null
+                      ? `Level ${levelNumber}`
+                      : null;
+                if (levelNumber === null || xpRequired === null) {
+                  return null;
+                }
+                return { level: levelNumber, xpRequired, title };
+              })
+              .filter(
+                (entry): entry is { level: number; xpRequired: number; title: string | null } =>
+                  Boolean(entry)
+              )
+              .sort((a, b) => a.level - b.level)
+          )
+          .then((entries) => {
+            console.info("[profile] levels loaded", { count: entries.length });
+            showProfileToast(`Levels geladen: ${entries.length}`, "success");
+            return entries;
+          })
+          .catch((error) => {
+            console.warn("Could not load levels collection for profile XP", error);
+            showProfileToast("Levels konnten nicht geladen werden.", "error");
+            return [];
+          });
         let currentStats: ProfileStats;
 
         if (userDoc?.exists()) {
           const data = userDoc.data();
           const profileAvatarUrl = resolveAvatarUrl(currentUser.photoURL, data);
+          const userLevel = typeof data.level === "number" && data.level > 0 ? data.level : 1;
+          const previousLevelEntry =
+            levels.find((entry) => entry.level === Math.max(1, userLevel - 1)) ?? null;
+          const currentLevelEntry = levels.find((entry) => entry.level === userLevel) ?? null;
+          const nextLevelEntry = levels.find((entry) => entry.level === userLevel + 1) ?? null;
           const avatarMediaId =
             (typeof data.avatarMediaId === "string" && data.avatarMediaId) ||
             (typeof data.avatar_media_id === "string" && data.avatar_media_id) ||
@@ -137,18 +219,29 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
             bio: data.bio || null,
             minecraftName: data.minecraftName || null,
             roles: data.roles || [],
-            level: data.level || 1,
+            level: userLevel,
+            xpTotal: toNumberSafe(data.xp),
             experience: data.experience || null,
             xpDisplay:
               (typeof data.xp_display === "string" && data.xp_display) ||
               (typeof data.xpDisplay === "string" && data.xpDisplay) ||
               null,
+            currentLevelTitle: currentLevelEntry?.title ?? null,
+            nextLevelTitle: nextLevelEntry?.title ?? null,
+            currentLevelXpRequired:
+              previousLevelEntry?.xpRequired ?? (userLevel <= 1 ? 0 : null),
+            nextLevelXpRequired: currentLevelEntry?.xpRequired ?? null,
             avatarMediaId,
             avatarUrl: profileAvatarUrl,
             projects: normalizeProjectIds(data.projects),
             createdAt: toDateSafe(data.createdAt),
             updatedAt: toDateSafe(data.updatedAt),
           };
+          console.info("[profile] user profile loaded", {
+            source: usersDoc.exists() ? "users" : "members",
+            level: userProfile.level,
+            xpTotal: userProfile.xpTotal
+          });
           setProfile(userProfile);
           const interests = Array.isArray(data.interests)
             ? (data.interests as unknown[]).filter((value): value is string => typeof value === "string")
@@ -177,6 +270,7 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
             twitch: data.twitch || undefined,
           };
           setSocialLinks(links);
+          showProfileToast("Profil geladen.", "success");
         } else {
           // Create basic profile from auth data
           const basicProfile: UserProfile = {
@@ -190,8 +284,13 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
             minecraftName: null,
             roles: [],
             level: 1,
+            xpTotal: null,
             experience: null,
             xpDisplay: null,
+            currentLevelTitle: null,
+            nextLevelTitle: null,
+            currentLevelXpRequired: null,
+            nextLevelXpRequired: null,
             avatarMediaId: null,
             avatarUrl: null,
             projects: [],
@@ -208,6 +307,8 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
             lastActiveDate: null,
           };
           setStats(currentStats);
+          console.info("[profile] no firestore profile found, using auth fallback");
+          showProfileToast("Kein Firestore-Profil gefunden. Fallback aktiv.", "success");
         }
 
         // Load recent activities (mock data for now)
@@ -217,6 +318,7 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
         loadAchievements(currentStats.projectCount, currentStats.totalCommits);
       } catch (error) {
         console.error("Error loading profile:", error);
+        showProfileToast("Profil konnte nicht geladen werden.", "error");
       } finally {
         setLoading(false);
       }
@@ -511,6 +613,27 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
         <div className="fixed bottom-4 right-4 glass rounded-xl px-4 py-3 flex items-center gap-3 shadow-lg z-50">
           <i className="fas fa-spinner fa-spin text-accent"></i>
           <span className="text-sm font-medium">Saving changes...</span>
+        </div>
+      )}
+      {profileToastMessage && (
+        <div
+          className={`fixed bottom-6 left-1/2 z-[80] w-max max-w-[min(680px,calc(100vw-32px))] -translate-x-1/2 overflow-hidden rounded-[14px] border px-4 py-3 text-[12px] font-semibold shadow-[0_20px_40px_rgba(0,0,0,0.45)] backdrop-blur-[6px] transition-all duration-300 ${
+            profileToastVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-2"
+          } ${
+            profileToastVariant === "success"
+              ? "border-[rgba(46,204,113,0.32)] bg-[rgba(18,34,25,0.94)] text-[#92FFC0]"
+              : "border-[rgba(255,91,91,0.32)] bg-[rgba(44,16,16,0.94)] text-[#FFB0B0]"
+          }`}
+        >
+          <span className="block whitespace-pre-wrap leading-[16px] text-center">
+            {profileToastMessage}
+          </span>
+          <span
+            className={`pointer-events-none absolute bottom-0 left-0 h-[3px] transition-[width] ${
+              profileToastVariant === "success" ? "bg-[#2BFE71]" : "bg-[#FF5B5B]"
+            }`}
+            style={{ width: `${profileToastProgress * 100}%` }}
+          />
         </div>
       )}
 

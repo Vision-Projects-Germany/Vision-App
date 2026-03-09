@@ -38,8 +38,64 @@ export const ProfileHeader: React.FC<ProfileHeaderProps> = ({
     }
     return Math.max(0, Math.min(100, (current / max) * 100));
   };
+  const totalXp = typeof profile.xpTotal === "number" && Number.isFinite(profile.xpTotal)
+    ? profile.xpTotal
+    : null;
+  const lowerRequired =
+    typeof profile.currentLevelXpRequired === "number" && Number.isFinite(profile.currentLevelXpRequired)
+      ? profile.currentLevelXpRequired
+      : null;
+  const upperRequired =
+    typeof profile.nextLevelXpRequired === "number" && Number.isFinite(profile.nextLevelXpRequired)
+      ? profile.nextLevelXpRequired
+      : null;
   const xpProgress = parseXpProgress(profile.xpDisplay);
-  const levelProgress = xpProgress ?? Math.max(8, Math.min(100, levelValue % 100 === 0 ? 100 : levelValue % 100));
+  const resolvedBounds = (() => {
+    if (totalXp === null) {
+      return null;
+    }
+    const previousToCurrentValid =
+      lowerRequired !== null &&
+      upperRequired !== null &&
+      totalXp >= lowerRequired &&
+      totalXp <= upperRequired &&
+      upperRequired > lowerRequired;
+    if (previousToCurrentValid) {
+      return { start: lowerRequired, end: upperRequired };
+    }
+
+    const zeroToCurrentValid =
+      upperRequired !== null &&
+      totalXp <= upperRequired &&
+      upperRequired > 0;
+    if (zeroToCurrentValid) {
+      return { start: 0, end: upperRequired };
+    }
+
+    const currentToNextValid =
+      lowerRequired !== null &&
+      upperRequired !== null &&
+      totalXp >= lowerRequired &&
+      upperRequired > lowerRequired;
+    if (currentToNextValid) {
+      return { start: lowerRequired, end: upperRequired };
+    }
+
+    return null;
+  })();
+  const computedLevelProgress =
+    totalXp !== null && resolvedBounds && resolvedBounds.end > resolvedBounds.start
+      ? Math.max(
+          0,
+          Math.min(100, ((totalXp - resolvedBounds.start) / (resolvedBounds.end - resolvedBounds.start)) * 100)
+        )
+      : null;
+  const levelProgress =
+    computedLevelProgress ?? xpProgress ?? Math.max(8, Math.min(100, levelValue % 100 === 0 ? 100 : levelValue % 100));
+  const xpProgressLabel =
+    totalXp !== null && resolvedBounds
+      ? `${Math.max(0, totalXp)} / ${Math.max(0, resolvedBounds.end)} XP`
+      : profile.xpDisplay;
 
   return (
     <div className="relative w-full overflow-hidden">
@@ -124,6 +180,11 @@ export const ProfileHeader: React.FC<ProfileHeaderProps> = ({
               <span className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full bg-[#0E1624] px-3 py-1 text-[10px] font-bold text-[#B6FFC9]">
                 Lvl. {levelValue}
               </span>
+              {xpProgressLabel && (
+                <span className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-[rgba(14,22,36,0.82)] px-3 py-1 text-[10px] font-bold text-[rgba(255,255,255,0.72)]">
+                  {xpProgressLabel}
+                </span>
+              )}
             </div>
           </div>
         </div>
