@@ -2667,6 +2667,42 @@ export default function App() {
       </div>
     </div>
   ) : null;
+  const mandatoryUpdateOverlay = availableUpdateVersion ? (
+    <div className="fixed inset-0 z-[130] flex items-center justify-center bg-[rgba(6,8,14,0.94)] px-4 backdrop-blur-[4px]">
+      <div className="w-full max-w-[520px] rounded-[22px] border border-[rgba(43,254,113,0.18)] bg-[#13161C] p-6 shadow-[0_40px_90px_rgba(0,0,0,0.62)]">
+        <div className="flex items-start gap-4">
+          <div className="flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(43,254,113,0.12)] text-[#2BFE71]">
+            <i className="fa-solid fa-download text-[18px]" aria-hidden="true" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-[20px] font-semibold text-[rgba(255,255,255,0.95)]">
+              Update erforderlich
+            </p>
+            <p className="mt-2 text-[13px] leading-[21px] text-[rgba(255,255,255,0.66)]">
+              Für die Nutzung der App ist immer die neueste Version erforderlich.
+              Es wurde ein Update auf Version{" "}
+              <span className="font-semibold text-[rgba(255,255,255,0.9)]">
+                {availableUpdateVersion}
+              </span>{" "}
+              gefunden.
+            </p>
+          </div>
+        </div>
+        <div className="mt-6 flex justify-end">
+          <button
+            type="button"
+            onClick={() => {
+              void handleInstallUpdate();
+            }}
+            disabled={updateInstallLoading}
+            className="cta-primary px-5 py-3 text-[13px] disabled:opacity-60"
+          >
+            {updateInstallLoading ? "Installiere..." : "Jetzt installieren"}
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
 
   const runUpdaterCheck = async (manual: boolean) => {
     if (updateCheckLoading) {
@@ -2738,15 +2774,12 @@ export default function App() {
     }
   };
   useEffect(() => {
-    if (!user) {
-      return;
-    }
     if (updaterCheckedRef.current) {
       return;
     }
     updaterCheckedRef.current = true;
     void runUpdaterCheck(false);
-  }, [user]);
+  }, []);
 
   useEffect(() => {
     if (teamApplyPopupShownRef.current) {
@@ -4771,6 +4804,7 @@ export default function App() {
           </div>
         </AppShell>
         {connectionOverlay}
+        {mandatoryUpdateOverlay}
       </>
     );
   }
@@ -4806,6 +4840,7 @@ export default function App() {
           </div>
         </AppShell>
         {connectionOverlay}
+        {mandatoryUpdateOverlay}
       </>
     );
   }
@@ -4836,6 +4871,7 @@ export default function App() {
             </div>
           </AppShell>
           {connectionOverlay}
+          {mandatoryUpdateOverlay}
         </>
       );
     }
@@ -4847,6 +4883,7 @@ export default function App() {
           </div>
         </AppShell>
         {connectionOverlay}
+        {mandatoryUpdateOverlay}
       </>
     );
   }
@@ -7145,6 +7182,7 @@ export default function App() {
           </div>
         )}
         {connectionOverlay}
+        {mandatoryUpdateOverlay}
       </div>
     </AppShell>
   );
