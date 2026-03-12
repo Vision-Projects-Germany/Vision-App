@@ -87,6 +87,13 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
     currentPhotoUrl: string | null | undefined,
     record: Record<string, unknown>
   ): string | null => {
+    const minecraftName =
+      (typeof record.minecraftName === "string" && record.minecraftName.trim()) ||
+      (typeof record.minecraft_name === "string" && record.minecraft_name.trim()) ||
+      null;
+    if (minecraftName) {
+      return `https://mc-heads.net/avatar/${encodeURIComponent(minecraftName)}/100`;
+    }
     const avatarMediaId =
       (typeof record.avatarMediaId === "string" && record.avatarMediaId.trim()) ||
       (typeof record.avatar_media_id === "string" && record.avatar_media_id.trim()) ||

@@ -1103,6 +1103,14 @@ function getFirestoreUserAvatarUrl(record: Record<string, unknown> | null | unde
   if (!record) {
     return null;
   }
+  const minecraftName =
+    (typeof record.minecraftName === "string" && record.minecraftName.trim()) ||
+    (typeof (record as any).minecraft_name === "string" &&
+      String((record as any).minecraft_name).trim()) ||
+    null;
+  if (minecraftName) {
+    return `https://mc-heads.net/avatar/${encodeURIComponent(minecraftName)}/100`;
+  }
   const discordAvatar =
     (typeof record.discordAvatar === "string" && record.discordAvatar.trim()) ||
     (typeof (record as any).discord_avatar === "string" &&
@@ -5827,6 +5835,21 @@ export default function App() {
               </div>
 
               <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
+                  <span className="text-[rgba(255,255,255,0.5)]">Discord:</span>{" "}
+                  {(() => {
+                    const record = (selectedMemberProfile.profileData ?? {}) as Record<string, unknown>;
+                    const discordName =
+                      typeof record.discordName === "string"
+                        ? record.discordName
+                        : typeof record.discord_name === "string"
+                          ? record.discord_name
+                          : typeof record.discordUsername === "string"
+                            ? record.discordUsername
+                            : null;
+                    return discordName ?? "—";
+                  })()}
+                </div>
                 <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
                   <span className="text-[rgba(255,255,255,0.5)]">Email:</span> {selectedMemberProfile.email ?? "—"}
                 </div>

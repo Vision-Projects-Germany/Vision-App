@@ -26,7 +26,7 @@ In `src-tauri/tauri.conf.json`:
 ## 2) Commit + Push
 ```bash
 git add .
-git commit -m "release: v0.2.0"
+git commit -m "release: v0.2.1"
 git push
 ```
 
@@ -34,14 +34,14 @@ git push
 
 ## 3) Release-Tag erstellen
 ```bash
-git tag v0.2.0
+git tag v0.2.1
 ```
 
 ---
 
 ## 4) Tag pushen (STARTET DEN BUILD)
 ```bash
-git push origin v0.2.0
+git push origin v0.2.1
 ```
 
 ---
