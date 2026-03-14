@@ -106,6 +106,9 @@ interface MemberProfile {
   avatarMediaId?: string | null;
   avatarUrl?: string | null;
   frameUrl?: string | null;
+  cosmetics?: {
+    frames?: string[];
+  } | null;
   projects?: string[];
   profileData?: Record<string, unknown>;
 }
@@ -187,6 +190,16 @@ type MemberProjectDialogState = {
 type MemberProjectRemoveDialogState = {
   member: MemberProfile;
   projectId: string;
+};
+
+type MemberCosmeticDialogState = {
+  member: MemberProfile;
+};
+
+type CosmeticOption = {
+  id: string;
+  displayName: string;
+  type: string | null;
 };
 
 type PendingPlayerActionDialogState = {
@@ -403,6 +416,7 @@ type PermissionFlags = {
   canViewApplications: boolean;
   canAcceptMembers: boolean;
   canViewUserEmails: boolean;
+  canManageCosmetics: boolean;
   isModerator: boolean;
 };
 
@@ -439,6 +453,7 @@ const buildPermissionFlags = (
       canViewApplications: true,
       canAcceptMembers: true,
       canViewUserEmails: true,
+      canManageCosmetics: true,
       isModerator: true
     };
   }
@@ -466,6 +481,7 @@ const buildPermissionFlags = (
   const canViewApplications = has("mod.viewApplications");
   const canAcceptMembers = has("members.accept");
   const canViewUserEmails = has("usersEmail.view");
+  const canManageCosmetics = has("cosmetics.manage");
 
   return {
     canAccessProjects,
@@ -488,6 +504,7 @@ const buildPermissionFlags = (
     canViewApplications,
     canAcceptMembers,
     canViewUserEmails,
+    canManageCosmetics,
     isModerator: hasModeratorRole
   };
 };
@@ -845,6 +862,18 @@ function getBanState(record: Record<string, unknown> | null | undefined) {
     banned,
     reason: reason?.trim() || null
   };
+}
+
+interface CosmeticMetaItem {
+  id?: string;
+  cosmeticId?: string;
+  cosmetic_id?: string;
+  displayName?: string;
+  display_name?: string;
+  name?: string;
+  type?: string;
+  cosmeticType?: string;
+  cosmetic_type?: string;
 }
 
 function mapApplicationItems(items: unknown[]): ApplicationItem[] {
@@ -1414,6 +1443,8 @@ export default function App() {
     null
   );
   const [unnoticedRewardIds, setUnnoticedRewardIds] = useState<string[]>([]);
+  const [cosmeticDisplayNames, setCosmeticDisplayNames] = useState<Record<string, string>>({});
+  const [cosmeticOptions, setCosmeticOptions] = useState<CosmeticOption[]>([]);
   const [rewardNoticeSubmitting, setRewardNoticeSubmitting] = useState(false);
   const [firebaseProfileLoading, setFirebaseProfileLoading] = useState(false);
   const [firebaseProfileError, setFirebaseProfileError] = useState<string | null>(null);
@@ -1568,6 +1599,10 @@ export default function App() {
   const [memberProjectTarget, setMemberProjectTarget] = useState("");
   const [memberProjectSaving, setMemberProjectSaving] = useState(false);
   const [memberProjectError, setMemberProjectError] = useState<string | null>(null);
+  const [memberCosmeticDialog, setMemberCosmeticDialog] = useState<MemberCosmeticDialogState | null>(null);
+  const [memberCosmeticTarget, setMemberCosmeticTarget] = useState("");
+  const [memberCosmeticSaving, setMemberCosmeticSaving] = useState(false);
+  const [memberCosmeticError, setMemberCosmeticError] = useState<string | null>(null);
   const [memberProjectRemoveDialog, setMemberProjectRemoveDialog] =
     useState<MemberProjectRemoveDialogState | null>(null);
   const [memberProjectRemoving, setMemberProjectRemoving] = useState(false);
@@ -1712,6 +1747,22 @@ export default function App() {
         label: project.title || project.id
       }));
   }, [memberProjectDialog, projectItems]);
+  const frameCosmeticOptions = useMemo(
+    () =>
+      cosmeticOptions.filter(
+        (option) =>
+          !option.type || option.type.toLowerCase() === "frame"
+      ),
+    [cosmeticOptions]
+  );
+  useEffect(() => {
+    if (!memberCosmeticDialog || memberCosmeticTarget) {
+      return;
+    }
+    if (frameCosmeticOptions.length > 0) {
+      setMemberCosmeticTarget(frameCosmeticOptions[0].id);
+    }
+  }, [memberCosmeticDialog, memberCosmeticTarget, frameCosmeticOptions]);
   const filteredRoleEditPermissions = useMemo(() => {
     const query = roleEditPermissionQuery.trim().toLowerCase();
     if (!query) {
@@ -1849,6 +1900,19 @@ export default function App() {
     }
     setMemberProjectDialog(null);
     setMemberProjectError(null);
+  };
+  const handleOpenMemberCosmeticDialog = (member: MemberProfile) => {
+    setMemberCosmeticDialog({ member });
+    setMemberCosmeticTarget(frameCosmeticOptions[0]?.id ?? "");
+    setMemberCosmeticError(null);
+  };
+  const handleCloseMemberCosmeticDialog = () => {
+    if (memberCosmeticSaving) {
+      return;
+    }
+    setMemberCosmeticDialog(null);
+    setMemberCosmeticTarget("");
+    setMemberCosmeticError(null);
   };
   const handleOpenMemberProjectRemoveDialog = (member: MemberProfile, projectId: string) => {
     setMemberProjectRemoveDialog({ member, projectId });
@@ -3398,6 +3462,65 @@ export default function App() {
   }, [userProfileData]);
 
   useEffect(() => {
+    const controller = new AbortController();
+
+    const loadCosmetics = async () => {
+      try {
+        const response = await fetch(
+          "https://api.vision-projects.eu/api/cosmetics?page=1&limit=200",
+          { signal: controller.signal }
+        );
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const data = await response.json();
+        const items: unknown[] = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.items)
+            ? data.items
+            : Array.isArray(data?.data)
+              ? data.data
+              : [];
+        const nextOptions: CosmeticOption[] = [];
+        const mapped = items.reduce((acc: Record<string, string>, entry: unknown) => {
+          const item = (entry ?? {}) as CosmeticMetaItem;
+          const id =
+            (typeof item.id === "string" && item.id.trim()) ||
+            (typeof item.cosmeticId === "string" && item.cosmeticId.trim()) ||
+            (typeof item.cosmetic_id === "string" && item.cosmetic_id.trim()) ||
+            null;
+          const displayName =
+            (typeof item.displayName === "string" && item.displayName.trim()) ||
+            (typeof item.display_name === "string" && item.display_name.trim()) ||
+            (typeof item.name === "string" && item.name.trim()) ||
+            null;
+          const type =
+            (typeof item.type === "string" && item.type.trim()) ||
+            (typeof item.cosmeticType === "string" && item.cosmeticType.trim()) ||
+            (typeof item.cosmetic_type === "string" && item.cosmetic_type.trim()) ||
+            null;
+          if (id && displayName) {
+            acc[id] = displayName;
+            nextOptions.push({ id, displayName, type });
+          }
+          return acc;
+        }, {} as Record<string, string>);
+        setCosmeticDisplayNames(mapped);
+        setCosmeticOptions(nextOptions);
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return;
+        }
+        console.warn("Cosmetics konnten nicht geladen werden.", error);
+      }
+    };
+
+    void loadCosmetics();
+
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
     if (!selectedProject?.id) {
       setProjectParticipants([]);
       setParticipantsError(null);
@@ -3685,6 +3808,16 @@ export default function App() {
               ? record.avatar_media_id
               : null;
         const projectsValue = normalizeProjectIds(record.projects);
+        const cosmetics =
+          typeof record.cosmetics === "object" && record.cosmetics !== null
+            ? {
+                frames: Array.isArray((record.cosmetics as Record<string, unknown>).frames)
+                  ? ((record.cosmetics as Record<string, unknown>).frames as unknown[]).filter(
+                      (entry): entry is string => typeof entry === "string" && entry.trim().length > 0
+                    )
+                  : []
+              }
+            : null;
         return {
           uid: docSnap.id,
           username: typeof record.username === "string" ? record.username : null,
@@ -3702,11 +3835,33 @@ export default function App() {
           avatarMediaId,
           avatarUrl: getFirestoreUserAvatarUrl(record),
           frameUrl: getFirestoreUserFrameUrl(record),
+          cosmetics,
           projects: projectsValue,
           profileData: record
         } as MemberProfile;
       });
       const filtered = mapped.filter((item) => item.uid);
+      console.info("[members] users loaded", {
+        total: filtered.length,
+        users: filtered.map((item) => ({
+          uid: item.uid,
+          username: item.username ?? null,
+          email: item.email ?? null,
+          roles: Array.isArray(item.roles) ? item.roles : [],
+          experience: item.experience ?? null,
+          level: item.level ?? null,
+          age: item.age ?? null,
+          minecraftName: item.minecraftName ?? null,
+          bio: item.bio ?? null,
+          interests: Array.isArray(item.interests) ? item.interests : [],
+          avatarMediaId: item.avatarMediaId ?? null,
+          avatarUrl: item.avatarUrl ?? null,
+          frameUrl: item.frameUrl ?? null,
+          cosmetics: item.cosmetics ?? null,
+          projects: Array.isArray(item.projects) ? item.projects : [],
+          profileData: item.profileData ?? null
+        }))
+      });
       setMembers(filtered);
       showToast(`Mitglieder geladen (${filtered.length}).`, "success");
     })()
@@ -4829,6 +4984,153 @@ export default function App() {
     }
   };
 
+  const handleSubmitMemberCosmeticGrant = async () => {
+    if (!user || !memberCosmeticDialog || !memberCosmeticTarget.trim()) {
+      return;
+    }
+    setMemberCosmeticSaving(true);
+    setMemberCosmeticError(null);
+    try {
+      const token = await getApiToken();
+      const cosmeticId = memberCosmeticTarget.trim();
+      await requestJson<unknown>("https://api.vision-projects.eu/api/admin/users/cosmetics/grant", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          uid: memberCosmeticDialog.member.uid,
+          cosmeticId,
+          type: "frame"
+        })
+      });
+
+      setMembers((prev) =>
+        prev.map((member) => {
+          if (member.uid !== memberCosmeticDialog.member.uid) {
+            return member;
+          }
+          const currentFrames = Array.isArray(member.cosmetics?.frames)
+            ? member.cosmetics.frames
+            : [];
+          const nextFrames = currentFrames.includes(cosmeticId)
+            ? currentFrames
+            : [...currentFrames, cosmeticId];
+          const nextProfileData =
+            member.profileData && typeof member.profileData === "object"
+              ? ({
+                  ...member.profileData,
+                  cosmetics: {
+                    ...(typeof (member.profileData as any).cosmetics === "object" &&
+                    (member.profileData as any).cosmetics !== null
+                      ? (member.profileData as any).cosmetics
+                      : {}),
+                    frames: nextFrames
+                  }
+                } as Record<string, unknown>)
+              : member.profileData;
+          return {
+            ...member,
+            cosmetics: { frames: nextFrames },
+            profileData: nextProfileData
+          };
+        })
+      );
+
+      setSelectedMemberProfile((prev) => {
+        if (!prev || prev.uid !== memberCosmeticDialog.member.uid) {
+          return prev;
+        }
+        const currentFrames = Array.isArray(prev.cosmetics?.frames) ? prev.cosmetics.frames : [];
+        const nextFrames = currentFrames.includes(cosmeticId)
+          ? currentFrames
+          : [...currentFrames, cosmeticId];
+        return {
+          ...prev,
+          cosmetics: { frames: nextFrames }
+        };
+      });
+
+      const cosmeticLabel = cosmeticDisplayNames[cosmeticId] ?? cosmeticId;
+      showToast(`Cosmetic "${cosmeticLabel}" hinzugefügt.`, "success");
+      setMemberCosmeticDialog(null);
+      setMemberCosmeticTarget("");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unbekannter Fehler.";
+      setMemberCosmeticError(message);
+      showToast("Cosmetic konnte nicht hinzugefügt werden.", "error");
+    } finally {
+      setMemberCosmeticSaving(false);
+    }
+  };
+
+  const handleRemoveMemberCosmetic = async (member: MemberProfile, cosmeticId: string) => {
+    if (!user || !cosmeticId.trim()) {
+      return;
+    }
+    try {
+      const token = await getApiToken();
+      await requestJson<unknown>("https://api.vision-projects.eu/api/admin/users/cosmetics/remove", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          uid: member.uid,
+          cosmeticId,
+          type: "frame"
+        })
+      });
+
+      setMembers((prev) =>
+        prev.map((entry) => {
+          if (entry.uid !== member.uid) {
+            return entry;
+          }
+          const currentFrames = Array.isArray(entry.cosmetics?.frames) ? entry.cosmetics.frames : [];
+          const nextFrames = currentFrames.filter((frameId) => frameId !== cosmeticId);
+          const nextProfileData =
+            entry.profileData && typeof entry.profileData === "object"
+              ? ({
+                  ...entry.profileData,
+                  cosmetics: {
+                    ...(typeof (entry.profileData as any).cosmetics === "object" &&
+                    (entry.profileData as any).cosmetics !== null
+                      ? (entry.profileData as any).cosmetics
+                      : {}),
+                    frames: nextFrames
+                  }
+                } as Record<string, unknown>)
+              : entry.profileData;
+          return {
+            ...entry,
+            cosmetics: { frames: nextFrames },
+            profileData: nextProfileData
+          };
+        })
+      );
+
+      setSelectedMemberProfile((prev) => {
+        if (!prev || prev.uid !== member.uid) {
+          return prev;
+        }
+        const currentFrames = Array.isArray(prev.cosmetics?.frames) ? prev.cosmetics.frames : [];
+        const nextFrames = currentFrames.filter((frameId) => frameId !== cosmeticId);
+        return {
+          ...prev,
+          cosmetics: { frames: nextFrames }
+        };
+      });
+
+      const cosmeticLabel = cosmeticDisplayNames[cosmeticId] ?? cosmeticId;
+      showToast(`Cosmetic "${cosmeticLabel}" entfernt.`, "success");
+    } catch (error) {
+      showToast(formatToastError(error) || "Cosmetic konnte nicht entfernt werden.", "error");
+    }
+  };
+
   const handleAcknowledgeRewards = async () => {
     if (!user || unnoticedRewardIds.length === 0) {
       setUnnoticedRewardIds([]);
@@ -5071,8 +5373,11 @@ export default function App() {
                     handleOpenMemberRoleDialog,
                     handleOpenMemberProjectDialog,
                     handleOpenMemberProjectRemoveDialog,
+                    handleOpenMemberCosmeticDialog,
+                    handleRemoveMemberCosmetic,
                     openBanDialog,
                     openWarnDialog,
+                    cosmeticDisplayNames,
                     handleAuthzTest,
                     authzTestLoading,
                     authzTestError,
@@ -5675,6 +5980,73 @@ export default function App() {
             </div>
           </div>
         )}
+        {memberCosmeticDialog && (
+          <div className="fixed inset-0 z-[79] flex items-center justify-center bg-black/70 px-4">
+            <div className="w-full max-w-[460px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
+              <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
+                Cosmetic hinzufügen
+              </h3>
+              <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.65)]">
+                User:{" "}
+                <span className="font-semibold text-[rgba(255,255,255,0.9)]">
+                  {memberCosmeticDialog.member.username ?? memberCosmeticDialog.member.uid}
+                </span>
+              </p>
+              <div className="mt-4">
+                <label className="text-[11px] uppercase tracking-[0.18em] text-[rgba(255,255,255,0.45)]">
+                  Cosmetic (Frame)
+                </label>
+                {frameCosmeticOptions.length > 0 ? (
+                  <select
+                    value={memberCosmeticTarget}
+                    onChange={(event) => setMemberCosmeticTarget(event.target.value)}
+                    className="mt-2 w-full rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[#0F1116] px-3 py-2 text-[13px] text-[rgba(255,255,255,0.85)] outline-none focus:border-[#2BFE71]"
+                    disabled={memberCosmeticSaving}
+                  >
+                    {frameCosmeticOptions.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.displayName} ({option.id})
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    value={memberCosmeticTarget}
+                    onChange={(event) => setMemberCosmeticTarget(event.target.value)}
+                    className="mt-2 w-full rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[#0F1116] px-3 py-2 text-[13px] text-[rgba(255,255,255,0.85)] outline-none focus:border-[#2BFE71]"
+                    placeholder="Cosmetic ID eingeben"
+                    disabled={memberCosmeticSaving}
+                  />
+                )}
+              </div>
+              {memberCosmeticError && (
+                <div className="mt-3 rounded-[10px] border border-[rgba(255,100,100,0.25)] bg-[rgba(255,100,100,0.08)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.8)]">
+                  {memberCosmeticError}
+                </div>
+              )}
+              <div className="mt-5 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={handleCloseMemberCosmeticDialog}
+                  disabled={memberCosmeticSaving}
+                  className="cta-secondary px-4 py-2 text-[12px]"
+                >
+                  Abbrechen
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleSubmitMemberCosmeticGrant();
+                  }}
+                  disabled={memberCosmeticSaving || !memberCosmeticTarget.trim()}
+                  className="cta-primary px-4 py-2 text-[12px] disabled:opacity-60"
+                >
+                  {memberCosmeticSaving ? "Hinzufügen..." : "Hinzufügen"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {pendingPlayerActionDialog && (
           <div className="fixed inset-0 z-[79] flex items-center justify-center bg-black/70 px-4">
             <div className="w-full max-w-[460px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
@@ -5950,28 +6322,33 @@ export default function App() {
                   {unnoticedRewardIds.map((rewardId) => (
                     <div
                       key={rewardId}
-                      className="relative flex h-[320px] w-[320px] items-center justify-center"
+                      className="flex w-[320px] flex-col items-center"
                     >
-                      <div className="relative h-[252px] w-[252px] overflow-hidden rounded-full border border-[rgba(255,255,255,0.14)] bg-[rgba(255,255,255,0.04)] shadow-[0_20px_40px_rgba(0,0,0,0.35)]">
-                        {userAvatarUrl ? (
-                          <img
-                            src={userAvatarUrl}
-                            alt="Profilbild Vorschau"
-                            className="h-full w-full object-cover"
-                            loading="eager"
-                          />
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center bg-[rgba(255,255,255,0.05)] text-[42px] font-bold text-[rgba(255,255,255,0.78)]">
-                            {(username ?? user?.displayName ?? "VP").slice(0, 2).toUpperCase()}
-                          </div>
-                        )}
+                      <div className="relative flex h-[320px] w-[320px] items-center justify-center">
+                        <div className="relative h-[252px] w-[252px] overflow-hidden rounded-full border border-[rgba(255,255,255,0.14)] bg-[rgba(255,255,255,0.04)] shadow-[0_20px_40px_rgba(0,0,0,0.35)]">
+                          {userAvatarUrl ? (
+                            <img
+                              src={userAvatarUrl}
+                              alt="Profilbild Vorschau"
+                              className="h-full w-full object-cover"
+                              loading="eager"
+                            />
+                          ) : (
+                            <div className="flex h-full w-full items-center justify-center bg-[rgba(255,255,255,0.05)] text-[42px] font-bold text-[rgba(255,255,255,0.78)]">
+                              {(username ?? user?.displayName ?? "VP").slice(0, 2).toUpperCase()}
+                            </div>
+                          )}
+                        </div>
+                        <img
+                          src={`https://api.vision-projects.eu/media/${encodeURIComponent(rewardId)}`}
+                          alt={`Cosmetic ${rewardId}`}
+                          className="pointer-events-none absolute h-[320px] w-[320px] object-contain drop-shadow-[0_24px_60px_rgba(0,0,0,0.45)]"
+                          loading="eager"
+                        />
                       </div>
-                      <img
-                        src={`https://api.vision-projects.eu/media/${encodeURIComponent(rewardId)}`}
-                        alt={`Cosmetic ${rewardId}`}
-                        className="pointer-events-none absolute h-[320px] w-[320px] object-contain drop-shadow-[0_24px_60px_rgba(0,0,0,0.45)]"
-                        loading="eager"
-                      />
+                      <p className="mt-2 text-center text-[15px] font-semibold text-[rgba(255,255,255,0.92)]">
+                        {cosmeticDisplayNames[rewardId] ?? rewardId}
+                      </p>
                     </div>
                   ))}
                 </div>
@@ -7420,8 +7797,11 @@ function renderContent(
   ) => void,
   onOpenMemberProjectDialog: (member: MemberProfile) => void,
   onOpenMemberProjectRemoveDialog: (member: MemberProfile, projectId: string) => void,
+  onOpenMemberCosmeticDialog: (member: MemberProfile) => void,
+  onRemoveMemberCosmetic: (member: MemberProfile, cosmeticId: string) => void,
   onOpenBanDialog: (member: MemberProfile) => void,
   onOpenWarnDialog: (member: MemberProfile) => void,
+  cosmeticDisplayNames: Record<string, string>,
   handleAuthzTest: () => void,
   authzTestLoading: boolean,
   authzTestError: string | null,
@@ -9070,6 +9450,7 @@ function renderContent(
     }
     const canBanUsers = permissionFlags.canBanUsers;
     const canWarnUsers = permissionFlags.canWarnUsers;
+    const canManageCosmetics = permissionFlags.canManageCosmetics;
     const canManageUserRoles =
       permissionFlags.canAccessRoles || permissionFlags.canAccessMembers || permissionFlags.isModerator;
     const canManageMemberProjects = permissionFlags.canAccessMembers || permissionFlags.isModerator;
@@ -9105,7 +9486,7 @@ function renderContent(
               }`}
           >
             <span>User</span>
-            <span>UID</span>
+            <span>{canManageCosmetics ? "Cosmetics" : "UID"}</span>
             <span>Roles</span>
             <span>Details</span>
             {showActions && <span>Aktionen</span>}
@@ -9150,7 +9531,96 @@ function renderContent(
                   </div>
                 </div>
                 <div className="text-[11px] text-[rgba(255,255,255,0.6)]">
-                  {member.uid}
+                  {canManageCosmetics ? (
+                    (() => {
+                      const frames = Array.isArray(member.cosmetics?.frames) ? member.cosmetics.frames : [];
+                      const record = (member.profileData ?? {}) as Record<string, unknown>;
+                      const equippedCosmetic =
+                        (typeof record.equippedCosmetic === "object" && record.equippedCosmetic !== null
+                          ? (record.equippedCosmetic as Record<string, unknown>)
+                          : null) ||
+                        (typeof record.equipedCosmetic === "object" && record.equipedCosmetic !== null
+                          ? (record.equipedCosmetic as Record<string, unknown>)
+                          : null) ||
+                        (typeof record.equipped_cosmetic === "object" && record.equipped_cosmetic !== null
+                          ? (record.equipped_cosmetic as Record<string, unknown>)
+                          : null);
+                      const equippedFrameId =
+                        (typeof equippedCosmetic?.frame === "string" && equippedCosmetic.frame.trim()) ||
+                        (typeof equippedCosmetic?.frameId === "string" && equippedCosmetic.frameId.trim()) ||
+                        (typeof equippedCosmetic?.frame_id === "string" && equippedCosmetic.frame_id.trim()) ||
+                        null;
+
+                      if (frames.length === 0) {
+                        return (
+                          <div className="flex flex-wrap items-center gap-1">
+                            <span className="inline-flex items-center rounded-[8px] border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.02)] px-2 py-0.5 text-[10px] text-[rgba(255,255,255,0.42)]">
+                              Kein Cosmetic
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onOpenMemberCosmeticDialog(member);
+                              }}
+                              className="inline-flex items-center rounded-[8px] border border-[rgba(43,254,113,0.35)] bg-[rgba(43,254,113,0.12)] px-2 py-0.5 text-[10px] font-semibold text-[#2BFE71] transition hover:bg-[rgba(43,254,113,0.22)]"
+                              title="Cosmetic hinzufügen"
+                              aria-label="Cosmetic hinzufügen"
+                            >
+                              + Add
+                            </button>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="flex flex-wrap items-center gap-1">
+                          {frames.map((frameId) => {
+                            const isEquipped = equippedFrameId === frameId;
+                            return (
+                              <span
+                                key={`${member.uid}-${frameId}`}
+                                className={`inline-flex items-center gap-1 rounded-[8px] border px-2 py-0.5 text-[10px] ${
+                                  isEquipped
+                                    ? "border-[rgba(43,254,113,0.35)] bg-[rgba(43,254,113,0.14)] font-semibold text-[#92FFC0]"
+                                    : "border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.04)] text-[rgba(255,255,255,0.74)]"
+                                }`}
+                                title={frameId}
+                              >
+                                {cosmeticDisplayNames[frameId] ?? frameId}
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    onRemoveMemberCosmetic(member, frameId);
+                                  }}
+                                  className="text-[rgba(255,255,255,0.55)] transition hover:text-[#FF8A8A]"
+                                  aria-label={`Cosmetic ${cosmeticDisplayNames[frameId] ?? frameId} entfernen`}
+                                  title={`Cosmetic ${cosmeticDisplayNames[frameId] ?? frameId} entfernen`}
+                                >
+                                  <i className="fa-solid fa-xmark text-[9px]" aria-hidden="true" />
+                                </button>
+                              </span>
+                            );
+                          })}
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onOpenMemberCosmeticDialog(member);
+                            }}
+                            className="inline-flex items-center rounded-[8px] border border-[rgba(43,254,113,0.35)] bg-[rgba(43,254,113,0.12)] px-2 py-0.5 text-[10px] font-semibold text-[#2BFE71] transition hover:bg-[rgba(43,254,113,0.22)]"
+                            title="Cosmetic hinzufügen"
+                            aria-label="Cosmetic hinzufügen"
+                          >
+                            + Add
+                          </button>
+                        </div>
+                      );
+                    })()
+                  ) : (
+                    member.uid
+                  )}
                 </div>
                 <div className="text-[11px] text-[rgba(255,255,255,0.6)]">
                   <div className="flex flex-wrap items-center gap-1">
