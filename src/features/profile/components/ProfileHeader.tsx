@@ -108,6 +108,7 @@ export const ProfileHeader: React.FC<ProfileHeaderProps> = ({
             <ProfileAvatar
               photoURL={profile.photoURL}
               displayName={profile.displayName || profile.username}
+              frameUrl={profile.frameUrl ?? null}
               size="xl"
               editable={isEditable && isEditing}
               onUpload={onAvatarUpload}

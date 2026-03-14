@@ -105,6 +105,7 @@ interface MemberProfile {
   interests?: string[] | null;
   avatarMediaId?: string | null;
   avatarUrl?: string | null;
+  frameUrl?: string | null;
   projects?: string[];
   profileData?: Record<string, unknown>;
 }
@@ -401,6 +402,7 @@ type PermissionFlags = {
   canWarnUsers: boolean;
   canViewApplications: boolean;
   canAcceptMembers: boolean;
+  canViewUserEmails: boolean;
   isModerator: boolean;
 };
 
@@ -436,6 +438,7 @@ const buildPermissionFlags = (
       canWarnUsers: true,
       canViewApplications: true,
       canAcceptMembers: true,
+      canViewUserEmails: true,
       isModerator: true
     };
   }
@@ -462,6 +465,7 @@ const buildPermissionFlags = (
   const canWarnUsers = has("users.warn");
   const canViewApplications = has("mod.viewApplications");
   const canAcceptMembers = has("members.accept");
+  const canViewUserEmails = has("usersEmail.view");
 
   return {
     canAccessProjects,
@@ -483,6 +487,7 @@ const buildPermissionFlags = (
     canWarnUsers,
     canViewApplications,
     canAcceptMembers,
+    canViewUserEmails,
     isModerator: hasModeratorRole
   };
 };
@@ -1119,6 +1124,63 @@ function getFirestoreUserAvatarUrl(record: Record<string, unknown> | null | unde
   return discordAvatar;
 }
 
+function getFirestoreUserFrameUrl(record: Record<string, unknown> | null | undefined) {
+  if (!record) {
+    return null;
+  }
+  const cosmetics =
+    typeof record.cosmetics === "object" && record.cosmetics !== null
+      ? (record.cosmetics as Record<string, unknown>)
+      : null;
+  const equippedCosmeticCandidate =
+    (typeof record.equippedCosmetic === "object" && record.equippedCosmetic !== null
+      ? (record.equippedCosmetic as Record<string, unknown>)
+      : null) ||
+    (typeof (record as any).equipedCosmetic === "object" && (record as any).equipedCosmetic !== null
+      ? ((record as any).equipedCosmetic as Record<string, unknown>)
+      : null) ||
+    (typeof (record as any).equipped_cosmetic === "object" && (record as any).equipped_cosmetic !== null
+      ? ((record as any).equipped_cosmetic as Record<string, unknown>)
+      : null);
+  const equippedFrameId =
+    (typeof equippedCosmeticCandidate?.frame === "string" && equippedCosmeticCandidate.frame.trim()) ||
+    (typeof equippedCosmeticCandidate?.frameId === "string" && equippedCosmeticCandidate.frameId.trim()) ||
+    (typeof equippedCosmeticCandidate?.frame_id === "string" && equippedCosmeticCandidate.frame_id.trim()) ||
+    null;
+  const ownedFrames = Array.isArray(cosmetics?.frames)
+    ? cosmetics.frames.filter(
+        (entry): entry is string => typeof entry === "string" && entry.trim().length > 0
+      )
+    : [];
+  const normalizedOwnedFrames = new Set(ownedFrames.map((entry) => entry.trim()));
+  const frameId =
+    equippedFrameId && normalizedOwnedFrames.has(equippedFrameId)
+      ? equippedFrameId
+      : null;
+  return frameId
+    ? `https://api.vision-projects.eu/media/${encodeURIComponent(frameId)}`
+    : null;
+}
+
+function getUnnoticedRewardIds(record: Record<string, unknown> | null | undefined) {
+  if (!record) {
+    return [];
+  }
+  const noticedRewards =
+    typeof record.noticedRewards === "object" && record.noticedRewards !== null
+      ? (record.noticedRewards as Record<string, unknown>)
+      : null;
+  if (!noticedRewards) {
+    return [];
+  }
+  return Object.entries(noticedRewards)
+    .filter(
+      ([rewardId, noticed]) =>
+        typeof rewardId === "string" && rewardId.trim().length > 0 && noticed === false
+    )
+    .map(([rewardId]) => rewardId.trim());
+}
+
 function toModrinthCard(project: ModrinthProject) {
   const coverUrl = getModrinthCover(project) ?? project.icon_url ?? null;
   return {
@@ -1351,6 +1413,8 @@ export default function App() {
   const [userProfileData, setUserProfileData] = useState<Record<string, unknown> | null>(
     null
   );
+  const [unnoticedRewardIds, setUnnoticedRewardIds] = useState<string[]>([]);
+  const [rewardNoticeSubmitting, setRewardNoticeSubmitting] = useState(false);
   const [firebaseProfileLoading, setFirebaseProfileLoading] = useState(false);
   const [firebaseProfileError, setFirebaseProfileError] = useState<string | null>(null);
   const [profileDebugVisible, setProfileDebugVisible] = useState(false);
@@ -3305,6 +3369,7 @@ export default function App() {
       setUsername(null);
       setUserProjectIds([]);
       setUserProfileData(null);
+      setUnnoticedRewardIds([]);
       return;
     }
 
@@ -3320,8 +3385,17 @@ export default function App() {
         setUsername(null);
         setUserProjectIds([]);
         setUserProfileData(null);
+        setUnnoticedRewardIds([]);
       });
   }, [user]);
+
+  useEffect(() => {
+    if (!userProfileData) {
+      setUnnoticedRewardIds([]);
+      return;
+    }
+    setUnnoticedRewardIds(getUnnoticedRewardIds(userProfileData));
+  }, [userProfileData]);
 
   useEffect(() => {
     if (!selectedProject?.id) {
@@ -3375,7 +3449,8 @@ export default function App() {
             minecraftName:
               typeof record.minecraftName === "string" ? record.minecraftName : null,
             avatarMediaId,
-            avatarUrl: getFirestoreUserAvatarUrl(record)
+            avatarUrl: getFirestoreUserAvatarUrl(record),
+            frameUrl: getFirestoreUserFrameUrl(record)
           } as MemberProfile;
         })
         .filter((entry): entry is MemberProfile => Boolean(entry?.uid));
@@ -3626,6 +3701,7 @@ export default function App() {
             : null,
           avatarMediaId,
           avatarUrl: getFirestoreUserAvatarUrl(record),
+          frameUrl: getFirestoreUserFrameUrl(record),
           projects: projectsValue,
           profileData: record
         } as MemberProfile;
@@ -3706,6 +3782,7 @@ export default function App() {
               : null,
             avatarMediaId,
             avatarUrl: getFirestoreUserAvatarUrl(record),
+            frameUrl: getFirestoreUserFrameUrl(record),
             projects: projectsValue,
             profileData: record,
             status
@@ -4749,6 +4826,43 @@ export default function App() {
       setProjectMembershipPending((current) =>
         current?.projectId === project.id && current.action === "leave" ? null : current
       );
+    }
+  };
+
+  const handleAcknowledgeRewards = async () => {
+    if (!user || unnoticedRewardIds.length === 0) {
+      setUnnoticedRewardIds([]);
+      return;
+    }
+
+    setRewardNoticeSubmitting(true);
+    try {
+      const payload = unnoticedRewardIds.reduce<Record<string, true>>((acc, rewardId) => {
+        acc[`noticedRewards.${rewardId}`] = true;
+        return acc;
+      }, {});
+
+      await updateDoc(doc(db, "users", user.uid), payload);
+
+      setUserProfileData((prev) => {
+        const next = { ...(prev ?? {}) } as Record<string, unknown>;
+        const currentNoticedRewards =
+          typeof next.noticedRewards === "object" && next.noticedRewards !== null
+            ? { ...(next.noticedRewards as Record<string, unknown>) }
+            : {};
+        for (const rewardId of unnoticedRewardIds) {
+          currentNoticedRewards[rewardId] = true;
+        }
+        next.noticedRewards = currentNoticedRewards;
+        return next;
+      });
+      setUnnoticedRewardIds([]);
+      showToast("Neue Cosmetics bestätigt.", "success");
+    } catch (error) {
+      console.error("Failed to acknowledge cosmetic rewards", error);
+      showToast("Cosmetics konnten nicht bestätigt werden.", "error");
+    } finally {
+      setRewardNoticeSubmitting(false);
     }
   };
 
@@ -5819,6 +5933,63 @@ export default function App() {
             </div>
           </div>
         )}
+        {unnoticedRewardIds.length > 0 && (
+          <div className="fixed inset-0 z-[90] flex items-center justify-center bg-[rgba(5,7,10,0.82)] px-4 backdrop-blur-[10px]">
+            <div className="w-full max-w-[760px] rounded-[28px] border border-[rgba(255,255,255,0.12)] bg-[radial-gradient(circle_at_top,rgba(43,254,113,0.10),rgba(18,20,26,0.98)_48%)] px-8 py-8 shadow-[0_40px_120px_rgba(0,0,0,0.6)]">
+              <div className="text-center">
+                <p className="text-[11px] uppercase tracking-[0.24em] text-[rgba(255,255,255,0.44)]">
+                  Neue Freischaltung
+                </p>
+                <h2 className="mt-3 text-[30px] font-extrabold tracking-[-0.03em] text-white">
+                  Du hast einen Reward erhalten
+                </h2>
+              </div>
+
+              <div className="mt-8 flex justify-center">
+                <div className="flex flex-wrap items-center justify-center gap-6">
+                  {unnoticedRewardIds.map((rewardId) => (
+                    <div
+                      key={rewardId}
+                      className="relative flex h-[320px] w-[320px] items-center justify-center"
+                    >
+                      <div className="relative h-[252px] w-[252px] overflow-hidden rounded-full border border-[rgba(255,255,255,0.14)] bg-[rgba(255,255,255,0.04)] shadow-[0_20px_40px_rgba(0,0,0,0.35)]">
+                        {userAvatarUrl ? (
+                          <img
+                            src={userAvatarUrl}
+                            alt="Profilbild Vorschau"
+                            className="h-full w-full object-cover"
+                            loading="eager"
+                          />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center bg-[rgba(255,255,255,0.05)] text-[42px] font-bold text-[rgba(255,255,255,0.78)]">
+                            {(username ?? user?.displayName ?? "VP").slice(0, 2).toUpperCase()}
+                          </div>
+                        )}
+                      </div>
+                      <img
+                        src={`https://api.vision-projects.eu/media/${encodeURIComponent(rewardId)}`}
+                        alt={`Cosmetic ${rewardId}`}
+                        className="pointer-events-none absolute h-[320px] w-[320px] object-contain drop-shadow-[0_24px_60px_rgba(0,0,0,0.45)]"
+                        loading="eager"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mt-8 flex items-center justify-center">
+                <button
+                  type="button"
+                  onClick={() => void handleAcknowledgeRewards()}
+                  disabled={rewardNoticeSubmitting}
+                  className="cta-primary min-w-[180px] px-5 py-3 text-[13px] disabled:opacity-60"
+                >
+                  {rewardNoticeSubmitting ? "Bestätige..." : "Verstanden"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {toastMessage && (
           <div
             className={`fixed bottom-6 left-1/2 z-[80] w-max max-w-[min(680px,calc(100vw-32px))] -translate-x-1/2 overflow-hidden rounded-[14px] border px-4 py-3 text-[12px] font-semibold shadow-[0_20px_40px_rgba(0,0,0,0.45)] backdrop-blur-[6px] transition-all duration-300 ${toastVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-2"} ${toastVariant === "success"
@@ -5888,7 +6059,8 @@ export default function App() {
                   })()}
                 </div>
                 <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
-                  <span className="text-[rgba(255,255,255,0.5)]">Email:</span> {selectedMemberProfile.email ?? "—"}
+                  <span className="text-[rgba(255,255,255,0.5)]">Email:</span>{" "}
+                  {permissionFlags.canViewUserEmails ? selectedMemberProfile.email ?? "—" : "Keine Berechtigung"}
                 </div>
                 <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
                   <span className="text-[rgba(255,255,255,0.5)]">Minecraft:</span> {selectedMemberProfile.minecraftName ?? "—"}
@@ -8970,9 +9142,11 @@ function renderContent(
                     <p className="text-[13px] font-semibold text-[rgba(255,255,255,0.92)]">
                       {member.username ?? "Unbekannt"}
                     </p>
-                    <p className="text-[11px] text-[rgba(255,255,255,0.55)]">
-                      {member.email ?? "Keine Email"}
-                    </p>
+                        {permissionFlags.canViewUserEmails && (
+                          <p className="text-[11px] text-[rgba(255,255,255,0.55)]">
+                            {member.email ?? "Keine Email"}
+                          </p>
+                        )}
                   </div>
                 </div>
                 <div className="text-[11px] text-[rgba(255,255,255,0.6)]">
@@ -9185,9 +9359,11 @@ function renderContent(
                     <p className="text-[13px] font-semibold text-[rgba(255,255,255,0.92)]">
                       {member.username ?? "Unbekannt"}
                     </p>
-                    <p className="text-[11px] text-[rgba(255,255,255,0.55)]">
-                      {member.email ?? "Keine Email"}
-                    </p>
+                    {permissionFlags.canViewUserEmails && (
+                      <p className="text-[11px] text-[rgba(255,255,255,0.55)]">
+                        {member.email ?? "Keine Email"}
+                      </p>
+                    )}
                   </div>
                 </div>
                 <div className="text-[11px] text-[rgba(255,255,255,0.6)]">

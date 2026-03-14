@@ -111,6 +111,40 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
       null;
     return currentPhotoUrl || explicitAvatarUrl || discordAvatarUrl || mediaAvatarUrl || null;
   };
+  const resolveFrameUrl = (record: Record<string, unknown>): string | null => {
+    const cosmetics =
+      typeof record.cosmetics === "object" && record.cosmetics !== null
+        ? (record.cosmetics as Record<string, unknown>)
+        : null;
+    const equippedCosmeticCandidate =
+      (typeof record.equippedCosmetic === "object" && record.equippedCosmetic !== null
+        ? (record.equippedCosmetic as Record<string, unknown>)
+        : null) ||
+      (typeof record.equipedCosmetic === "object" && record.equipedCosmetic !== null
+        ? (record.equipedCosmetic as Record<string, unknown>)
+        : null) ||
+      (typeof record.equipped_cosmetic === "object" && record.equipped_cosmetic !== null
+        ? (record.equipped_cosmetic as Record<string, unknown>)
+        : null);
+    const equippedFrameId =
+      (typeof equippedCosmeticCandidate?.frame === "string" && equippedCosmeticCandidate.frame.trim()) ||
+      (typeof equippedCosmeticCandidate?.frameId === "string" && equippedCosmeticCandidate.frameId.trim()) ||
+      (typeof equippedCosmeticCandidate?.frame_id === "string" && equippedCosmeticCandidate.frame_id.trim()) ||
+      null;
+    const ownedFrames = Array.isArray(cosmetics?.frames)
+      ? cosmetics.frames.filter(
+          (entry): entry is string => typeof entry === "string" && entry.trim().length > 0
+        )
+      : [];
+    const normalizedOwnedFrames = new Set(ownedFrames.map((entry) => entry.trim()));
+    const frameId =
+      equippedFrameId && normalizedOwnedFrames.has(equippedFrameId)
+        ? equippedFrameId
+        : null;
+    return frameId
+      ? `https://api.vision-projects.eu/media/${encodeURIComponent(frameId)}`
+      : null;
+  };
 
   const toDateSafe = (value: unknown): Date | undefined => {
     if (!value) return undefined;
@@ -216,6 +250,7 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
             (typeof data.avatarMediaId === "string" && data.avatarMediaId) ||
             (typeof data.avatar_media_id === "string" && data.avatar_media_id) ||
             null;
+          const frameUrl = resolveFrameUrl(data);
           const userProfile: UserProfile = {
             uid: currentUser.uid,
             username: data.username || null,
@@ -240,6 +275,7 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
             nextLevelXpRequired: currentLevelEntry?.xpRequired ?? null,
             avatarMediaId,
             avatarUrl: profileAvatarUrl,
+            frameUrl,
             projects: normalizeProjectIds(data.projects),
             createdAt: toDateSafe(data.createdAt),
             updatedAt: toDateSafe(data.updatedAt),
@@ -300,6 +336,7 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
             nextLevelXpRequired: null,
             avatarMediaId: null,
             avatarUrl: null,
+            frameUrl: null,
             projects: [],
           };
           setProfile(basicProfile);

@@ -5,6 +5,7 @@ import { convertFileSrc } from '@tauri-apps/api/core';
 interface ProfileAvatarProps {
   photoURL: string | null;
   displayName: string | null;
+  frameUrl?: string | null;
   size?: 'sm' | 'md' | 'lg' | 'xl';
   editable?: boolean;
   onUpload?: (fileUrl: string) => void;
@@ -20,12 +21,14 @@ const sizeClasses = {
 export const ProfileAvatar: React.FC<ProfileAvatarProps> = ({
   photoURL,
   displayName,
+  frameUrl = null,
   size = 'lg',
   editable = false,
   onUpload,
 }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const avatarBorderClass = frameUrl ? 'border-transparent' : 'border-[#50fa7b]';
 
   const getInitials = (name: string | null): string => {
     if (!name) return '?';
@@ -68,9 +71,17 @@ export const ProfileAvatar: React.FC<ProfileAvatarProps> = ({
 
   return (
     <div className="relative inline-flex items-center justify-center">
+      {frameUrl && (
+        <img
+          src={frameUrl}
+          alt=""
+          className="pointer-events-none absolute left-1/2 top-1/2 z-10 h-[calc(100%+20px)] w-[calc(100%+20px)] -translate-x-1/2 -translate-y-1/2 scale-[1.14] object-contain"
+          aria-hidden="true"
+        />
+      )}
       <div
-        className={`${sizeClasses[size]} rounded-full overflow-hidden border-2 border-[#50fa7b] bg-surface-2 flex items-center justify-center font-semibold transition-all duration-300 ${
-          editable ? 'cursor-pointer hover:border-[#3dff7d] hover:opacity-90' : ''
+        className={`relative z-0 ${sizeClasses[size]} rounded-full overflow-hidden border-2 ${avatarBorderClass} bg-surface-2 flex items-center justify-center font-semibold transition-all duration-300 ${
+          editable ? `cursor-pointer ${frameUrl ? 'hover:opacity-90' : 'hover:border-[#3dff7d] hover:opacity-90'}` : ''
         } ${isUploading ? 'opacity-50' : ''}`}
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
@@ -85,7 +96,7 @@ export const ProfileAvatar: React.FC<ProfileAvatarProps> = ({
         ) : (
           <span className="text-muted select-none">{getInitials(displayName)}</span>
         )}
-        
+
         {editable && isHovered && !isUploading && (
           <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
             <i className="fas fa-camera text-white text-xl"></i>
@@ -101,7 +112,7 @@ export const ProfileAvatar: React.FC<ProfileAvatarProps> = ({
 
       {editable && (
         <button
-          className="absolute bottom-0 right-0 w-8 h-8 rounded-full bg-accent text-black flex items-center justify-center shadow-lg hover:scale-110 transition-transform"
+          className="absolute bottom-0 right-0 z-20 w-8 h-8 rounded-full bg-accent text-black flex items-center justify-center shadow-lg hover:scale-110 transition-transform"
           onClick={handleAvatarClick}
           disabled={isUploading}
         >

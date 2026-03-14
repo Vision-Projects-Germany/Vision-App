@@ -18,6 +18,7 @@ export interface UserProfile {
   nextLevelXpRequired?: number | null;
   avatarMediaId: string | null;
   avatarUrl: string | null;
+  frameUrl?: string | null;
   projects: string[];
   createdAt?: Date;
   updatedAt?: Date;
