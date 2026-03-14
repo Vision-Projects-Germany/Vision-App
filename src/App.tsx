@@ -765,14 +765,25 @@ function formatNewsDate(value?: string | null) {
 }
 
 function getNewsDetailText(item: NewsItem): string {
-  const candidates = [item.content, item.contentMarkdown, item.body, item.excerpt];
+  const raw = item as unknown as Record<string, unknown>;
+  const candidates = [
+    item.content,
+    item.contentMarkdown,
+    typeof raw.content_markdown === "string" ? raw.content_markdown : null,
+    item.body,
+    item.excerpt
+  ];
   for (const candidate of candidates) {
     if (typeof candidate === "string" && candidate.trim()) {
       return candidate.trim();
     }
   }
-  if (typeof item.contentHtml === "string" && item.contentHtml.trim()) {
-    return stripHtml(item.contentHtml);
+  const contentHtml =
+    (typeof item.contentHtml === "string" && item.contentHtml) ||
+    (typeof raw.content_html === "string" && raw.content_html) ||
+    null;
+  if (contentHtml && contentHtml.trim()) {
+    return stripHtml(contentHtml);
   }
   return "";
 }
@@ -794,7 +805,25 @@ function mapNewsItems(items: unknown[]) {
         ...raw,
         id: deleteId ?? `${raw.title ?? "news"}-${Math.random()}`,
         deleteId: deleteId ?? undefined,
-        slug: typeof raw.slug === "string" ? raw.slug : undefined
+        slug: typeof raw.slug === "string" ? raw.slug : undefined,
+        contentMarkdown:
+          typeof raw.contentMarkdown === "string"
+            ? raw.contentMarkdown
+            : typeof raw.content_markdown === "string"
+              ? raw.content_markdown
+              : undefined,
+        contentHtml:
+          typeof raw.contentHtml === "string"
+            ? raw.contentHtml
+            : typeof raw.content_html === "string"
+              ? raw.content_html
+              : undefined,
+        publishedAt:
+          typeof raw.publishedAt === "string"
+            ? raw.publishedAt
+            : typeof raw.published_at === "string"
+              ? raw.published_at
+              : undefined
       } as NewsItem;
     })
     .filter((item) => item.id);
@@ -6790,6 +6819,9 @@ export default function App() {
                       {joinBlockedDialogProject.title}
                     </span>{" "}
                     erst beitreten, wenn dein Account verifiziert und freigegeben wurde.
+                  </p>
+                  <p className="mt-2 text-[13px] leading-[20px] text-[rgba(255,255,255,0.65)]">
+                    Ein Admin meldet sich in Kürze bei dir. Für die Freigabe ist ein kurzer Call zur Bestätigung notwendig.
                   </p>
                   <p className="mt-2 text-[12px] text-[rgba(255,255,255,0.5)]">
                     Aktueller Status: {memberApprovalStatus ?? "unbekannt"}
