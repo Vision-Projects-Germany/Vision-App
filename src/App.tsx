@@ -1210,6 +1210,64 @@ function getUnnoticedRewardIds(record: Record<string, unknown> | null | undefine
     .map(([rewardId]) => rewardId.trim());
 }
 
+function launchConfettiBurst() {
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return;
+  }
+  const colors = ["#2BFE71", "#FFD166", "#6ED6FF", "#FF6B6B", "#C77DFF", "#FFFFFF"];
+  const container = document.createElement("div");
+  container.style.position = "fixed";
+  container.style.inset = "0";
+  container.style.pointerEvents = "none";
+  container.style.zIndex = "9999";
+  document.body.appendChild(container);
+
+  const originX = window.innerWidth / 2;
+  const originY = window.innerHeight * 0.58;
+
+  for (let i = 0; i < 90; i += 1) {
+    const particle = document.createElement("div");
+    const size = 6 + Math.random() * 8;
+    const color = colors[Math.floor(Math.random() * colors.length)];
+    particle.style.position = "absolute";
+    particle.style.left = `${originX}px`;
+    particle.style.top = `${originY}px`;
+    particle.style.width = `${size}px`;
+    particle.style.height = `${size * (Math.random() > 0.5 ? 0.6 : 1.2)}px`;
+    particle.style.borderRadius = "2px";
+    particle.style.background = color;
+    particle.style.opacity = "0.95";
+    particle.style.willChange = "transform, opacity";
+    container.appendChild(particle);
+
+    const angle = (Math.PI * 2 * i) / 90 + (Math.random() - 0.5) * 0.35;
+    const distance = 130 + Math.random() * 320;
+    const driftX = Math.cos(angle) * distance;
+    const driftY = Math.sin(angle) * distance + 170 + Math.random() * 200;
+    const rotation = (Math.random() - 0.5) * 1080;
+    const duration = 900 + Math.random() * 550;
+
+    particle.animate(
+      [
+        { transform: "translate3d(0,0,0) rotate(0deg)", opacity: 1 },
+        {
+          transform: `translate3d(${driftX}px, ${driftY}px, 0) rotate(${rotation}deg)`,
+          opacity: 0
+        }
+      ],
+      {
+        duration,
+        easing: "cubic-bezier(.2,.8,.2,1)",
+        fill: "forwards"
+      }
+    );
+  }
+
+  window.setTimeout(() => {
+    container.remove();
+  }, 1800);
+}
+
 function toModrinthCard(project: ModrinthProject) {
   const coverUrl = getModrinthCover(project) ?? project.icon_url ?? null;
   return {
@@ -5159,6 +5217,7 @@ export default function App() {
         return next;
       });
       setUnnoticedRewardIds([]);
+      launchConfettiBurst();
       showToast("Neue Cosmetics bestätigt.", "success");
     } catch (error) {
       console.error("Failed to acknowledge cosmetic rewards", error);
@@ -6361,7 +6420,7 @@ export default function App() {
                   disabled={rewardNoticeSubmitting}
                   className="cta-primary min-w-[180px] px-5 py-3 text-[13px] disabled:opacity-60"
                 >
-                  {rewardNoticeSubmitting ? "Bestätige..." : "Verstanden"}
+                  {rewardNoticeSubmitting ? "Fordere ein..." : "Einfordern"}
                 </button>
               </div>
             </div>
