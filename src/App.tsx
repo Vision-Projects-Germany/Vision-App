@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, type DragEvent } from "react";
+import { useEffect, useState, type DragEvent } from "react";
 import { useMemo, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
@@ -697,6 +697,137 @@ function normalizeProjectMedia(item: ProjectItem): ProjectItem {
 
 function stripHtml(value: string) {
   return value.replace(/<[^>]*>/g, "").trim();
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function renderInlineMarkdown(value: string) {
+  const codeParts: string[] = [];
+  const markdownLinkParts: string[] = [];
+  let text = escapeHtml(value).replace(/`([^`]+)`/g, (_, code) => {
+    const token = `__CODE_PART_${codeParts.length}__`;
+    codeParts.push(
+      `<code class="rounded bg-[rgba(255,255,255,0.08)] px-1 py-[1px] text-[0.92em] text-[rgba(255,255,255,0.9)]">${code}</code>`
+    );
+    return token;
+  });
+
+  text = text
+    .replace(
+      /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+      (_, label, url) => {
+        const token = `__MD_LINK_PART_${markdownLinkParts.length}__`;
+        markdownLinkParts.push(
+          `<a href="${url}" target="_blank" rel="noopener noreferrer" class="text-[#6EE7B7] underline decoration-[rgba(110,231,183,0.55)] underline-offset-2 hover:text-[#A7F3D0]">${label}</a>`
+        );
+        return token;
+      }
+    );
+
+  text = text
+    .replace(/\bhttps?:\/\/[^\s<]+/g, (rawUrl) => {
+      let url = rawUrl;
+      let suffix = "";
+      while (/[),.!?;:]$/.test(url)) {
+        suffix = url.slice(-1) + suffix;
+        url = url.slice(0, -1);
+      }
+      if (!url) {
+        return rawUrl;
+      }
+      return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="text-[#6EE7B7] underline decoration-[rgba(110,231,183,0.55)] underline-offset-2 hover:text-[#A7F3D0]">${url}</a>${suffix}`;
+    })
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/__([^_]+)__/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>")
+    .replace(/(^|[^_])_([^_\n]+)_(?!_)/g, "$1<em>$2</em>");
+
+  return text
+    .replace(/__MD_LINK_PART_(\d+)__/g, (_, index) => markdownLinkParts[Number(index)] ?? "")
+    .replace(/__CODE_PART_(\d+)__/g, (_, index) => codeParts[Number(index)] ?? "");
+}
+
+function renderMarkdownToHtml(value: string) {
+  const source = value.replace(/\r\n/g, "\n").trim();
+  if (!source) {
+    return "";
+  }
+  const lines = source.split("\n");
+  const html: string[] = [];
+  let listMode: "ul" | "ol" | null = null;
+
+  const closeList = () => {
+    if (listMode) {
+      html.push(`</${listMode}>`);
+      listMode = null;
+    }
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd();
+    const trimmed = line.trim();
+    if (!trimmed) {
+      closeList();
+      continue;
+    }
+
+    const headingMatch = trimmed.match(/^(#{1,3})\s+(.+)$/);
+    if (headingMatch) {
+      closeList();
+      const level = headingMatch[1].length;
+      const fontSize = level === 1 ? 20 : level === 2 ? 18 : 16;
+      html.push(
+        `<h${level} class="mt-4 font-semibold text-[rgba(255,255,255,0.95)]" style="font-size:${fontSize}px">${renderInlineMarkdown(headingMatch[2])}</h${level}>`
+      );
+      continue;
+    }
+
+    const unorderedMatch = trimmed.match(/^[-*+]\s+(.+)$/);
+    if (unorderedMatch) {
+      if (listMode !== "ul") {
+        closeList();
+        listMode = "ul";
+        html.push('<ul class="mt-3 list-disc space-y-1 pl-5 text-[14px] leading-[22px] text-[rgba(255,255,255,0.78)]">');
+      }
+      html.push(`<li>${renderInlineMarkdown(unorderedMatch[1])}</li>`);
+      continue;
+    }
+
+    const orderedMatch = trimmed.match(/^\d+\.\s+(.+)$/);
+    if (orderedMatch) {
+      if (listMode !== "ol") {
+        closeList();
+        listMode = "ol";
+        html.push('<ol class="mt-3 list-decimal space-y-1 pl-5 text-[14px] leading-[22px] text-[rgba(255,255,255,0.78)]">');
+      }
+      html.push(`<li>${renderInlineMarkdown(orderedMatch[1])}</li>`);
+      continue;
+    }
+
+    const quoteMatch = trimmed.match(/^>\s+(.+)$/);
+    if (quoteMatch) {
+      closeList();
+      html.push(
+        `<blockquote class="mt-3 border-l-2 border-[rgba(255,255,255,0.25)] pl-3 text-[14px] italic leading-[22px] text-[rgba(255,255,255,0.72)]">${renderInlineMarkdown(quoteMatch[1])}</blockquote>`
+      );
+      continue;
+    }
+
+    closeList();
+    html.push(
+      `<p class="mt-3 text-[14px] leading-[22px] text-[rgba(255,255,255,0.78)]">${renderInlineMarkdown(trimmed)}</p>`
+    );
+  }
+
+  closeList();
+  return html.join("");
 }
 
 function normalizeRoleId(value: string) {
@@ -6873,9 +7004,28 @@ export default function App() {
                     )}
                   </p>
                 )}
-                <p className="mt-4 whitespace-pre-line text-[14px] leading-[22px] text-[rgba(255,255,255,0.78)]">
-                  {getNewsDetailText(selectedNewsItem)}
-                </p>
+                <div
+                  className="mt-4 space-y-0"
+                  onClick={(event) => {
+                    const target = event.target as HTMLElement | null;
+                    const anchor = target?.closest("a[href]") as HTMLAnchorElement | null;
+                    if (!anchor) {
+                      return;
+                    }
+                    const href = anchor.getAttribute("href");
+                    if (!href || !/^https?:\/\//i.test(href)) {
+                      return;
+                    }
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void openExternalUrl(href).catch(() => {
+                      showToast("Link konnte nicht geoeffnet werden.", "error");
+                    });
+                  }}
+                  dangerouslySetInnerHTML={{
+                    __html: renderMarkdownToHtml(getNewsDetailText(selectedNewsItem))
+                  }}
+                />
               </div>
             </div>
           </div>
@@ -10130,4 +10280,3 @@ function renderContent(
 
   return null;
 }
-
