@@ -7,12 +7,14 @@ interface ProfileHeaderProps {
   isEditable: boolean;
   onAvatarUpload?: (fileUrl: string) => void;
   onUpdateDisplayName?: (name: string) => void;
+  onAvatarClick?: (anchor: { x: number; y: number }) => void;
 }
 
 export const ProfileHeader: React.FC<ProfileHeaderProps> = ({
   isEditable,
   onAvatarUpload,
   onUpdateDisplayName,
+  onAvatarClick,
 }) => {
   const { profile, isEditing } = useProfileStore();
 
@@ -110,8 +112,9 @@ export const ProfileHeader: React.FC<ProfileHeaderProps> = ({
               displayName={profile.displayName || profile.username}
               frameUrl={profile.frameUrl ?? null}
               size="xl"
-              editable={isEditable && isEditing}
+              editable={isEditable}
               onUpload={onAvatarUpload}
+              onEditClick={onAvatarClick}
             />
           </div>
         </div>

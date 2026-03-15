@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, type MouseEvent } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { convertFileSrc } from '@tauri-apps/api/core';
 
@@ -9,6 +9,7 @@ interface ProfileAvatarProps {
   size?: 'sm' | 'md' | 'lg' | 'xl';
   editable?: boolean;
   onUpload?: (fileUrl: string) => void;
+  onEditClick?: (anchor: { x: number; y: number }) => void;
 }
 
 const sizeClasses = {
@@ -25,6 +26,7 @@ export const ProfileAvatar: React.FC<ProfileAvatarProps> = ({
   size = 'lg',
   editable = false,
   onUpload,
+  onEditClick,
 }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -39,8 +41,16 @@ export const ProfileAvatar: React.FC<ProfileAvatarProps> = ({
     return name.substring(0, 2).toUpperCase();
   };
 
-  const handleAvatarClick = async () => {
+  const handleAvatarClick = async (event: MouseEvent<HTMLElement>) => {
     if (!editable) return;
+    if (onEditClick) {
+      const targetRect = event.currentTarget.getBoundingClientRect();
+      onEditClick({
+        x: targetRect.left + targetRect.width / 2,
+        y: targetRect.top + targetRect.height / 2
+      });
+      return;
+    }
 
     try {
       setIsUploading(true);
@@ -75,7 +85,7 @@ export const ProfileAvatar: React.FC<ProfileAvatarProps> = ({
         <img
           src={frameUrl}
           alt=""
-          className="pointer-events-none absolute left-1/2 top-1/2 z-10 h-[calc(100%+20px)] w-[calc(100%+20px)] -translate-x-1/2 -translate-y-1/2 scale-[1.14] object-contain"
+          className="pointer-events-none absolute left-1/2 top-1/2 z-10 h-[calc(100%+38px)] w-[calc(100%+38px)] -translate-x-1/2 -translate-y-1/2 scale-[1.22] object-contain"
           aria-hidden="true"
         />
       )}
@@ -83,6 +93,7 @@ export const ProfileAvatar: React.FC<ProfileAvatarProps> = ({
         className={`relative z-0 ${sizeClasses[size]} rounded-full overflow-hidden border-2 ${avatarBorderClass} bg-surface-2 flex items-center justify-center font-semibold transition-all duration-300 ${
           editable ? `cursor-pointer ${frameUrl ? 'hover:opacity-90' : 'hover:border-[#3dff7d] hover:opacity-90'}` : ''
         } ${isUploading ? 'opacity-50' : ''}`}
+        tabIndex={editable ? 0 : -1}
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
         onClick={handleAvatarClick}
@@ -99,7 +110,7 @@ export const ProfileAvatar: React.FC<ProfileAvatarProps> = ({
 
         {editable && isHovered && !isUploading && (
           <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
-            <i className="fas fa-camera text-white text-xl"></i>
+            <i className="fas fa-pen text-white text-xl"></i>
           </div>
         )}
         
@@ -110,15 +121,6 @@ export const ProfileAvatar: React.FC<ProfileAvatarProps> = ({
         )}
       </div>
 
-      {editable && (
-        <button
-          className="absolute bottom-0 right-0 z-20 w-8 h-8 rounded-full bg-accent text-black flex items-center justify-center shadow-lg hover:scale-110 transition-transform"
-          onClick={handleAvatarClick}
-          disabled={isUploading}
-        >
-          <i className="fas fa-pen text-xs"></i>
-        </button>
-      )}
     </div>
   );
 };

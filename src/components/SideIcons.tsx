@@ -84,8 +84,8 @@ export const SideIcons = memo(function SideIcons({
             type="button"
             onClick={() => onChange("settings")}
             className={`flex h-12 w-12 items-center justify-center rounded-full text-xl transition-all duration-200 ${activeId === "settings"
-              ? "bg-[rgba(43,254,113,0.18)] text-[#2BFE71] shadow-lg"
-              : "text-[#B0BAC5] hover:bg-[rgba(176,186,197,0.16)]"
+                ? "bg-[rgba(43,254,113,0.18)] text-[#2BFE71] shadow-lg"
+                : "text-[#B0BAC5] hover:bg-[rgba(176,186,197,0.16)]"
               }`}
             aria-label="Settings"
             title="Settings"
@@ -98,10 +98,11 @@ export const SideIcons = memo(function SideIcons({
           <button
             type="button"
             onClick={() => onChange("profile")}
-            className={`flex h-12 w-12 items-center justify-center rounded-full text-xl transition-all duration-200 ${activeId === "profile"
-              ? "bg-[rgba(43,254,113,0.18)] text-[#2BFE71] shadow-lg"
-              : "text-[#B0BAC5] hover:bg-[rgba(176,186,197,0.16)]"
-              }`}
+            className={`flex h-12 w-12 items-center justify-center rounded-full text-xl transition-all duration-200 ${
+              activeId === "profile"
+                ? "bg-[rgba(43,254,113,0.18)] text-[#2BFE71] shadow-lg"
+                : "text-[#B0BAC5] hover:bg-[rgba(176,186,197,0.16)]"
+            }`}
             aria-label="Profile"
             title="Profile"
           >

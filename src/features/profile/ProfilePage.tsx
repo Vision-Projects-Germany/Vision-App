@@ -7,6 +7,11 @@ import { ProfileHeader } from "./components/ProfileHeader";
 import { ProfileBanner } from "./components/ProfileBanner";
 import { ProjectsTab } from "./components/ProjectsTab";
 
+type CosmeticCatalogEntry = {
+  displayName: string;
+  type: string | null;
+};
+
 export interface ProfilePageProps {
   onLogout?: () => Promise<void> | void;
 }
@@ -37,6 +42,13 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
   const [profileToastVariant, setProfileToastVariant] = useState<"success" | "error">("success");
   const [profileToastVisible, setProfileToastVisible] = useState(false);
   const [profileToastProgress, setProfileToastProgress] = useState(0);
+  const [framePickerOpen, setFramePickerOpen] = useState(false);
+  const [equippedFrameId, setEquippedFrameId] = useState("");
+  const [selectedFrameId, setSelectedFrameId] = useState("");
+  const [frameCatalog, setFrameCatalog] = useState<Record<string, CosmeticCatalogEntry>>({});
+  const [frameCatalogLoaded, setFrameCatalogLoaded] = useState(false);
+  const [unlockedFrameIds, setUnlockedFrameIds] = useState<string[]>([]);
+  const [frameSaving, setFrameSaving] = useState(false);
   const showProfileToast = (
     message: string,
     variant: "success" | "error" = "success"
@@ -133,8 +145,8 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
       null;
     const ownedFrames = Array.isArray(cosmetics?.frames)
       ? cosmetics.frames.filter(
-          (entry): entry is string => typeof entry === "string" && entry.trim().length > 0
-        )
+        (entry): entry is string => typeof entry === "string" && entry.trim().length > 0
+      )
       : [];
     const normalizedOwnedFrames = new Set(ownedFrames.map((entry) => entry.trim()));
     const frameId =
@@ -144,6 +156,24 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
     return frameId
       ? `https://api.vision-projects.eu/media/${encodeURIComponent(frameId)}`
       : null;
+  };
+  const resolveEquippedFrameId = (record: Record<string, unknown>): string => {
+    const equippedCosmeticCandidate =
+      (typeof record.equippedCosmetic === "object" && record.equippedCosmetic !== null
+        ? (record.equippedCosmetic as Record<string, unknown>)
+        : null) ||
+      (typeof record.equipedCosmetic === "object" && record.equipedCosmetic !== null
+        ? (record.equipedCosmetic as Record<string, unknown>)
+        : null) ||
+      (typeof record.equipped_cosmetic === "object" && record.equipped_cosmetic !== null
+        ? (record.equipped_cosmetic as Record<string, unknown>)
+        : null);
+    return (
+      (typeof equippedCosmeticCandidate?.frame === "string" && equippedCosmeticCandidate.frame.trim()) ||
+      (typeof equippedCosmeticCandidate?.frameId === "string" && equippedCosmeticCandidate.frameId.trim()) ||
+      (typeof equippedCosmeticCandidate?.frame_id === "string" && equippedCosmeticCandidate.frame_id.trim()) ||
+      ""
+    );
   };
 
   const toDateSafe = (value: unknown): Date | undefined => {
@@ -240,6 +270,7 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
 
         if (userDoc?.exists()) {
           const data = userDoc.data();
+          const resolvedEquippedFrame = resolveEquippedFrameId(data);
           const profileAvatarUrl = resolveAvatarUrl(currentUser.photoURL, data);
           const userLevel = typeof data.level === "number" && data.level > 0 ? data.level : 1;
           const previousLevelEntry =
@@ -286,6 +317,7 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
             xpTotal: userProfile.xpTotal
           });
           setProfile(userProfile);
+          setEquippedFrameId(resolvedEquippedFrame);
           const interests = Array.isArray(data.interests)
             ? (data.interests as unknown[]).filter((value): value is string => typeof value === "string")
             : [];
@@ -340,6 +372,7 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
             projects: [],
           };
           setProfile(basicProfile);
+          setEquippedFrameId("");
           setInterestsInput("");
 
           currentStats = {
@@ -370,6 +403,181 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
 
     loadProfileData();
   }, [setProfile, setStats, setSocialLinks, setLoading, setActivities, setAchievements]);
+
+  const loadFrameCatalog = async () => {
+    if (frameCatalogLoaded) {
+      return;
+    }
+    try {
+      const response = await fetch("https://api.vision-projects.eu/api/media/cosmetics/frames?page=1&limit=50");
+      if (!response.ok) {
+        const message = (await response.text()) || `HTTP ${response.status}`;
+        throw new Error(message);
+      }
+      const raw = (await response.json()) as unknown;
+      const items = Array.isArray((raw as { items?: unknown[] })?.items)
+        ? ((raw as { items: unknown[] }).items ?? [])
+        : Array.isArray(raw)
+          ? raw
+          : [];
+      const mapped = items.reduce<Record<string, CosmeticCatalogEntry>>((acc, entry) => {
+        const record = entry as Record<string, unknown>;
+        const id =
+          (typeof record.id === "string" && record.id.trim()) ||
+          (typeof record.cosmeticId === "string" && record.cosmeticId.trim()) ||
+          (typeof record.cosmetic_id === "string" && record.cosmetic_id.trim()) ||
+          "";
+        if (!id) {
+          return acc;
+        }
+        const displayName =
+          (typeof record.displayName === "string" && record.displayName.trim()) ||
+          (typeof record.display_name === "string" && record.display_name.trim()) ||
+          (typeof record.name === "string" && record.name.trim()) ||
+          id;
+        const type =
+          (typeof record.type === "string" && record.type.trim()) ||
+          (typeof record.cosmeticType === "string" && record.cosmeticType.trim()) ||
+          (typeof record.cosmetic_type === "string" && record.cosmetic_type.trim()) ||
+          null;
+        acc[id] = { displayName, type };
+        return acc;
+      }, {});
+      setFrameCatalog(mapped);
+      setFrameCatalogLoaded(true);
+    } catch (error) {
+      console.error("Could not load cosmetics catalog:", error);
+      showProfileToast("Frame-Liste konnte nicht geladen werden.", "error");
+    }
+  };
+
+  const loadUnlockedFrames = async () => {
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      return;
+    }
+    try {
+      const token = await currentUser.getIdToken();
+      const response = await fetch("https://api.vision-projects.eu/api/profile/cosmetics/frames", {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      if (!response.ok) {
+        const message = (await response.text()) || `HTTP ${response.status}`;
+        throw new Error(message);
+      }
+      const raw = (await response.json()) as unknown;
+      const rawItems = Array.isArray((raw as { items?: unknown[] })?.items)
+        ? ((raw as { items: unknown[] }).items ?? [])
+        : Array.isArray(raw)
+          ? raw
+          : [];
+      const ids = Array.from(
+        new Set(
+          rawItems
+            .map((entry) => {
+              if (typeof entry === "string") return entry.trim();
+              if (entry && typeof entry === "object") {
+                const record = entry as Record<string, unknown>;
+                return (
+                  (typeof record.id === "string" && record.id.trim()) ||
+                  (typeof record.cosmeticId === "string" && record.cosmeticId.trim()) ||
+                  (typeof record.cosmetic_id === "string" && record.cosmetic_id.trim()) ||
+                  ""
+                );
+              }
+              return "";
+            })
+            .filter(Boolean)
+        )
+      );
+      setUnlockedFrameIds(ids);
+    } catch (error) {
+      console.error("Could not load unlocked frame cosmetics:", error);
+      showProfileToast("Freigeschaltete Frames konnten nicht geladen werden.", "error");
+      setUnlockedFrameIds([]);
+    }
+  };
+
+  const openFramePicker = (_anchor: { x: number; y: number }) => {
+    setSelectedFrameId(equippedFrameId);
+    setFramePickerOpen(true);
+    void loadFrameCatalog();
+    void loadUnlockedFrames();
+  };
+
+  const applyFrameSelection = async (nextFrameId: string) => {
+    if (!profile) {
+      return;
+    }
+    if (nextFrameId && !unlockedFrameIds.includes(nextFrameId)) {
+      showProfileToast("Dieser Frame ist nicht freigeschaltet.", "error");
+      return;
+    }
+    setFrameSaving(true);
+    try {
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
+        throw new Error("Nicht angemeldet.");
+      }
+      if (nextFrameId) {
+        const token = await currentUser.getIdToken();
+        const response = await fetch("https://api.vision-projects.eu/api/profile/equipped-cosmetic/frame", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ cosmeticId: nextFrameId })
+        });
+        if (!response.ok) {
+          const message = (await response.text()) || `HTTP ${response.status}`;
+          throw new Error(message);
+        }
+      } else {
+        const token = await currentUser.getIdToken();
+        const response = await fetch("https://api.vision-projects.eu/api/profile/equipped-cosmetic/frame", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({})
+        });
+        if (!response.ok) {
+          const message = (await response.text()) || `HTTP ${response.status}`;
+          throw new Error(message);
+        }
+      }
+      setEquippedFrameId(nextFrameId);
+      updateProfile({
+        frameUrl: nextFrameId
+          ? `https://api.vision-projects.eu/media/${encodeURIComponent(nextFrameId)}`
+          : null
+      });
+      setFramePickerOpen(false);
+      showProfileToast("Frame gespeichert.", "success");
+    } catch (error) {
+      console.error("Could not save frame selection:", error);
+      showProfileToast("Frame konnte nicht gespeichert werden.", "error");
+    } finally {
+      setFrameSaving(false);
+    }
+  };
+
+  const frameOptions = Object.entries(frameCatalog)
+    .map(([id, meta]) => ({
+      id,
+      displayName: meta.displayName ?? id,
+      type: meta.type ?? null,
+      unlocked: unlockedFrameIds.includes(id)
+    }))
+    .filter((entry) => !entry.type || entry.type.toLowerCase() === "frame");
+  const frameGridOptions = [
+    { id: "", displayName: "Ohne Frame", unlocked: true },
+    ...frameOptions.map((entry) => ({ id: entry.id, displayName: entry.displayName, unlocked: entry.unlocked }))
+  ];
 
   const loadActivities = async (uid: string) => {
     const sampleActivities: Activity[] = [
@@ -542,7 +750,7 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
       const nextAgeRaw = editAge.trim();
       const parsedAge = nextAgeRaw ? Number(nextAgeRaw) : null;
       if (nextAgeRaw && (parsedAge === null || !Number.isFinite(parsedAge) || parsedAge <= 0)) {
-        throw new Error("Bitte ein gültiges Alter eingeben.");
+        throw new Error("Bitte ein gÃƒÆ’Ã‚Â¼ltiges Alter eingeben.");
       }
       const nextAge = parsedAge;
       const nextMinecraftName = editMinecraftName.trim();
@@ -619,6 +827,7 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
                 isEditable={true}
                 onAvatarUpload={handleAvatarUpload}
                 onUpdateDisplayName={handleUpdateDisplayName}
+                onAvatarClick={openFramePicker}
               />
               <div className="flex flex-col gap-2 md:flex-row md:items-center">
                 <button
@@ -661,21 +870,18 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
       )}
       {profileToastMessage && (
         <div
-          className={`fixed bottom-6 left-1/2 z-[80] w-max max-w-[min(680px,calc(100vw-32px))] -translate-x-1/2 overflow-hidden rounded-[14px] border px-4 py-3 text-[12px] font-semibold shadow-[0_20px_40px_rgba(0,0,0,0.45)] backdrop-blur-[6px] transition-all duration-300 ${
-            profileToastVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-2"
-          } ${
-            profileToastVariant === "success"
+          className={`fixed bottom-6 left-1/2 z-[80] w-max max-w-[min(680px,calc(100vw-32px))] -translate-x-1/2 overflow-hidden rounded-[14px] border px-4 py-3 text-[12px] font-semibold shadow-[0_20px_40px_rgba(0,0,0,0.45)] backdrop-blur-[6px] transition-all duration-300 ${profileToastVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-2"
+            } ${profileToastVariant === "success"
               ? "border-[rgba(46,204,113,0.32)] bg-[rgba(18,34,25,0.94)] text-[#92FFC0]"
               : "border-[rgba(255,91,91,0.32)] bg-[rgba(44,16,16,0.94)] text-[#FFB0B0]"
-          }`}
+            }`}
         >
           <span className="block whitespace-pre-wrap leading-[16px] text-center">
             {profileToastMessage}
           </span>
           <span
-            className={`pointer-events-none absolute bottom-0 left-0 h-[3px] transition-[width] ${
-              profileToastVariant === "success" ? "bg-[#2BFE71]" : "bg-[#FF5B5B]"
-            }`}
+            className={`pointer-events-none absolute bottom-0 left-0 h-[3px] transition-[width] ${profileToastVariant === "success" ? "bg-[#2BFE71]" : "bg-[#FF5B5B]"
+              }`}
             style={{ width: `${profileToastProgress * 100}%` }}
           />
         </div>
@@ -687,7 +893,7 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
             <i className="fas fa-question text-[12px]" aria-hidden="true" />
           </div>
           <div className="pointer-events-none absolute bottom-10 right-0 w-[260px] rounded-xl border border-white/10 bg-[#12141A]/96 px-3 py-2 text-[11px] leading-[17px] text-[rgba(255,255,255,0.68)] opacity-0 shadow-[0_18px_40px_rgba(0,0,0,0.35)] transition duration-150 group-hover:opacity-100">
-            Die vollständige Profilverwaltung ist auf der Website unter{" "}
+            Die vollstÃƒÆ’Ã‚Â¤ndige Profilverwaltung ist auf der Website unter{" "}
             <span className="font-medium text-[rgba(255,255,255,0.9)]">
               vision-projects.eu/accounting/profile
             </span>
@@ -782,6 +988,138 @@ export function ProfilePage({ onLogout }: ProfilePageProps) {
                 className="cta-primary px-4 py-2 text-[12px]"
               >
                 Speichern
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {framePickerOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-[#070D18]/80 backdrop-blur-md transition-opacity"
+            onClick={() => !frameSaving && setFramePickerOpen(false)}
+          />
+          <div className="relative w-full max-w-[760px] overflow-hidden rounded-[24px] border border-white/10 bg-[#0B101A] shadow-[0_0_80px_rgba(43,254,113,0.05),_0_30px_90px_rgba(0,0,0,0.6)] animate-in fade-in zoom-in-95 duration-200">
+
+            {/* Header Section */}
+            <div className="relative border-b border-white/[0.04] bg-white/[0.01] px-6 py-5">
+              <div className="relative z-10 flex items-center justify-between">
+                <div>
+                  <h3 className="text-[20px] font-bold text-white tracking-tight">
+                    Avatar Frame
+                  </h3>
+                  <p className="mt-1 text-[13px] text-white/40">
+                    Wähle einen Rahmen aus, um deinen Avatar im Chat und Profil hervorzuheben.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setFramePickerOpen(false)}
+                  disabled={frameSaving}
+                  className="flex h-8 w-8 items-center justify-center rounded-full bg-white/5 text-white/50 transition hover:bg-white/10 hover:text-white disabled:opacity-50"
+                >
+                  <i className="fas fa-times text-[13px]"></i>
+                </button>
+              </div>
+            </div>
+
+            {/* Grid Section */}
+            <div className="max-h-[60vh] overflow-y-auto px-6 py-6 scrollbar-thin scrollbar-track-transparent scrollbar-thumb-white/10 hover:scrollbar-thumb-white/20">
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
+                {frameGridOptions.map((option) => {
+                  const isSelected = option.id === selectedFrameId;
+                  const isUnlocked = option.unlocked;
+                  const optionFrameUrl = option.id
+                    ? `https://api.vision-projects.eu/media/${encodeURIComponent(option.id)}`
+                    : null;
+
+                  return (
+                    <button
+                      key={option.id || "none"}
+                      type="button"
+                      onClick={() => {
+                        if (!isUnlocked) return;
+                        setSelectedFrameId(option.id);
+                      }}
+                      disabled={frameSaving || !isUnlocked}
+                      className={`group relative flex flex-col items-center rounded-[20px] p-5 transition-all duration-300 ${isSelected
+                        ? "bg-[#2BFE71]/[0.08] shadow-[0_0_0_1px_rgba(43,254,113,0.35)]"
+                        : isUnlocked
+                          ? "bg-transparent hover:bg-white/[0.04]"
+                          : "bg-transparent opacity-65"
+                        }`}
+                    >
+                      {!isUnlocked && (
+                        <div className="absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full bg-black/45 text-white/85">
+                          <i className="fas fa-lock text-[9px]" aria-hidden="true" />
+                        </div>
+                      )}
+                      {/* Selection Indicator */}
+                      {isSelected && (
+                        <div className="absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full bg-[#2BFE71] text-[#070D18] shadow-[0_0_10px_rgba(43,254,113,0.4)]">
+                          <i className="fas fa-check text-[10px]"></i>
+                        </div>
+                      )}
+
+                      {/* Avatar Preview */}
+                      <div className="relative mb-4 mt-2 flex h-[90px] w-[90px] shrink-0 items-center justify-center">
+                        <img
+                          src={profile?.photoURL || "https://mc-heads.net/avatar/Steve/100"}
+                          alt="Avatar Preview"
+                          className={`h-[72px] w-[72px] rounded-full object-cover transition-transform duration-300 ${
+                            isUnlocked ? "group-hover:scale-105" : ""
+                          } ${isSelected ? "opacity-100" : "opacity-70"} ${isUnlocked ? "group-hover:opacity-100" : ""}`}
+                        />
+                        {optionFrameUrl ? (
+                          <img
+                            src={optionFrameUrl}
+                            alt=""
+                            className="pointer-events-none absolute left-1/2 top-1/2 z-20 h-[calc(100%+38px)] w-[calc(100%+38px)] -translate-x-1/2 -translate-y-1/2 object-contain"
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <div className={`absolute inset-0 rounded-full border-2 border-dashed transition-colors ${isSelected ? 'border-[#2BFE71]/50' : 'border-white/15'}`} />
+                        )}
+                      </div>
+
+                      <span
+                        className={`text-center text-[13px] font-medium leading-[1.3] transition-colors line-clamp-2 ${isSelected ? "text-white" : "text-white/50 group-hover:text-white"
+                          }`}
+                      >
+                        {option.displayName}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Footer Section */}
+            <div className="border-t border-white/[0.06] bg-[#070D18]/50 p-5 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setFramePickerOpen(false)}
+                disabled={frameSaving}
+                className="rounded-xl px-5 py-2.5 text-[13px] font-medium text-white/70 transition hover:bg-white/5 hover:text-white disabled:opacity-50"
+              >
+                Abbrechen
+              </button>
+              <button
+                type="button"
+                onClick={() => void applyFrameSelection(selectedFrameId)}
+                disabled={frameSaving || selectedFrameId === equippedFrameId}
+                className="cta-primary flex items-center justify-center gap-2 rounded-xl px-6 py-2.5 text-[13px] font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {frameSaving ? (
+                  <>
+                    <i className="fas fa-spinner fa-spin"></i>
+                    Speichert...
+                  </>
+                ) : (
+                  <>
+                    <i className="fas fa-check"></i>
+                    Frame speichern
+                  </>
+                )}
               </button>
             </div>
           </div>
