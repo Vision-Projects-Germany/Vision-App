@@ -94,6 +94,7 @@ interface CalendarEvent {
 
 interface MemberProfile {
   uid: string;
+  displayName?: string | null;
   username?: string | null;
   email?: string | null;
   roles?: string[];
@@ -1084,10 +1085,10 @@ function mapApplicationItems(items: unknown[]): ApplicationItem[] {
             ? raw.type
             : typeof raw.position === "string"
               ? raw.position
-              : "—";
+              : "-";
       const role = roleRaw
         ? roleRaw.charAt(0).toUpperCase() + roleRaw.slice(1)
-        : "—";
+        : "-";
       const experienceText =
         typeof application?.experience === "string"
           ? application.experience.trim()
@@ -1775,6 +1776,7 @@ export default function App() {
     "all"
   );
   const [members, setMembers] = useState<MemberProfile[]>([]);
+  const [memberSearchQuery, setMemberSearchQuery] = useState("");
   const [selectedMemberProfile, setSelectedMemberProfile] = useState<MemberProfile | null>(null);
   const [membersLoading, setMembersLoading] = useState(false);
   const [membersError, setMembersError] = useState<string | null>(null);
@@ -2479,7 +2481,7 @@ export default function App() {
       return;
     }
     if (!mediaUploadFile) {
-      setMediaUploadError("Bitte eine Datei auswählen.");
+      setMediaUploadError("Bitte eine Datei auswühlen.");
       return;
     }
     setMediaUploadLoading(true);
@@ -2716,13 +2718,13 @@ export default function App() {
       );
       setNewsDeleteCandidate(null);
       reloadNewsItems(true).catch(() => undefined);
-      showToast("News gelöscht.", "success");
+      showToast("News gelüscht.", "success");
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "News konnte nicht gelöscht werden.";
+        error instanceof Error ? error.message : "News konnte nicht gelüscht werden.";
       console.warn("[news] delete failed", message, error);
       setNewsDeleteError(message);
-      showToast("News konnte nicht gelöscht werden.", "error");
+      showToast("News konnte nicht gelüscht werden.", "error");
     } finally {
       setNewsDeleting(false);
     }
@@ -2761,7 +2763,7 @@ export default function App() {
       setMediaError((prev) => ({
         ...prev,
         [section]:
-          error instanceof Error ? error.message : "Löschen fehlgeschlagen."
+          error instanceof Error ? error.message : "Lüschen fehlgeschlagen."
       }));
     }
   };
@@ -3782,6 +3784,12 @@ export default function App() {
                 : null;
           return {
             uid,
+            displayName:
+              typeof record.displayName === "string"
+                ? record.displayName
+                : typeof record.display_name === "string"
+                  ? record.display_name
+                  : null,
             username: typeof record.username === "string" ? record.username : null,
             email: typeof record.email === "string" ? record.email : null,
             roles: Array.isArray(record.roles) ? (record.roles as string[]) : [],
@@ -4038,6 +4046,12 @@ export default function App() {
             : null;
         return {
           uid: docSnap.id,
+          displayName:
+            typeof record.displayName === "string"
+              ? record.displayName
+              : typeof record.display_name === "string"
+                ? record.display_name
+                : null,
           username: typeof record.username === "string" ? record.username : null,
           email: typeof record.email === "string" ? record.email : null,
           roles: Array.isArray(record.roles) ? (record.roles as string[]) : [],
@@ -4063,6 +4077,7 @@ export default function App() {
         total: filtered.length,
         users: filtered.map((item) => ({
           uid: item.uid,
+          displayName: item.displayName ?? null,
           username: item.username ?? null,
           email: item.email ?? null,
           roles: Array.isArray(item.roles) ? item.roles : [],
@@ -4141,6 +4156,12 @@ export default function App() {
           const projectsValue = normalizeProjectIds(record.projects);
           return {
             uid: docSnap.id,
+            displayName:
+              typeof record.displayName === "string"
+                ? record.displayName
+                : typeof record.display_name === "string"
+                  ? record.display_name
+                  : null,
             username: typeof record.username === "string" ? record.username : null,
             email: typeof record.email === "string" ? record.email : null,
             roles: Array.isArray(record.roles) ? (record.roles as string[]) : [],
@@ -4639,12 +4660,12 @@ export default function App() {
 
       setExpandedRoleIds((prev) => prev.filter((id) => id !== roleDeleteCandidate.id));
       setRolesRefreshTick((prev) => prev + 1);
-      showToast(`Rolle "${roleDeleteCandidate.id}" gelöscht.`, "success");
+      showToast(`Rolle "${roleDeleteCandidate.id}" gelüscht.`, "success");
       setRoleDeleteCandidate(null);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unbekannter Fehler.";
       setRoleDeleteError(message);
-      showToast("Rolle konnte nicht gelöscht werden.", "error");
+      showToast("Rolle konnte nicht gelüscht werden.", "error");
     } finally {
       setRoleDeleteSaving(false);
     }
@@ -4703,7 +4724,7 @@ export default function App() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unbekannter Fehler.";
       setMemberRoleError(message);
-      showToast("Rollenänderung fehlgeschlagen.", "error");
+      showToast("Rollenünderung fehlgeschlagen.", "error");
     } finally {
       setMemberRoleSaving(false);
     }
@@ -4761,7 +4782,7 @@ export default function App() {
       return;
     }
     if (projectSource !== "modrinth" && (!projectLoader || !projectVersion)) {
-      setProjectSaveError("Bitte Loader und Version auswählen.");
+      setProjectSaveError("Bitte Loader und Version auswühlen.");
       showToast("Loader und Version fehlen.", "error");
       return;
     }
@@ -5046,7 +5067,7 @@ export default function App() {
       setProjectItems((prev) => prev.filter((project) => project.id !== projectId));
     } catch (error) {
       setProjectDeleteError(
-        error instanceof Error ? error.message : "Projekt konnte nicht gelöscht werden."
+        error instanceof Error ? error.message : "Projekt konnte nicht gelüscht werden."
       );
     }
   };
@@ -5378,10 +5399,10 @@ export default function App() {
       });
       setUnnoticedRewardIds([]);
       launchConfettiBurst();
-      showToast("Neue Cosmetics bestätigt.", "success");
+      showToast("Neue Cosmetics bestütigt.", "success");
     } catch (error) {
       console.error("Failed to acknowledge cosmetic rewards", error);
-      showToast("Cosmetics konnten nicht bestätigt werden.", "error");
+      showToast("Cosmetics konnten nicht bestütigt werden.", "error");
     } finally {
       setRewardNoticeSubmitting(false);
     }
@@ -5575,6 +5596,8 @@ export default function App() {
                     members,
                     membersLoading,
                     membersError,
+                    memberSearchQuery,
+                    setMemberSearchQuery,
                     pendingPlayers,
                     pendingPlayersLoading,
                     pendingPlayersError,
@@ -5757,7 +5780,7 @@ export default function App() {
                     className="mt-2 flex w-full items-center justify-between rounded-[10px] border border-[rgba(255,255,255,0.10)] bg-[#0F1116] px-3 py-2 text-left text-[12px] text-[rgba(255,255,255,0.8)] transition hover:border-[rgba(255,255,255,0.22)]"
                   >
                     <span>
-                      {rolePermissionPickerOpen ? "Permission-Liste schließen" : "Permission-Liste öffnen"}
+                      {rolePermissionPickerOpen ? "Permission-Liste schließen" : "Permission-Liste üffnen"}
                     </span>
                     <i
                       className={`fa-solid fa-chevron-${rolePermissionPickerOpen ? "up" : "down"} text-[10px] text-[rgba(255,255,255,0.55)]`}
@@ -5811,7 +5834,7 @@ export default function App() {
                     </div>
                   )}
                   <p className="mt-2 text-[11px] text-[rgba(255,255,255,0.5)]">
-                    Ausgewählt: {roleCreatePermissions.length}
+                    Ausgewühlt: {roleCreatePermissions.length}
                   </p>
                 </div>
               </div>
@@ -5872,7 +5895,7 @@ export default function App() {
                   className="mt-2 flex w-full items-center justify-between rounded-[10px] border border-[rgba(255,255,255,0.10)] bg-[#0F1116] px-3 py-2 text-left text-[12px] text-[rgba(255,255,255,0.8)] transition hover:border-[rgba(255,255,255,0.22)]"
                 >
                   <span>
-                    {roleEditPickerOpen ? "Permission-Liste schließen" : "Permission-Liste öffnen"}
+                    {roleEditPickerOpen ? "Permission-Liste schließen" : "Permission-Liste üffnen"}
                   </span>
                   <i
                     className={`fa-solid fa-chevron-${roleEditPickerOpen ? "up" : "down"} text-[10px] text-[rgba(255,255,255,0.55)]`}
@@ -5926,7 +5949,7 @@ export default function App() {
                   </div>
                 )}
                 <p className="mt-2 text-[11px] text-[rgba(255,255,255,0.5)]">
-                  Ausgewählt: {roleEditPermissions.length}
+                  Ausgewühlt: {roleEditPermissions.length}
                 </p>
               </div>
               {roleEditError && (
@@ -5966,7 +5989,7 @@ export default function App() {
                 </div>
                 <div className="min-w-0">
                   <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
-                    Status wirklich ändern?
+                    Status wirklich ündern?
                   </h3>
                   <p className="mt-2 text-[13px] leading-[20px] text-[rgba(255,255,255,0.65)]">
                     Bewerbung von{" "}
@@ -6026,7 +6049,7 @@ export default function App() {
                       !applicationRejectNotes.trim())
                   }
                 >
-                  {applicationActionLoading ? "Sende..." : "Bestätigen"}
+                  {applicationActionLoading ? "Sende..." : "Bestütigen"}
                 </button>
               </div>
             </div>
@@ -6036,14 +6059,14 @@ export default function App() {
           <div className="fixed inset-0 z-[79] flex items-center justify-center bg-black/70 px-4">
             <div className="w-full max-w-[460px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
               <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
-                Rolle löschen
+                Rolle lüschen
               </h3>
               <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.65)]">
                 Rolle{" "}
                 <span className="font-semibold text-[rgba(255,255,255,0.92)]">
                   {roleDeleteCandidate.id}
                 </span>{" "}
-                wirklich löschen?
+                wirklich lüschen?
               </p>
               {roleDeleteError && (
                 <div className="mt-3 rounded-[10px] border border-[rgba(255,100,100,0.25)] bg-[rgba(255,100,100,0.08)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.8)]">
@@ -6067,7 +6090,7 @@ export default function App() {
                   disabled={roleDeleteSaving}
                   className="rounded-[10px] border border-[#C74646] bg-[#FF5B5B] px-4 py-2 text-[12px] font-semibold text-[#0D0E12] shadow-[0_4px_0_#C74646] transition active:translate-y-[2px] active:shadow-[0_2px_0_#C74646] disabled:opacity-60"
                 >
-                  {roleDeleteSaving ? "Lösche..." : "Löschen"}
+                  {roleDeleteSaving ? "Lüsche..." : "Lüschen"}
                 </button>
               </div>
             </div>
@@ -6082,7 +6105,7 @@ export default function App() {
               <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.65)]">
                 User:{" "}
                 <span className="font-semibold text-[rgba(255,255,255,0.9)]">
-                  {memberRoleDialog.member.username ?? memberRoleDialog.member.uid}
+                  {memberRoleDialog.member.displayName ?? memberRoleDialog.member.username ?? memberRoleDialog.member.uid}
                 </span>
               </p>
               {memberRoleDialog.mode === "add" ? (
@@ -6108,7 +6131,7 @@ export default function App() {
                 <p className="mt-4 text-[13px] text-[rgba(255,255,255,0.72)]">
                   Rolle{" "}
                   <span className="font-semibold text-[rgba(255,255,255,0.92)]">
-                    {memberRoleTarget || memberRoleDialog.presetRoleId || "—"}
+                    {memberRoleTarget || memberRoleDialog.presetRoleId || "-"}
                   </span>{" "}
                   wirklich entfernen?
                 </p>
@@ -6135,7 +6158,7 @@ export default function App() {
                   disabled={memberRoleSaving || !memberRoleTarget}
                   className="cta-primary px-4 py-2 text-[12px] disabled:opacity-60"
                 >
-                  {memberRoleSaving ? "Speichere..." : "Bestätigen"}
+                  {memberRoleSaving ? "Speichere..." : "Bestütigen"}
                 </button>
               </div>
             </div>
@@ -6150,7 +6173,7 @@ export default function App() {
               <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.65)]">
                 User:{" "}
                 <span className="font-semibold text-[rgba(255,255,255,0.9)]">
-                  {memberProjectDialog.member.username ?? memberProjectDialog.member.uid}
+                  {memberProjectDialog.member.displayName ?? memberProjectDialog.member.username ?? memberProjectDialog.member.uid}
                 </span>
               </p>
               <div className="mt-4">
@@ -6208,7 +6231,7 @@ export default function App() {
               <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.65)]">
                 User:{" "}
                 <span className="font-semibold text-[rgba(255,255,255,0.9)]">
-                  {memberCosmeticDialog.member.username ?? memberCosmeticDialog.member.uid}
+                  {memberCosmeticDialog.member.displayName ?? memberCosmeticDialog.member.username ?? memberCosmeticDialog.member.uid}
                 </span>
               </p>
               <div className="mt-4">
@@ -6275,12 +6298,12 @@ export default function App() {
                 </div>
                 <div className="min-w-0">
                   <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
-                    Bewerbung bestätigen
+                    Bewerbung bestütigen
                   </h3>
                   <p className="mt-2 text-[13px] leading-[20px] text-[rgba(255,255,255,0.65)]">
                     Nutzer{" "}
                     <span className="font-semibold text-[rgba(255,255,255,0.9)]">
-                      {pendingPlayerActionDialog.member.username ??
+                      {pendingPlayerActionDialog.member.displayName ?? pendingPlayerActionDialog.member.username ??
                         pendingPlayerActionDialog.member.uid}
                     </span>{" "}
                     wirklich{" "}
@@ -6321,7 +6344,7 @@ export default function App() {
                     ? pendingPlayerActionDialog.status === "approved"
                       ? "Nehme an..."
                       : "Lehne ab..."
-                    : "Bestätigen"}
+                    : "Bestütigen"}
                 </button>
               </div>
             </div>
@@ -6336,7 +6359,7 @@ export default function App() {
               <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.65)]">
                 User:{" "}
                 <span className="font-semibold text-[rgba(255,255,255,0.9)]">
-                  {memberProjectRemoveDialog.member.username ?? memberProjectRemoveDialog.member.uid}
+                  {memberProjectRemoveDialog.member.displayName ?? memberProjectRemoveDialog.member.username ?? memberProjectRemoveDialog.member.uid}
                 </span>
               </p>
               <p className="mt-1 text-[12px] text-[rgba(255,255,255,0.58)]">
@@ -6396,7 +6419,7 @@ export default function App() {
               <p className="mt-3 text-[12px] text-[rgba(255,255,255,0.6)]">
                 Bist du sicher, dass du{" "}
                 <span className="text-[rgba(255,255,255,0.85)] font-semibold">
-                  {banCandidate.username ?? banCandidate.uid}
+                  {banCandidate.displayName ?? banCandidate.username ?? banCandidate.uid}
                 </span>{" "}
                 bannen willst?
               </p>
@@ -6471,7 +6494,7 @@ export default function App() {
               <p className="mt-3 text-[12px] text-[rgba(255,255,255,0.6)]">
                 Sende eine Warnung an{" "}
                 <span className="text-[rgba(255,255,255,0.85)] font-semibold">
-                  {warnCandidate.username ?? warnCandidate.uid}
+                  {warnCandidate.displayName ?? warnCandidate.username ?? warnCandidate.uid}
                 </span>
                 .
               </p>
@@ -6613,7 +6636,7 @@ export default function App() {
                   {selectedMemberProfile.avatarUrl ? (
                     <img
                       src={selectedMemberProfile.avatarUrl}
-                      alt={`${selectedMemberProfile.username ?? "User"} avatar`}
+                      alt={`${selectedMemberProfile.displayName ?? selectedMemberProfile.username ?? "User"} avatar`}
                       className="h-11 w-11 rounded-full border border-[rgba(255,255,255,0.2)] object-cover"
                     />
                   ) : (
@@ -6623,7 +6646,7 @@ export default function App() {
                   )}
                   <div>
                     <p className="text-[16px] font-semibold text-[rgba(255,255,255,0.95)]">
-                      {selectedMemberProfile.username ?? "Unbekannt"}
+                      {selectedMemberProfile.displayName ?? selectedMemberProfile.username ?? "Unbekannt"}
                     </p>
                     <p className="text-[12px] text-[rgba(255,255,255,0.55)]">{selectedMemberProfile.uid}</p>
                   </div>
@@ -6651,43 +6674,43 @@ export default function App() {
                           : typeof record.discordUsername === "string"
                             ? record.discordUsername
                             : null;
-                    return discordName ?? "—";
+                    return discordName ?? "-";
                   })()}
                 </div>
                 <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
                   <span className="text-[rgba(255,255,255,0.5)]">Email:</span>{" "}
-                  {permissionFlags.canViewUserEmails ? selectedMemberProfile.email ?? "—" : "Keine Berechtigung"}
+                  {permissionFlags.canViewUserEmails ? selectedMemberProfile.email ?? "-" : "Keine Berechtigung"}
                 </div>
                 <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
-                  <span className="text-[rgba(255,255,255,0.5)]">Minecraft:</span> {selectedMemberProfile.minecraftName ?? "—"}
+                  <span className="text-[rgba(255,255,255,0.5)]">Minecraft:</span> {selectedMemberProfile.minecraftName ?? "-"}
                 </div>
                 <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
-                  <span className="text-[rgba(255,255,255,0.5)]">Age:</span> {selectedMemberProfile.age ?? "—"}
+                  <span className="text-[rgba(255,255,255,0.5)]">Age:</span> {selectedMemberProfile.age ?? "-"}
                 </div>
                 <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
-                  <span className="text-[rgba(255,255,255,0.5)]">Level:</span> {selectedMemberProfile.level ?? "—"}
+                  <span className="text-[rgba(255,255,255,0.5)]">Level:</span> {selectedMemberProfile.level ?? "-"}
                 </div>
                 <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
-                  <span className="text-[rgba(255,255,255,0.5)]">Experience:</span> {selectedMemberProfile.experience ?? "—"}
+                  <span className="text-[rgba(255,255,255,0.5)]">Experience:</span> {selectedMemberProfile.experience ?? "-"}
                 </div>
                 <div className="rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
                   <span className="text-[rgba(255,255,255,0.5)]">Roles:</span>{" "}
                   {Array.isArray(selectedMemberProfile.roles) && selectedMemberProfile.roles.length
                     ? selectedMemberProfile.roles.join(", ")
-                    : "—"}
+                    : "-"}
                 </div>
               </div>
 
               <div className="mt-3 rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
                 <span className="text-[rgba(255,255,255,0.5)]">Bio:</span>{" "}
-                {selectedMemberProfile.bio?.trim() || "—"}
+                {selectedMemberProfile.bio?.trim() || "-"}
               </div>
 
               <div className="mt-3 rounded-[10px] bg-[rgba(255,255,255,0.04)] px-3 py-2 text-[12px] text-[rgba(255,255,255,0.75)]">
                 <span className="text-[rgba(255,255,255,0.5)]">Interests:</span>{" "}
                 {Array.isArray(selectedMemberProfile.interests) && selectedMemberProfile.interests.length
                   ? selectedMemberProfile.interests.join(", ")
-                  : "—"}
+                  : "-"}
               </div>
 
               <div className="mt-4">
@@ -6746,7 +6769,7 @@ export default function App() {
                   onClick={() => setShowTeamApplyPopup(false)}
                   className="cta-secondary px-4 py-2 text-[12px]"
                 >
-                  Später
+                  Spüter
                 </button>
                 <button
                   type="button"
@@ -6952,7 +6975,7 @@ export default function App() {
                     erst beitreten, wenn dein Account verifiziert und freigegeben wurde.
                   </p>
                   <p className="mt-2 text-[13px] leading-[20px] text-[rgba(255,255,255,0.65)]">
-                    Ein Admin meldet sich in Kürze bei dir. Für die Freigabe ist ein kurzer Call zur Bestätigung notwendig.
+                    Ein Admin meldet sich in Kürze bei dir. Für die Freigabe ist ein kurzer Call zur Bestütigung notwendig.
                   </p>
                   <p className="mt-2 text-[12px] text-[rgba(255,255,255,0.5)]">
                     Aktueller Status: {memberApprovalStatus ?? "unbekannt"}
@@ -7116,7 +7139,7 @@ export default function App() {
                   </h3>
                   <p className="mt-2 text-[13px] leading-[21px] text-[rgba(255,255,255,0.68)]">
                     Dein Account wurde für die Nutzung dieser App gesperrt. Solange der Bann
-                    aktiv ist, ist kein Zugriff möglich.
+                    aktiv ist, ist kein Zugriff müglich.
                   </p>
                   {banState.reason && (
                     <div className="mt-4 rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-4 py-3">
@@ -7344,7 +7367,7 @@ export default function App() {
                               className={`fa-solid fa-chevron-${showExistingLogos ? "up" : "down"} text-[10px]`}
                               aria-hidden="true"
                             />
-                            Aus Medienbibliothek wählen
+                            Aus Medienbibliothek wühlen
                           </button>
                           {showExistingLogos && (
                             <>
@@ -7414,7 +7437,7 @@ export default function App() {
                               className={`fa-solid fa-chevron-${showExistingBanners ? "up" : "down"} text-[10px]`}
                               aria-hidden="true"
                             />
-                            Aus Medienbibliothek wählen
+                            Aus Medienbibliothek wühlen
                           </button>
                           {showExistingBanners && (
                             <>
@@ -7492,7 +7515,7 @@ export default function App() {
                           }
                           className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71]"
                         >
-                          <option value="">Loader auswählen...</option>
+                          <option value="">Loader auswühlen...</option>
                           <option value="Fabric">Fabric</option>
                           <option value="Forge">Forge</option>
                           <option value="Vanilla">Vanilla</option>
@@ -7519,7 +7542,7 @@ export default function App() {
                             className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71] disabled:opacity-60"
                           >
                             <option value="">
-                              {mcVersionsLoading ? "Lade Versionen..." : "Version auswählen..."}
+                              {mcVersionsLoading ? "Lade Versionen..." : "Version auswühlen..."}
                             </option>
                             {mcVersions.map((version) => (
                               <option key={version} value={version}>
@@ -7541,7 +7564,7 @@ export default function App() {
                         </label>
                         <input
                           type="text"
-                          placeholder="Verknüpfe mit einem Modrinth-Projekt für zusätzliche Infos"
+                          placeholder="Verknüpfe mit einem Modrinth-Projekt für zusützliche Infos"
                           value={projectModrinthId}
                           onChange={(event) => setProjectModrinthId(event.target.value)}
                           className="w-full rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#0F1116] px-3 py-2 text-[13px] text-white outline-none focus:border-[#2BFE71]"
@@ -7751,7 +7774,7 @@ export default function App() {
                     />
                     {newsCoverFile && (
                       <p className="mt-2 text-[11px] text-[rgba(255,255,255,0.55)]">
-                        Datei ausgewählt: {newsCoverFile.name}
+                        Datei ausgewühlt: {newsCoverFile.name}
                       </p>
                     )}
                   </div>
@@ -7876,10 +7899,10 @@ export default function App() {
           <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/70 px-4">
             <div className="w-full max-w-[460px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
               <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
-                Projekt löschen?
+                Projekt lüschen?
               </h3>
               <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.65)]">
-                {projectDeleteCandidate.title} wird dauerhaft gelöscht.
+                {projectDeleteCandidate.title} wird dauerhaft gelüscht.
               </p>
               <div className="mt-5 flex items-center justify-end gap-3">
                 <button
@@ -7904,10 +7927,10 @@ export default function App() {
           <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/70 px-4">
             <div className="w-full max-w-[460px] rounded-[16px] border border-[rgba(255,255,255,0.12)] bg-[#13161C] p-5 shadow-[0_40px_80px_rgba(0,0,0,0.55)]">
               <h3 className="text-[16px] font-semibold text-[rgba(255,255,255,0.92)]">
-                News löschen?
+                News lüschen?
               </h3>
               <p className="mt-2 text-[13px] text-[rgba(255,255,255,0.65)]">
-                {newsDeleteCandidate.title} wird dauerhaft gelöscht.
+                {newsDeleteCandidate.title} wird dauerhaft gelüscht.
               </p>
               {newsDeleteError && (
                 <div className="mt-3 rounded-[10px] border border-[rgba(255,100,100,0.25)] bg-[rgba(255,100,100,0.08)] px-3 py-2 text-[11px] text-[rgba(255,255,255,0.8)]">
@@ -7929,7 +7952,7 @@ export default function App() {
                   className="rounded-[10px] border border-[#C74646] bg-[#FF5B5B] px-4 py-2 text-[12px] font-semibold text-[#0D0E12] shadow-[0_4px_0_#C74646] transition active:translate-y-[2px] active:shadow-[0_2px_0_#C74646] disabled:opacity-60"
                   disabled={newsDeleting}
                 >
-                  {newsDeleting ? "Löschen..." : "Löschen"}
+                  {newsDeleting ? "Lüschen..." : "Lüschen"}
                 </button>
               </div>
             </div>
@@ -8014,6 +8037,8 @@ function renderContent(
   members: MemberProfile[],
   membersLoading: boolean,
   membersError: string | null,
+  memberSearchQuery: string,
+  setMemberSearchQuery: (value: string) => void,
   pendingPlayers: PendingPlayerProfile[],
   pendingPlayersLoading: boolean,
   pendingPlayersError: string | null,
@@ -8845,7 +8870,7 @@ function renderContent(
                             type="button"
                             onClick={() => requestDeleteNews(item)}
                             className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-[rgba(255,91,91,0.18)] text-[#FF8A8A] shadow-[0_0_0_1px_rgba(255,91,91,0.25)] transition hover:bg-[rgba(255,91,91,0.28)] hover:text-[#FF5B5B]"
-                            aria-label="News löschen"
+                            aria-label="News lüschen"
                           >
                             <i className="fa-solid fa-trash" aria-hidden="true" />
                           </button>
@@ -8925,7 +8950,7 @@ function renderContent(
         {canDeleteMedia && selectedMediaIds.length > 0 && (
           <div className="flex items-center justify-between rounded-[12px] border border-[rgba(255,255,255,0.08)] bg-[#111319] px-4 py-3 animate-[slideDown_0.3s_ease-out]">
             <p className="text-[12px] font-semibold text-[rgba(255,255,255,0.8)] transition-all duration-300">
-              {selectedMediaIds.length} ausgewählt
+              {selectedMediaIds.length} ausgewühlt
             </p>
             <button
               type="button"
@@ -8933,7 +8958,7 @@ function renderContent(
               className="flex items-center gap-2 rounded-[8px] border border-[rgba(255,255,255,0.14)] px-4 py-2 text-[12px] font-semibold text-[rgba(255,255,255,0.75)] transition-all duration-300 hover:border-[#FF5B5B] hover:text-[#FF5B5B] hover:bg-[rgba(255,91,91,0.1)]"
             >
               <i className="fa-solid fa-trash-can" aria-hidden="true" />
-              Löschen
+              Lüschen
             </button>
           </div>
         )}
@@ -9041,7 +9066,7 @@ function renderContent(
                                     ? "border-[#2BFE71] bg-[#2BFE71] text-[#0D0E12] shadow-[0_0_15px_rgba(43,254,113,0.5)]"
                                     : "border-[rgba(255,255,255,0.35)] bg-black/40 backdrop-blur-sm text-white hover:border-[#2BFE71] hover:bg-[rgba(43,254,113,0.2)]"
                                     }`}
-                                  aria-label="Auswählen"
+                                  aria-label="Auswühlen"
                                 >
                                   <i className="fa-solid fa-check" aria-hidden="true" />
                                 </button>
@@ -9049,7 +9074,7 @@ function renderContent(
                                   type="button"
                                   onClick={() => handleDeleteMedia(section.key, item.id!)}
                                   className="flex h-8 w-8 items-center justify-center rounded-[8px] border border-[rgba(255,255,255,0.35)] bg-black/40 backdrop-blur-sm text-[12px] text-white transition-all duration-300 hover:border-[#FF5B5B] hover:text-[#FF5B5B] hover:bg-[rgba(255,91,91,0.2)]"
-                                  aria-label="Löschen"
+                                  aria-label="Lüschen"
                                 >
                                   <i className="fa-solid fa-trash-can" aria-hidden="true" />
                                 </button>
@@ -9185,7 +9210,7 @@ function renderContent(
               <button
                 type="button"
                 className="flex h-8 w-8 items-center justify-center rounded-full border border-[rgba(255,255,255,0.08)] text-[rgba(255,255,255,0.75)] transition hover:border-[#2BFE71] hover:text-[#2BFE71]"
-                aria-label="Nächster Monat"
+                aria-label="Nüchster Monat"
               >
                 <i className="fa-solid fa-chevron-right text-[12px]" aria-hidden="true" />
               </button>
@@ -9696,9 +9721,42 @@ function renderContent(
       permissionFlags.canAccessRoles || permissionFlags.canAccessMembers || permissionFlags.isModerator;
     const canManageMemberProjects = permissionFlags.canAccessMembers || permissionFlags.isModerator;
     const showActions = canBanUsers || canWarnUsers;
+    const normalizedMemberSearch = memberSearchQuery.trim().toLowerCase();
+    const filteredMembers = normalizedMemberSearch
+      ? members.filter((member) => {
+          const record = (member.profileData ?? {}) as Record<string, unknown>;
+          const discordName =
+            typeof record.discordName === "string"
+              ? record.discordName
+              : typeof record.discord_name === "string"
+                ? record.discord_name
+                : typeof record.discordUsername === "string"
+                  ? record.discordUsername
+                  : "";
+          const projectSearchTokens = Array.isArray(member.projects)
+            ? member.projects.flatMap((projectId) => {
+                const title = projectTitleById.get(projectId) ?? "";
+                return [projectId, title];
+              })
+            : [];
+          const haystack = [
+            member.displayName ?? "",
+            member.username ?? "",
+            member.minecraftName ?? "",
+            member.email ?? "",
+            member.uid ?? "",
+            discordName,
+            ...(Array.isArray(member.roles) ? member.roles : []),
+            ...projectSearchTokens
+          ]
+            .join(" ")
+            .toLowerCase();
+          return haystack.includes(normalizedMemberSearch);
+        })
+      : members;
     return (
       <div className="space-y-8">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3">
           <button
             type="button"
             onClick={() => onNavigate("admin")}
@@ -9708,9 +9766,29 @@ function renderContent(
             <i className="fa-solid fa-arrow-left text-[14px]" aria-hidden="true" />
             Zurück
           </button>
-          <p className="text-[13px] text-[rgba(255,255,255,0.55)]">
-            {membersLoading ? "Lade..." : `${members.length} Mitglieder`}
-          </p>
+          <div className="relative w-full max-w-[360px]">
+            <i
+              className="fa-solid fa-magnifying-glass pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[11px] text-[rgba(255,255,255,0.35)]"
+              aria-hidden="true"
+            />
+            <input
+              type="text"
+              value={memberSearchQuery}
+              onChange={(event) => setMemberSearchQuery(event.target.value)}
+              placeholder="Suche: Name, Username, Minecraft, UID..."
+              className="w-full rounded-[10px] border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.03)] py-2 pl-8 pr-8 text-[12px] text-[rgba(255,255,255,0.9)] outline-none transition placeholder:text-[rgba(255,255,255,0.35)] focus:border-[rgba(43,254,113,0.45)] focus:bg-[rgba(255,255,255,0.05)]"
+            />
+            {memberSearchQuery.trim() && (
+              <button
+                type="button"
+                onClick={() => setMemberSearchQuery("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-[6px] px-1.5 py-0.5 text-[10px] text-[rgba(255,255,255,0.5)] transition hover:bg-[rgba(255,255,255,0.08)] hover:text-[rgba(255,255,255,0.8)]"
+                aria-label="Suche leeren"
+              >
+                <i className="fa-solid fa-xmark" aria-hidden="true" />
+              </button>
+            )}
+          </div>
         </div>
 
         {membersError && (
@@ -9733,7 +9811,7 @@ function renderContent(
             {showActions && <span>Aktionen</span>}
           </div>
           <div className="divide-y divide-[rgba(255,255,255,0.06)]">
-            {members.map((member) => (
+            {filteredMembers.map((member) => (
               <div
                 key={member.uid}
                 onClick={() => onOpenMemberProfile(member)}
@@ -9746,7 +9824,7 @@ function renderContent(
                   {member.avatarUrl ? (
                     <img
                       src={member.avatarUrl}
-                      alt={`${member.username ?? "User"} avatar`}
+                      alt={`${member.displayName ?? member.username ?? "User"} avatar`}
                       className="h-9 w-9 rounded-full border border-[rgba(255,255,255,0.12)] object-cover"
                       onLoad={() =>
                         console.log("Avatar geladen:", member.avatarUrl)
@@ -9762,7 +9840,7 @@ function renderContent(
                   )}
                   <div>
                     <p className="text-[13px] font-semibold text-[rgba(255,255,255,0.92)]">
-                      {member.username ?? "Unbekannt"}
+                      {member.displayName ?? member.username ?? "Unbekannt"}
                     </p>
                         {permissionFlags.canViewUserEmails && (
                           <p className="text-[11px] text-[rgba(255,255,255,0.55)]">
@@ -9889,7 +9967,7 @@ function renderContent(
                         </span>
                       ))
                     ) : (
-                      <span>—</span>
+                      <span>-</span>
                     )}
                     {canManageUserRoles && (
                       <button
@@ -9908,7 +9986,7 @@ function renderContent(
                   </div>
                 </div>
                 <div className="text-[11px] text-[rgba(255,255,255,0.6)]">
-                  {member.minecraftName ? `MC: ${member.minecraftName}` : "—"}
+                  {member.minecraftName ? `MC: ${member.minecraftName}` : "-"}
                   {typeof member.level === "number" ? ` • Lvl ${member.level}` : ""}
                   {member.experience ? ` • ${member.experience}` : ""}
                   <div className="mt-1 flex flex-wrap gap-1">
@@ -9997,9 +10075,9 @@ function renderContent(
                 )}
               </div>
             ))}
-            {!membersLoading && !members.length && !membersError && (
+            {!membersLoading && !filteredMembers.length && !membersError && (
               <div className="px-4 py-6 text-[12px] text-[rgba(255,255,255,0.55)]">
-                Keine Mitglieder gefunden.
+                {normalizedMemberSearch ? "Keine Treffer fuer die Suche." : "Keine Mitglieder gefunden."}
               </div>
             )}
           </div>
@@ -10018,7 +10096,7 @@ function renderContent(
     }
     return (
       <div className="space-y-8">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
           <button
             type="button"
             onClick={() => onNavigate("admin")}
@@ -10058,7 +10136,7 @@ function renderContent(
                   {member.avatarUrl ? (
                     <img
                       src={member.avatarUrl}
-                      alt={`${member.username ?? "User"} avatar`}
+                      alt={`${member.displayName ?? member.username ?? "User"} avatar`}
                       className="h-9 w-9 rounded-full border border-[rgba(255,255,255,0.12)] object-cover"
                     />
                   ) : (
@@ -10068,7 +10146,7 @@ function renderContent(
                   )}
                   <div>
                     <p className="text-[13px] font-semibold text-[rgba(255,255,255,0.92)]">
-                      {member.username ?? "Unbekannt"}
+                      {member.displayName ?? member.username ?? "Unbekannt"}
                     </p>
                     {permissionFlags.canViewUserEmails && (
                       <p className="text-[11px] text-[rgba(255,255,255,0.55)]">
@@ -10086,7 +10164,7 @@ function renderContent(
                   </span>
                 </div>
                 <div className="text-[11px] text-[rgba(255,255,255,0.6)]">
-                  {member.minecraftName ? `MC: ${member.minecraftName}` : "—"}
+                  {member.minecraftName ? `MC: ${member.minecraftName}` : "-"}
                   {typeof member.level === "number" ? ` • Lvl ${member.level}` : ""}
                   {member.experience ? ` • ${member.experience}` : ""}
                 </div>
@@ -10219,8 +10297,8 @@ function renderContent(
                       onOpenRoleDelete(role);
                     }}
                     className="mr-1 flex h-8 w-8 items-center justify-center rounded-[6px] bg-[rgba(255,91,91,0.18)] text-[#FF8A8A] shadow-[0_0_0_1px_rgba(255,91,91,0.25)] transition hover:bg-[rgba(255,91,91,0.28)] hover:text-[#FF5B5B]"
-                    title="Rolle löschen"
-                    aria-label={`Rolle ${role.id} löschen`}
+                    title="Rolle lüschen"
+                    aria-label={`Rolle ${role.id} lüschen`}
                   >
                     <i className="fa-solid fa-trash" aria-hidden="true" />
                   </button>
@@ -10280,3 +10358,5 @@ function renderContent(
 
   return null;
 }
+
+
